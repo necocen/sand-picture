@@ -1,0 +1,15 @@
+# Rust 本体の版は rust-toolchain.toml で固定する。ここでは、ほかの道具の版と、よく使うタスクを決める。
+[tools]
+"github:trunk-rs/trunk" = "0.21.14"
+
+[tasks.verify]
+description = "fmt・clippy・テスト（GPU は使わない）"
+run = [
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test",
+]
+
+[tasks.web]
+description = "Web 向けにビルドして http://127.0.0.1:8080 で配る"
+run = "trunk serve"

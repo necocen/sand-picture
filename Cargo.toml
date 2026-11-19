@@ -1,0 +1,38 @@
+[package]
+name = "sand-picture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+autobins = false
+publish = false
+
+[dependencies]
+mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3" }
+# 移植の元（v2.20）と同じ版に固定する：naga が WGSL を訳す形が変わると、結果のビットが変わりうる。
+# 上げるのは v2.20 との照合が通ったあと、回帰の基準を取り直してから。
+wgpu = "=30.0.1"
+
+# 操作口（HTTP）はネイティブだけ：道具と回帰が、窓の絵と状態を読む。
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3", features = ["agent"] }
+
+[[bin]]
+name = "sand-picture"
+path = "src/bin/sand_picture.rs"
+test = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+# Web 向け（trunk）：大きさを優先する。strip はしない（wasm の機能の一覧まで消えて、wasm-bindgen と wasm-opt が
+# 使われている機能を読めなくなる。デバッグ情報は wasm-opt が落とす）。
+[profile.web]
+inherits = "release"
+opt-level = "s"
+strip = false

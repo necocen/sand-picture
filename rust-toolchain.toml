@@ -1,0 +1,9 @@
+# Rust の版はここで固定する（mise では管理しない）。
+# rustup が cargo / rustc の実行時に、この toolchain とコンポーネントを自動で用意する。
+# 1.95.0 は、移植の元（v2.20）の回帰を取った環境と同じ版。上げるときは、回帰の基準を取り直してから。
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+# trunk の Web 向けビルド
+targets = ["wasm32-unknown-unknown"]
