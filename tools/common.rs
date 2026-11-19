@@ -55,23 +55,15 @@ pub struct Pictures {
 impl Pictures {
     /// Pictures of `size` pixels.
     pub fn new(gpu: &GpuContext, model: &Model, size: [u32; 2]) -> Self {
+        Self::of(gpu, Views::new(&gpu.device, model.buffers(), size), size)
+    }
+
+    /// Pictures of `size` pixels drawn by `views`, which draw at that size.
+    pub fn of(gpu: &GpuContext, views: Views, size: [u32; 2]) -> Self {
         Self {
             size,
-            views: Views::new(&gpu.device, model.buffers(), size),
-            image: gpu.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("picture"),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: IMAGE_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            }),
+            views,
+            image: image(gpu, size),
         }
     }
 
@@ -123,6 +115,24 @@ impl Pictures {
             .copied()
             .collect()
     }
+}
+
+/// The texture a picture of `size` pixels is drawn into.
+fn image(gpu: &GpuContext, size: [u32; 2]) -> wgpu::Texture {
+    gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("picture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: IMAGE_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
 }
 
 /// The name a view's picture is kept under: `image` is Photoreal, as in

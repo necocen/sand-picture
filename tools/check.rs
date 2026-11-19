@@ -6,8 +6,10 @@
 //! The picture rests, is turned over at once and runs to 5 s, with
 //! checkpoints at 0, 1 and 5 s (updates 0, 125 and 625); it is then turned
 //! over again and checked a second later; then it is reset, and the same
-//! three checkpoints must come out as before. `--full` runs on from there to
-//! 15, 30 and 60 s. A checkpoint is the SHA-256 of the eight compared
+//! three checkpoints must come out as before; and pictures of another size
+//! must be the same whether the views were made at that size or brought to
+//! it, as a window that is resized brings them. `--full` runs on from there
+//! to 15, 30 and 60 s. A checkpoint is the SHA-256 of the eight compared
 //! buffers, of the strata and of the three views' pictures; the labels are
 //! left out (their records are numbered in the order the GPU's threads reach
 //! them). `--record FOLDER` also writes what was found, with the pictures as
@@ -18,7 +20,7 @@ mod common;
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
 use sand_picture::model::{Model, Scene};
-use sand_picture::view::{Mode, REFERENCE_SIZE};
+use sand_picture::view::{Mode, REFERENCE_SIZE, Views};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -150,6 +152,19 @@ fn main() {
                 println!("after a reset, update {to}: {field} DIFFERS from the first run");
                 failures += 1;
             }
+        }
+    }
+    // A window that is resized: the views brought to another size draw what
+    // views made at that size draw.
+    let larger = [2160, 1440];
+    let views = Views::new(&gpu.device, model.buffers(), REFERENCE_SIZE);
+    views.resize(&gpu.queue, larger);
+    let brought = Pictures::of(&gpu, views, larger);
+    let made = Pictures::new(&gpu, &model, larger);
+    for mode in Mode::ALL {
+        if brought.picture(&gpu, mode) != made.picture(&gpu, mode) {
+            println!("after a resize: {} DIFFERS", picture_name(mode));
+            failures += 1;
         }
     }
     if full {
