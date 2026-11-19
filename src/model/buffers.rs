@@ -28,9 +28,9 @@ pub struct Buffers {
     /// What one update's kernels write before they read it: the rows of
     /// `rows::SCRATCH`.
     pub scratch: wgpu::Buffer,
-    /// Scratch the stages reuse: the mechanics' working values, then the
-    /// transport's capacities.
-    pub compression: wgpu::Buffer,
+    /// The grain constraint's working values of each cell, 48 bytes
+    /// (mechanics/mechanics_work.wgsl).
+    pub grain_works: wgpu::Buffer,
     /// The cross-gap resistance table of the materials.
     pub table: wgpu::Buffer,
     /// The floor-connected bed's columns.
@@ -108,7 +108,7 @@ impl Buffers {
                 "an update's scratch rows",
                 cells * 16 * rows::count(rows::SCRATCH),
             ),
-            compression: blank("conservative transport reconstruction", cells * 64),
+            grain_works: blank("the grain constraint's working values", cells * 48),
             table: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cross-gap resistance"),
                 contents: &floats(table.iter().flatten().copied()),
@@ -147,7 +147,7 @@ impl Buffers {
             "transport" => &self.transport,
             "members" => &self.members,
             "scratch" => &self.scratch,
-            "compression" => &self.compression,
+            "grain_works" => &self.grain_works,
             "table" => &self.table,
             "terrain" => &self.terrain,
             "strata" => &self.strata,
@@ -213,7 +213,7 @@ impl Buffers {
             &self.transport,
             &self.members,
             &self.scratch,
-            &self.compression,
+            &self.grain_works,
             &self.terrain,
             &self.strata,
             &self.arrival,

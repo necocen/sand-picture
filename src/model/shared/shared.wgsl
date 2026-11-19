@@ -39,7 +39,6 @@ struct CellPowder {mobile:f32,bed:f32,free:f32}
 // `fine` is the white sand, `coarse` the black; momentum is volume times
 // velocity. `bed` is the deposit's white, black, region and pore water.
 struct Cell {@align(16) volume:PhaseVolumes,momentum:array<vec2<f32>,4>,stress:GrainStress,powder:CellPowder,bed:vec4<f32>}
-struct MaterialPayload {volume:vec4<f32>,momentum:array<vec2<f32>,4>,stress:vec4<f32>}
 // What the transport carries for a cell or a group: phase volumes and
 // momenta, the grains' advected stress, the white's powder (all and free).
 struct GroupPayload {volume:vec4<f32>,momentum:array<vec2<f32>,4>,stress:vec2<f32>,powder:vec2<f32>}
@@ -61,15 +60,13 @@ struct Face {
 // `geometry` holds what an update leaves for the next beside the cells, and
 // `scratch` what one update's kernels write before they read it: rows of the
 // cell count cfg.n, one vec4 an entry, each use's first row a constant
-// NAME_ROW (rows.rs). `compression` is scratch too, which the stages reuse:
-// the mechanics' working values, then the transport's capacities.
+// NAME_ROW (rows.rs).
 @group(0) @binding(0) var<uniform> cfg:Config;
 @group(0) @binding(1) var<storage,read_write> cells:array<Cell>;
 @group(0) @binding(2) var<storage,read_write> scratch:array<vec4<f32>>;
 @group(0) @binding(3) var<storage,read_write> faces:array<Face>;
 @group(0) @binding(4) var<storage,read_write> geometry:array<vec4<f32>>;
 @group(0) @binding(5) var<storage,read_write> table:array<vec4<f32>>;
-@group(0) @binding(6) var<storage,read_write> compression:array<MaterialPayload>;
 @group(0) @binding(7) var<storage,read_write> potential:array<f32>;
 // Densities (kg/m3): the water, the white grains, the black grains.
 const RHO=vec3<f32>(997.,2450.,4700.);
