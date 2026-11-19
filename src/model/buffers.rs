@@ -3,7 +3,7 @@
 use super::grid::{CELLS, cell_width, subdivisions};
 use super::material;
 use super::scene::Scene;
-use super::{DT, GAS_SLOTS, STANDARD_GRAVITY, labels, stream};
+use super::{DT, GAS_SLOTS, STANDARD_GRAVITY, labels, rows, stream};
 use wgpu::util::DeviceExt;
 
 pub struct Buffers {
@@ -15,8 +15,8 @@ pub struct Buffers {
     /// 96 bytes a cell: mobile phase volumes, momenta and stress, the white's
     /// powder, deposited grains and pore water.
     pub cells: wgpu::Buffer,
-    /// What an update leaves for the next beside the cells: rows of one vec4
-    /// a cell, named in shared/geometry_rows.wgsl.
+    /// What an update leaves for the next beside the cells: the rows of
+    /// `rows::GEOMETRY`.
     pub geometry: wgpu::Buffer,
     /// Two staggered faces a cell, 160 bytes each: response, projected flow
     /// and displacement.
@@ -25,8 +25,8 @@ pub struct Buffers {
     pub transport: wgpu::Buffer,
     /// Transport group membership.
     pub members: wgpu::Buffer,
-    /// What one update's kernels write before they read it: rows of one
-    /// vec4 a cell, named in shared/geometry_rows.wgsl.
+    /// What one update's kernels write before they read it: the rows of
+    /// `rows::SCRATCH`.
     pub scratch: wgpu::Buffer,
     /// Scratch the stages reuse: the mechanics' working values, then the
     /// transport's capacities.
@@ -51,10 +51,6 @@ pub struct Buffers {
     /// The flow solver's fields.
     pub stream: stream::Fields,
 }
-
-/// The rows of `geometry` and of `scratch` (shared/geometry_rows.wgsl).
-const GEOMETRY_ROWS: u64 = 26;
-const SCRATCH_ROWS: u64 = 52;
 
 impl Buffers {
     /// The buffers of a picture at rest in `scene`, with the materials'
@@ -100,7 +96,7 @@ impl Buffers {
             cells: blank("phase volumes momenta and stress", cells * 96),
             geometry: blank(
                 "gas identities, contact geometry and the last stress solve",
-                cells * 16 * GEOMETRY_ROWS,
+                cells * 16 * rows::count(rows::GEOMETRY),
             ),
             faces: blank(
                 "staggered phase flow and finite displacement",
@@ -108,7 +104,10 @@ impl Buffers {
             ),
             transport: blank("conservative phase flux", cells * 2 * 80),
             members: blank("connected transport member indices", cells * 8),
-            scratch: blank("an update's scratch rows", cells * 16 * SCRATCH_ROWS),
+            scratch: blank(
+                "an update's scratch rows",
+                cells * 16 * rows::count(rows::SCRATCH),
+            ),
             compression: blank("conservative transport reconstruction", cells * 64),
             table: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cross-gap resistance"),
@@ -182,12 +181,17 @@ impl Buffers {
     /// whose films drained long ago.
     fn fill(&self, queue: &wgpu::Queue, scene: &Scene) {
         queue.write_buffer(&self.cells, 0, &floats(scene.cell_records()));
-        // LAYER_ROW: each cell's gas by identity, as (volume, identity, 0, 0).
+        // Each cell's gas by identity, as (volume, identity, 0, 0).
         let layers = scene
             .gas_layers
             .iter()
             .flat_map(|c| (0..GAS_SLOTS).flat_map(move |l| [c[l], (l + 1) as f32, 0., 0.]));
-        queue.write_buffer(&self.geometry, u64::from(self.n) * 16, &floats(layers));
+        let row = rows::first(rows::GEOMETRY, "LAYER");
+        queue.write_buffer(
+            &self.geometry,
+            row * u64::from(self.n) * 16,
+            &floats(layers),
+        );
         queue.write_buffer(&self.labels, 0, &labels::initial(self.n));
     }
 

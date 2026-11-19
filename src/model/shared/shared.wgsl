@@ -58,9 +58,11 @@ struct Face {
     displacement:vec4<f32>, // finite remap bed.xy and ambient-grain.zw currents
     previous_displacement:vec4<f32>, // preceding corrected hydraulic state
 }
-// `scratch` holds what one update's kernels write before they read it, in the
-// rows of geometry_rows.wgsl. `compression` is scratch too, which the stages
-// reuse: the mechanics' working values, then the transport's capacities.
+// `geometry` holds what an update leaves for the next beside the cells, and
+// `scratch` what one update's kernels write before they read it: rows of the
+// cell count cfg.n, one vec4 an entry, each use's first row a constant
+// NAME_ROW (rows.rs). `compression` is scratch too, which the stages reuse:
+// the mechanics' working values, then the transport's capacities.
 @group(0) @binding(0) var<uniform> cfg:Config;
 @group(0) @binding(1) var<storage,read_write> cells:array<Cell>;
 @group(0) @binding(2) var<storage,read_write> scratch:array<vec4<f32>>;

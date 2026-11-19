@@ -1,12 +1,12 @@
 //! The coupled water and interface response, solved twice per update by
 //! flexible conjugate gradients preconditioned with a multigrid V-cycle.
-use super::DT;
 use super::buffers::blank;
 use super::grid::{CELLS, FLOW_ITERATIONS, cell_width};
 use super::kernel::Plan;
 use super::material::SURFACE_TENSION;
 use super::shader::Program;
 use super::update::Plans;
+use super::{DT, GAS_SLOTS};
 use wgpu::util::DeviceExt;
 
 /// Levels with at most this many points are smoothed, restricted and
@@ -177,7 +177,7 @@ impl Stream {
                 h.to_bits(),
                 color,
                 (DT * DT * SURFACE_TENSION / (997. * h * h * h)).to_bits(),
-                9,
+                GAS_SLOTS as u32,
             ]
         };
         let build = |level: usize, color, entry, groups| {
@@ -242,7 +242,7 @@ impl Stream {
             h.to_bits(),
             (sizes.len() - 1 - cycled) as u32,
             0,
-            9,
+            GAS_SLOTS as u32,
         ]));
         let vertices = (nx + 1) * (ny + 1);
         // The conjugate gradients' sums are gathered by workgroups of 128.
@@ -250,7 +250,21 @@ impl Stream {
         let points = vertices.div_ceil(POINT_THREADS);
         let (x0, y0, _) = sizes[0];
         let (cx0, cy0, coarse0) = sizes.get(1).copied().unwrap_or((0, 0, 0));
-        let finest = [x0, y0, 0, cx0, cy0, coarse0, nx, ny, h.to_bits(), 0, 0, 9];
+        let slots = GAS_SLOTS as u32;
+        let finest = [
+            x0,
+            y0,
+            0,
+            cx0,
+            cy0,
+            coarse0,
+            nx,
+            ny,
+            h.to_bits(),
+            0,
+            0,
+            slots,
+        ];
         let fcg = |entry, groups| Plan::new(Program::Stream, entry, groups).with_config(&finest);
         Self {
             fcg_start: [

@@ -161,7 +161,7 @@ impl Views {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, SCENE_WGSL, flow_source, photoreal, picture_size, simple_source};
+    use super::{Mode, flow_source, photoreal, picture_size, simple_source};
     use crate::wgsl;
 
     #[cfg(feature = "fixed-picture")]
@@ -194,7 +194,7 @@ mod tests {
             ("distance field", photoreal::GEOMETRY_WGSL),
             ("near layers", photoreal::LAYERS_WGSL),
         ] {
-            wgsl::assert_valid(name, &[SCENE_WGSL, source].concat());
+            wgsl::assert_valid(name, &photoreal::kernel_source(source));
         }
     }
 

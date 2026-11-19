@@ -137,7 +137,7 @@ fn paired_reconstruct(thread:u32,enabled:bool) {
     parallel_gas_layers(i,base);
     let c=cells[i].volume.gas;let g=-young_gradient(point(i));let scale=abs(g.x)+abs(g.y);
     var n=vec2<f32>(1.,0.);if scale>0.{n=g/scale;}
-    geometry[i]=vec4<f32>(n,intercept(n,clamp(c,0.,1.)),0.);
+    geometry[PLANE_ROW*cfg.n+i]=vec4<f32>(n,intercept(n,clamp(c,0.,1.)),0.);
 }
 
 // Whether the half-plane n.x x + n.y y <= alpha covers some area of the unit

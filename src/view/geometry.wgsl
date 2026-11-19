@@ -18,12 +18,13 @@
 // 0-8), and at this frame or the last one drawn (bits 9-17).
 @group(0) @binding(5) var<storage, read_write> near: array<atomic<u32>>;
 
-// The simulation's LAYER_ROW (x: the gas volume) and SHAPE_ROW (the plane).
+// The model's rows of each identity's gas (x: the volume) and of its plane,
+// by the model's own constants.
 fn layer(i: u32, l: u32) -> vec4<f32> {
-    return geometry[cfg.size.x * cfg.size.y + GAS_LAYERS * i + l];
+    return geometry[LAYER_ROW * cfg.size.x * cfg.size.y + GAS_SLOTS * i + l];
 }
 fn shape(i: u32, l: u32) -> vec3<f32> {
-    return geometry[(1u + GAS_LAYERS) * cfg.size.x * cfg.size.y + GAS_LAYERS * i + l].xyz;
+    return geometry[SHAPE_ROW * cfg.size.x * cfg.size.y + GAS_SLOTS * i + l].xyz;
 }
 // More than a pixel's width in cells on every grid (a quarter cell at
 // most), and less than the half cell that is the least distance of a
@@ -49,12 +50,12 @@ fn mark_shown(@builtin(global_invocation_id) id: vec3<u32>) {
     if any(id.xy >= cfg.size) { return; }
     let i = cell_index(vec2<i32>(id.xy));
     var slots = 0u;
-    for (var l = 0u; l < GAS_LAYERS; l++) {
+    for (var l = 0u; l < GAS_SLOTS; l++) {
         if shows(i, l) { slots |= 1u << l; }
     }
     shown[i] = slots;
-    let before = atomicLoad(&near[i]) & ((1u << GAS_LAYERS) - 1u);
-    atomicStore(&near[i], before << GAS_LAYERS);
+    let before = atomicLoad(&near[i]) & ((1u << GAS_SLOTS) - 1u);
+    atomicStore(&near[i], before << GAS_SLOTS);
 }
 // A cell that shows gas marks the cells within four of it: few cells show
 // any, and each of them writes its marks.
@@ -68,7 +69,7 @@ fn mark_near(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var x = -4; x <= 4; x++) {
             let q = p + vec2<i32>(x, y);
             if any(q < vec2<i32>(0)) || any(q >= vec2<i32>(cfg.size)) { continue; }
-            atomicOr(&near[cell_index(q)], slots | (slots << GAS_LAYERS));
+            atomicOr(&near[cell_index(q)], slots | (slots << GAS_SLOTS));
         }
     }
 }
@@ -117,7 +118,7 @@ fn prepare_geometry(@builtin(global_invocation_id) id: vec3<u32>) {
     // A texel that was flat at the last frame and has no shown gas near it
     // is flat; one that the shown gas has left is flat again.
     let marks = atomicLoad(&near[i]);
-    if ((marks >> (GAS_LAYERS + id.z)) & 1u) == 0u { return; }
+    if ((marks >> (GAS_SLOTS + id.z)) & 1u) == 0u { return; }
     if ((marks >> id.z) & 1u) == 0u {
         textureStore(distances, p, i32(id.z), vec4<f32>(4., 0., 1., 0.));
         return;

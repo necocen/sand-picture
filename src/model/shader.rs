@@ -8,12 +8,9 @@ use super::material::{
     HINDRANCE, LOOSE_PACKING, POWDER_DIAMETER, POWDER_LEVELS, SURFACE_TENSION, bubble_rise_speeds,
     powder_speed,
 };
+use super::rows;
 use super::stream::{COARSEN_ROWS, POINT_THREADS};
 use crate::wgsl;
-
-/// The rows of the shared `geometry` buffer, by name: every program that
-/// addresses the buffer starts with them.
-const GEOMETRY_ROWS: &str = include_str!("shared/geometry_rows.wgsl");
 
 /// A program: the text several kernels' entry points live in, compiled as
 /// one shader module.
@@ -38,7 +35,9 @@ impl Program {
         wgsl::compiled(self.text(grains))
     }
 
-    /// The program's constants and fragments, its loops as written.
+    /// The program's constants and fragments, its loops as written. Every
+    /// program starts with the rows' constants, by which it addresses the
+    /// two row buffers.
     fn text(self, grains: &Grains) -> String {
         let cells = (CELLS[0] * CELLS[1]) as u32;
         match self {
@@ -48,15 +47,17 @@ impl Program {
             // sources, as COARSEN_ROWS does for the coarsening's workgroup
             // memory and the labels' layout for the place of the cells' words.
             Self::Stream => format!(
-                "{GEOMETRY_ROWS}\nconst CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
+                "{}const CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
+                rows::constants(),
                 cell_words(cells),
                 include_str!("stream/stream.wgsl"),
                 include_str!("stream/free_stream.wgsl"),
                 include_str!("stream/fcg.wgsl")
             ),
-            Self::Schedule => [GEOMETRY_ROWS, include_str!("carry_schedule.wgsl")].join("\n"),
+            Self::Schedule => rows::constants() + include_str!("carry_schedule.wgsl"),
             Self::Invert => format!(
-                "{GEOMETRY_ROWS}\nconst LABEL_CELL_WORDS:u32={}u;\n{}",
+                "{}const LABEL_CELL_WORDS:u32={}u;\n{}",
+                rows::constants(),
                 cell_words(cells),
                 include_str!("invert.wgsl")
             ),
@@ -112,7 +113,7 @@ fn model(grains: &Grains) -> String {
             BUBBLE_LEVELS + 1
         )
         .as_str(),
-        GEOMETRY_ROWS,
+        rows::constants().as_str(),
         include_str!("shared/shared.wgsl"),
         include_str!("mechanics/material.wgsl"),
         include_str!("mechanics/mechanics.wgsl"),

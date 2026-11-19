@@ -12,7 +12,7 @@ fn mark_layers(@builtin(global_invocation_id) id: vec3<u32>) {
     let p = vec2<i32>(id.xy);
     let last = vec2<i32>(cfg.size) - 1;
     var mask = 0u;
-    for (var l = 0u; l < GAS_LAYERS; l++) {
+    for (var l = 0u; l < GAS_SLOTS; l++) {
         for (var y = -2; y <= 2; y++) {
             for (var x = -2; x <= 2; x++) {
                 let q = clamp(p + vec2<i32>(x, y), vec2<i32>(0), last);

@@ -11,6 +11,7 @@ mod kernel;
 mod labels;
 mod material;
 mod mechanics;
+mod rows;
 mod scene;
 mod shader;
 mod slab;
@@ -28,6 +29,7 @@ use labels::Labels;
 pub use material::{Grains, POWDER_DIAMETER};
 use material::{TABLE_STRIPS, table_strip};
 use mechanics::Mechanics;
+pub use rows::constants as row_constants;
 pub use scene::Scene;
 use shader::Program;
 use slab::Slab;
@@ -51,8 +53,7 @@ const TURN_SECONDS: f32 = 2.;
 const SHAKE_SECONDS: f32 = 3.;
 const SHAKE_FREQUENCY: f32 = 3.;
 const SHAKE_DISPLACEMENT: f32 = 0.02;
-/// The gas identities a cell can hold; `GAS_SLOTS` of geometry_rows.wgsl
-/// must agree with it.
+/// The gas identities a cell can hold: the shaders' `GAS_SLOTS`.
 pub const GAS_SLOTS: usize = 9;
 
 pub struct Model {

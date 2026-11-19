@@ -12,8 +12,6 @@ struct Config {
     powder_diameter: f32,
 }
 @group(0) @binding(0) var<uniform> cfg: Config;
-// The gas identities a cell can hold, as the simulation's GAS_SLOTS.
-const GAS_LAYERS: u32 = 9u;
 
 fn cell_index(p: vec2<i32>) -> u32 {
     let q = vec2<u32>(clamp(p, vec2<i32>(0), vec2<i32>(cfg.size) - 1));

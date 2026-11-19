@@ -4,12 +4,18 @@
 //! (photoreal.wgsl).
 use super::picture::Picture;
 use super::{CELLS_WGSL, SCENE_WGSL};
-use crate::model::{Buffers, GAS_SLOTS};
+use crate::model::{Buffers, GAS_SLOTS, row_constants};
 use crate::wgsl;
 use wgpu::util::DeviceExt;
 
 pub const GEOMETRY_WGSL: &str = include_str!("geometry.wgsl");
 pub const LAYERS_WGSL: &str = include_str!("layers.wgsl");
+
+/// The shader of kernels that run before the picture: they address the
+/// model's gas by the model's own constants.
+pub fn kernel_source(kernels: &str) -> String {
+    [&row_constants(), SCENE_WGSL, kernels].concat()
+}
 
 /// The picture's shader.
 pub fn source() -> String {
@@ -55,9 +61,7 @@ impl Photoreal {
         let module = |label, source: &str| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(
-                    wgsl::compiled([SCENE_WGSL, source].concat()).into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(wgsl::compiled(kernel_source(source)).into()),
             })
         };
         let geometry = module("distance field", GEOMETRY_WGSL);
