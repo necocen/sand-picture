@@ -12,9 +12,7 @@ mod product;
 mod screen;
 
 use app::SandPicture;
-use mikage::{
-    GpuDescriptor, GpuRequirements, PresentationPolicy, RedrawPolicy, RunConfig, SimulationPolicy,
-};
+use mikage::{GpuDescriptor, GpuRequirements, RedrawPolicy, RunConfig, SimulationPolicy};
 use sand_picture::model::DT;
 use std::time::Duration;
 
@@ -37,19 +35,18 @@ fn main() {
             },
             ..Default::default()
         },
-        // A frame is drawn when something changed, at the display's pace.
+        // A frame is drawn when something changed: an update, an input, the
+        // panel.
         redraw_policy: RedrawPolicy::Reactive,
-        presentation_policy: PresentationPolicy::Vsync,
         // One update of DT for every DT of the clock, as far as the GPU
         // keeps up; time it cannot keep up with is dropped, not owed.
-        simulation_policy: SimulationPolicy::Fixed {
-            dt: Duration::from_secs_f64(f64::from(DT)),
-            max_ticks_per_wake: 1,
-            max_backlog: Duration::from_millis(250),
-        },
-        // One update in flight beside one frame: a frame then waits for one
-        // update at most, and shows the newest.
-        max_in_flight_submissions: 2,
+        // Several updates and frames are in flight at once (mikage's
+        // defaults: eight submissions, a frame presented as soon as it is
+        // drawn). A GPU whose queue runs empty between updates is clocked
+        // lower and the picture runs slower; and frames held to one in
+        // flight wait behind the whole queue (docs/design.md, the window's
+        // speed).
+        simulation_policy: SimulationPolicy::fixed(Duration::from_secs_f64(f64::from(DT))),
         ..RunConfig::with_defaults(())
     };
     #[cfg(not(target_family = "wasm"))]
