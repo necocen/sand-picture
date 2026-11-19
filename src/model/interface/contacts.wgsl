@@ -238,8 +238,6 @@ fn shape_segment(s:vec4<f32>)->vec4<f32> {
 // radius, 1), fitted at the end of an update for the next one. Once the
 // transport has moved the gas they are no longer its shapes.
 fn contact_index(i:u32,l:u32)->u32{return CONTACT_ROW*cfg.n+2u*i+l;}
-fn contact_diagnostic(i:u32,l:u32)->u32{return CONTACT_AUDIT_ROW*cfg.n+2u*i+l;}
-struct DiskFit { shape:vec4<f32>, audit:vec4<f32> }
 // One fitted cell per 16-lane workgroup: lanes 0 to 8 evaluate a disk's nine
 // sample cells at once, every lane forms the same sums, and decisions pass
 // through workgroup memory (agree) so barriers stay in uniform control flow.
@@ -253,8 +251,8 @@ fn agree(value:bool,lane:u32)->bool {
 fn sample_cell(k:u32)->vec2<f32>{return vec2<f32>(f32(k%3u)-1.,f32(k/3u)-1.);}
 // A disk for identity `label` around cell i, or `plane` where none fits the
 // 3x3 amounts better (Gauss-Newton on the areas, from an algebraic circle).
-fn fit_contact(i:u32,label:f32,plane:vec4<f32>,lane:u32)->DiskFit {
-    var out=DiskFit(plane,vec4<f32>(0.));
+fn fit_contact(i:u32,label:f32,plane:vec4<f32>,lane:u32)->vec4<f32> {
+    var out=plane;
     var amounts:array<f32,9>;var matrix=mat3x3<f32>();var rhs=vec3<f32>(0.);var samples=0u;var inside=true;
     for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
         let shift=vec2<i32>(x,y);let p=point(i)+shift;let k=u32((y+1)*3+x+1);
@@ -277,7 +275,7 @@ fn fit_contact(i:u32,label:f32,plane:vec4<f32>,lane:u32)->DiskFit {
     let center=-.5*seed.xy;let r2=dot(center,center)-seed.z;
     if !agree(inside&&!(samples<3u||plane_error<1.e-10)&&seed.w!=0.&&!(r2<=0.||r2>1024.),lane){return out;}
     let own=sample_cell(min(lane,8u));
-    var disk=vec3<f32>(center,sqrt(r2));var iterations=0u;
+    var disk=vec3<f32>(center,sqrt(r2));
     for(var iteration=0u;iteration<10u;iteration++){
         if lane<9u{fit_area[lane]=disk_area(disk,own);}
         workgroupBarrier();
@@ -286,7 +284,6 @@ fn fit_contact(i:u32,label:f32,plane:vec4<f32>,lane:u32)->DiskFit {
             let v=fit_area[k];let residual=v.x-amounts[k];let g=v.yzw;error+=residual*residual;
             matrix+=mat3x3<f32>(g.x*g,g.y*g,g.z*g);rhs+=g*residual;
         }
-        iterations=iteration+1u;
         let solved=symmetric_solve(matrix,rhs);
         if agree(error<1.e-10||solved.w==0.,lane){break;}
         let delta=solved.xyz;var scale=min(1.,1./max(length(delta),1.e-20));var accepted=false;
@@ -329,12 +326,8 @@ fn fit_contact(i:u32,label:f32,plane:vec4<f32>,lane:u32)->DiskFit {
     workgroupBarrier();
     var final_error=0.;
     for(var k=0u;k<9u;k++){let residual=fit_area[k].x-amounts[k];final_error+=residual*residual;}
-    let center_area=fit_area[4].x;
     workgroupBarrier();
-    if !(final_error>=plane_error){
-        out.shape=vec4<f32>(disk,1.);
-        out.audit=vec4<f32>(sqrt(final_error),center_area-amounts[4],f32(iterations),1.);
-    }
+    if !(final_error>=plane_error){out=vec4<f32>(disk,1.);}
     return out;
 }
 fn contact_disjoint(a:vec4<f32>,b:vec4<f32>)->bool {
@@ -375,9 +368,7 @@ fn plan_contacts(@builtin(global_invocation_id) id:vec3<u32>,@builtin(local_invo
         }
         if disk{slot=atomicAdd(&listed,1u);}
         else{
-            for(var s=0u;s<2u;s++){
-                geometry[contact_index(i,s)]=outer.shapes[s];geometry[contact_diagnostic(i,s)]=vec4<f32>(0.);
-            }
+            for(var s=0u;s<2u;s++){geometry[contact_index(i,s)]=outer.shapes[s];}
         }
     }
     workgroupBarrier();
@@ -392,20 +383,14 @@ fn plan_contacts(@builtin(global_invocation_id) id:vec3<u32>,@builtin(local_invo
 @compute @workgroup_size(16)
 fn fit_contacts(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
     let i=contact_work.cells[group.x];
-    let outer=outer_gas_shapes(i);var fitted:array<vec4<f32>,2>;var diag:array<vec4<f32>,2>;
+    let outer=outer_gas_shapes(i);var fitted:array<vec4<f32>,2>;
     for(var s=0u;s<2u;s++){
         fitted[s]=outer.shapes[s];let side=contact_side(i,outer.shapes[s]);
-        if agree(outer.present[s]>0u&&side.disk,lane){
-            let value=fit_contact(i,side.label,outer.shapes[s],lane);fitted[s]=value.shape;diag[s]=value.audit;
-        }
+        if agree(outer.present[s]>0u&&side.disk,lane){fitted[s]=fit_contact(i,side.label,outer.shapes[s],lane);}
     }
-    if outer.present.x>0u&&outer.present.y>0u&&!contact_disjoint(fitted[0],fitted[1]){
-        fitted=outer.shapes;diag[0].w=-1.;diag[1].w=-1.;
-    }
+    if outer.present.x>0u&&outer.present.y>0u&&!contact_disjoint(fitted[0],fitted[1]){fitted=outer.shapes;}
     if lane==0u{
-        for(var s=0u;s<2u;s++){
-            geometry[contact_index(i,s)]=fitted[s];geometry[contact_diagnostic(i,s)]=diag[s];
-        }
+        for(var s=0u;s<2u;s++){geometry[contact_index(i,s)]=fitted[s];}
     }
 }
 

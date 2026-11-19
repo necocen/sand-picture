@@ -21,9 +21,8 @@ pub const GEOMETRY: &[Use] = &[
     ("LAYER", SLOTS),
     // Each identity's interface plane.
     ("SHAPE", SLOTS),
-    // The two contact fits of a cell, and the fits' residuals.
+    // The two contact fits of a cell.
     ("CONTACT", 2),
-    ("CONTACT_AUDIT", 2),
     // The four faces' apertures at the last stress solve, and the pressure
     // and the wet volume then.
     ("SOLVE_APERTURE", 1),
