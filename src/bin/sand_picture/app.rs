@@ -9,7 +9,7 @@ use mikage::{
     SubmissionToken, TickContext, WindowInputContext, egui,
 };
 use sand_picture::model::{Build, Building, Model, Progress, Scene};
-use sand_picture::view::Mode;
+use sand_picture::view::{Mode, picture_size};
 use std::time::Duration;
 use web_time::Instant;
 
@@ -51,10 +51,11 @@ pub struct SandPicture {
     control: Option<SimulationControl>,
 }
 impl SandPicture {
-    pub fn new(gpu: &GpuContext, target: RenderTargetConfig) -> Self {
+    /// `window` is the window's size in the display's pixels.
+    pub fn new(gpu: &GpuContext, target: RenderTargetConfig, window: [u32; 2]) -> Self {
         Self {
             state: State::Opening,
-            screen: Screen::new(gpu, target),
+            screen: Screen::new(gpu, target, picture_size(window)),
             shown: None,
             panel: Panel::default(),
             mode: Mode::default(),
@@ -82,7 +83,7 @@ impl SandPicture {
                     Build::Finished(model) => State::Built(model),
                 },
                 State::Built(model) => {
-                    let product = Product::new(gpu, model);
+                    let product = Product::new(gpu, model, self.screen.size());
                     if let Some(control) = self.control.as_ref().filter(|_| !self.paused) {
                         control.resume();
                     }
@@ -192,6 +193,16 @@ impl App for SandPicture {
 
     fn render(&mut self, ctx: &mut RenderContext<'_, ()>) {
         self.build(ctx.gpu);
+        // The picture has the window's pixels: a window of another size
+        // gets a picture of another size.
+        let size = picture_size([ctx.target.size.width, ctx.target.size.height]);
+        if size != self.screen.size() {
+            self.screen.resize(ctx.gpu, size);
+            if let State::Running(product) = &self.state {
+                product.resize(ctx.gpu, size);
+            }
+            self.shown = None;
+        }
         let State::Running(product) = &mut self.state else {
             self.screen.encode(ctx, false);
             return;

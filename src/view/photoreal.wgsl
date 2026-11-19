@@ -43,19 +43,25 @@ fn grain_speed(p: vec2<f32>) -> f32 {
     if solid <= 0. { return 0.; }
     return length(c.momentum[1] + c.momentum[2]) / solid;
 }
+// The most points a side at which a pixel's grains are sampled.
+const GRAIN_SAMPLES: i32 = 8;
 // The share of the pixel at p that black grains cover. Sand against the
 // glass is seen grain by grain: each site a grain across shows one grain,
-// black with the black's share of the projected area, sampled at four points
-// of the pixel. Grains that move more than their size in a frame are smeared
-// into the mean share.
+// black with the black's share of the projected area. A pixel shows the
+// grains under it, so it is sampled at as many points a side as it is sites
+// across (one at least: a pixel finer than a grain shows the grain it lies
+// in). Grains that move more than their size in a frame are smeared into the
+// mean share.
 fn black_cover(p: vec2<f32>, black: f32) -> f32 {
     let site = cfg.diameters.x / cfg.cell_width;
     let pixel = vec2<f32>(cfg.size) / vec2<f32>(cfg.image_size);
+    let side = clamp(i32(round(pixel.x / site)), 1, GRAIN_SAMPLES);
     var grains = 0.;
-    for (var k = 0; k < 4; k++) {
-        let o = (vec2<f32>(f32(k % 2), f32(k / 2)) - .5) * .5 * pixel;
-        grains += select(0., .25, site_hash(vec2<i32>(floor((p + o) / site))) < black);
+    for (var k = 0; k < side * side; k++) {
+        let o = ((vec2<f32>(f32(k % side), f32(k / side)) + .5) / f32(side) - .5) * pixel;
+        grains += select(0., 1., site_hash(vec2<i32>(floor((p + o) / site))) < black);
     }
+    grains /= f32(side * side);
     let smear = clamp(grain_speed(p) * EXPOSURE / cfg.diameters.x, 0., 1.);
     return mix(grains, black, smear);
 }

@@ -1,8 +1,9 @@
-//! The picture as the window keeps it: the views draw into a texture of
-//! IMAGE_SIZE now and then, and every frame fits that texture into the
-//! window, whatever the window's size.
+//! The picture as the window keeps it: the views draw into a texture now and
+//! then, and every frame fits that texture into the window. The texture has
+//! the window's own pixels wherever the views can draw at that size
+//! (`picture_size`), so that a pixel of the picture is a pixel of the display.
 use mikage::{GpuContext, RenderContext, RenderTargetConfig};
-use sand_picture::view::{IMAGE_FORMAT, IMAGE_SIZE};
+use sand_picture::view::IMAGE_FORMAT;
 
 /// The window around the picture (linear RGB).
 const SURROUND: wgpu::Color = wgpu::Color {
@@ -34,31 +35,17 @@ fn fragment(in: Corner) -> @location(0) vec4<f32> {
 ";
 
 pub struct Screen {
+    size: [u32; 2],
     texture: wgpu::Texture,
     image: wgpu::TextureView,
     bindings: wgpu::BindGroup,
+    sampler: wgpu::Sampler,
     pipeline: wgpu::RenderPipeline,
 }
 impl Screen {
-    pub fn new(gpu: &GpuContext, target: RenderTargetConfig) -> Self {
+    /// A kept picture of `size` pixels.
+    pub fn new(gpu: &GpuContext, target: RenderTargetConfig, size: [u32; 2]) -> Self {
         let device = &gpu.device;
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("kept picture"),
-            size: wgpu::Extent3d {
-                width: IMAGE_SIZE[0],
-                height: IMAGE_SIZE[1],
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: IMAGE_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let image = texture.create_view(&Default::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("picture fitted to the window"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -97,26 +84,27 @@ impl Screen {
             multiview_mask: None,
             cache: None,
         });
-        let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fit"),
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&image),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let (texture, image, bindings) = kept(device, &pipeline, &sampler, size);
         Self {
+            size,
             texture,
             image,
             bindings,
+            sampler,
             pipeline,
         }
+    }
+
+    /// The kept picture's size in pixels.
+    pub fn size(&self) -> [u32; 2] {
+        self.size
+    }
+
+    /// A kept picture of another size; what it showed is gone.
+    pub fn resize(&mut self, gpu: &GpuContext, size: [u32; 2]) {
+        (self.texture, self.image, self.bindings) =
+            kept(&gpu.device, &self.pipeline, &self.sampler, size);
+        self.size = size;
     }
 
     /// What the views draw into.
@@ -148,7 +136,7 @@ impl Screen {
         if !picture {
             return;
         }
-        let image = IMAGE_SIZE.map(|v| v as f32);
+        let image = self.size.map(|v| v as f32);
         let scale = (window[0] / image[0]).min(window[1] / image[1]);
         let size = image.map(|v| v * scale);
         pass.set_viewport(
@@ -163,4 +151,45 @@ impl Screen {
         pass.set_bind_group(0, &self.bindings, &[]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// The texture the views draw into, at `size`, and its bindings for the fit.
+fn kept(
+    device: &wgpu::Device,
+    pipeline: &wgpu::RenderPipeline,
+    sampler: &wgpu::Sampler,
+    size: [u32; 2],
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("kept picture"),
+        size: wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: IMAGE_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let image = texture.create_view(&Default::default());
+    let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fit"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&image),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    (texture, image, bindings)
 }

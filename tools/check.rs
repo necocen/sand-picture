@@ -18,7 +18,7 @@ mod common;
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
 use sand_picture::model::{Model, Scene};
-use sand_picture::view::Mode;
+use sand_picture::view::{Mode, REFERENCE_SIZE};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -49,7 +49,7 @@ fn checkpoint(
         let pixels = pictures.picture(gpu, mode);
         if let Some(folder) = record {
             let file = format!("{}-{}.png", name.replace(' ', "-"), picture_name(mode));
-            write_png(&folder.join(file), &pixels);
+            write_png(&folder.join(file), &pixels, pictures.size());
         }
         fields.insert(picture_name(mode).to_owned(), hash(&pixels));
     }
@@ -117,7 +117,7 @@ fn main() {
     }
     let gpu = headless();
     let mut model = Model::new(&gpu.device, &gpu.queue, Scene::product());
-    let pictures = Pictures::new(&gpu, &model);
+    let pictures = Pictures::new(&gpu, &model, REFERENCE_SIZE);
     let mut found: Vec<(String, Fields)> = Vec::new();
     let mut failures = 0;
     let mut note = |name: String, fields: Fields| found.push((name, fields));

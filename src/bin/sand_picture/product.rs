@@ -32,10 +32,11 @@ pub struct Product {
 impl Product {
     /// The picture rests with its sand on the floor; the person turns it over
     /// at once, as at every reset, and its drainage begins.
-    pub fn new(gpu: &GpuContext, mut model: Model) -> Self {
+    /// The views draw pictures of `size` pixels.
+    pub fn new(gpu: &GpuContext, mut model: Model, size: [u32; 2]) -> Self {
         model.start_turn();
         Self {
-            views: Views::new(&gpu.device, model.buffers()),
+            views: Views::new(&gpu.device, model.buffers(), size),
             model,
             updates: 0,
             completed: 0,
@@ -146,6 +147,11 @@ impl Product {
         let last = self.recent.back()?;
         let span = last.0.duration_since(self.play.0).as_secs_f64();
         (span > 0.).then(|| (last.1 - self.play.1) as f64 * f64::from(DT) / span)
+    }
+
+    /// From now on the kept picture is `size` pixels.
+    pub fn resize(&self, gpu: &GpuContext, size: [u32; 2]) {
+        self.views.resize(&gpu.queue, size);
     }
 
     /// Draws the view `mode` of the present state into the kept picture.

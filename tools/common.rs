@@ -2,7 +2,7 @@
 //! pictures.
 use mikage::{GpuContext, GpuDescriptor, GpuRequirements};
 use sand_picture::model::Model;
-use sand_picture::view::{IMAGE_FORMAT, IMAGE_SIZE, Mode, Views};
+use sand_picture::view::{IMAGE_FORMAT, Mode, Views};
 use std::path::Path;
 
 /// The GPU as the app asks for it: WebGPU's default limits.
@@ -50,16 +50,19 @@ pub fn read(gpu: &GpuContext, buffer: &wgpu::Buffer) -> Vec<u8> {
 pub struct Pictures {
     views: Views,
     image: wgpu::Texture,
+    size: [u32; 2],
 }
 impl Pictures {
-    pub fn new(gpu: &GpuContext, model: &Model) -> Self {
+    /// Pictures of `size` pixels.
+    pub fn new(gpu: &GpuContext, model: &Model, size: [u32; 2]) -> Self {
         Self {
-            views: Views::new(&gpu.device, model.buffers()),
+            size,
+            views: Views::new(&gpu.device, model.buffers(), size),
             image: gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("picture"),
                 size: wgpu::Extent3d {
-                    width: IMAGE_SIZE[0],
-                    height: IMAGE_SIZE[1],
+                    width: size[0],
+                    height: size[1],
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -72,6 +75,10 @@ impl Pictures {
         }
     }
 
+    pub fn size(&self) -> [u32; 2] {
+        self.size
+    }
+
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, mode: Mode) {
         self.views
             .encode(encoder, &self.image.create_view(&Default::default()), mode);
@@ -79,7 +86,7 @@ impl Pictures {
 
     /// The picture of `mode` now: its pixels as RGBA, the top row first.
     pub fn picture(&self, gpu: &GpuContext, mode: Mode) -> Vec<u8> {
-        let [width, height] = IMAGE_SIZE;
+        let [width, height] = self.size;
         // A copied row is padded to wgpu's row alignment.
         let row = (4 * width).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -128,11 +135,10 @@ pub fn picture_name(mode: Mode) -> &'static str {
     }
 }
 
-/// Writes a picture's RGBA pixels as a PNG.
-pub fn write_png(path: &Path, pixels: &[u8]) {
+/// Writes a picture's RGBA pixels, `size` pixels, as a PNG.
+pub fn write_png(path: &Path, pixels: &[u8], size: [u32; 2]) {
     let file = std::fs::File::create(path).unwrap();
-    let mut encoder =
-        png::Encoder::new(std::io::BufWriter::new(file), IMAGE_SIZE[0], IMAGE_SIZE[1]);
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), size[0], size[1]);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder

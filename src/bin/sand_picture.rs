@@ -52,15 +52,18 @@ fn main() {
     #[cfg(not(target_family = "wasm"))]
     if let Some(agent) = agent() {
         mikage::run_with_agent(
-            |gpu, target, _size| SandPicture::new(gpu, target),
+            |gpu, target, size| SandPicture::new(gpu, target, [size.width, size.height]),
             config,
             agent,
         )
         .expect("the window could not run");
         return;
     }
-    mikage::run(|gpu, target, _size| SandPicture::new(gpu, target), config)
-        .expect("the window could not run");
+    mikage::run(
+        |gpu, target, size| SandPicture::new(gpu, target, [size.width, size.height]),
+        config,
+    )
+    .expect("the window could not run");
 }
 
 /// The HTTP port through which tools read the window's picture and state:
