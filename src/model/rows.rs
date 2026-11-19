@@ -72,8 +72,10 @@ pub const SCRATCH: &[Use] = &[
     ("GROUP_LABEL", SLOTS),
     // Per face, the gas flux by identity.
     ("FLUX", 2 * SLOTS),
-    // Each group's outgoing ratio per phase (transport_work.wgsl).
+    // Each group's outgoing ratio per phase, and its receiving ratio
+    // (transport_work.wgsl).
     ("OUTGOING_CAPACITY", 1),
+    ("RECEIVING_CAPACITY", 1),
 ];
 
 /// The rows the uses take together.
