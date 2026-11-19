@@ -24,9 +24,11 @@ pub struct Buffers {
     pub transport: wgpu::Buffer,
     /// Transport group membership.
     pub members: wgpu::Buffer,
+    /// What one update's kernels write before they read it: rows of one
+    /// vec4 a cell, named in shared/geometry_rows.wgsl.
+    pub scratch: wgpu::Buffer,
     /// Scratch the stages reuse: the mechanics' working values, then the
     /// transport's capacities.
-    pub next: wgpu::Buffer,
     pub compression: wgpu::Buffer,
     /// The cross-gap resistance table of the materials.
     pub table: wgpu::Buffer,
@@ -48,6 +50,9 @@ pub struct Buffers {
     /// The flow solver's fields.
     pub stream: stream::Fields,
 }
+
+/// The rows of `scratch` (SCRATCH_ROWS of shared/geometry_rows.wgsl).
+const SCRATCH_ROWS: u64 = 52;
 
 impl Buffers {
     /// The buffers of a picture at rest in `scene`, with the materials'
@@ -98,7 +103,7 @@ impl Buffers {
             ),
             transport: blank("conservative phase flux", cells * 2 * 80),
             members: blank("connected transport member indices", cells * 8),
-            next: blank("stress and transport capacity", cells * 16),
+            scratch: blank("an update's scratch rows", cells * 16 * SCRATCH_ROWS),
             compression: blank("conservative transport reconstruction", cells * 64),
             table: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cross-gap resistance"),
@@ -137,7 +142,7 @@ impl Buffers {
             "faces" => &self.faces,
             "transport" => &self.transport,
             "members" => &self.members,
-            "next" => &self.next,
+            "scratch" => &self.scratch,
             "compression" => &self.compression,
             "table" => &self.table,
             "terrain" => &self.terrain,
@@ -193,7 +198,7 @@ impl Buffers {
             &self.faces,
             &self.transport,
             &self.members,
-            &self.next,
+            &self.scratch,
             &self.compression,
             &self.terrain,
             &self.strata,

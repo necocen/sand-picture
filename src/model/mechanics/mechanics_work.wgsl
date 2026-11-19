@@ -17,8 +17,7 @@ fn put_grain_force(i:u32,value:vec2<f32>) {compression[i].momentum[0]=value;}
 fn put_grain_force_bound(i:u32,value:vec2<f32>) {compression[i].momentum[3]=value;}
 fn put_grain_velocity(i:u32,value:vec2<f32>) {compression[i].momentum[1]=value;}
 fn put_grain_velocity_bound(i:u32,value:vec2<f32>) {compression[i].momentum[2]=value;}
-// Binding 2 holds returned stress here, and outgoing capacity during transport.
-fn put_returned_stress(i:u32,value:vec4<f32>) {next[i]=value;}
+fn put_returned_stress(i:u32,value:vec4<f32>) {scratch[RETURNED_STRESS_ROW*cfg.n+i]=value;}
 fn put_returned_suction(i:u32,value:f32) {compression[i].stress.x=value;}
-fn returned_stress(i:u32)->vec4<f32> {return next[i];}
+fn returned_stress(i:u32)->vec4<f32> {return scratch[RETURNED_STRESS_ROW*cfg.n+i];}
 fn returned_suction(i:u32)->f32 {return compression[i].stress.x;}

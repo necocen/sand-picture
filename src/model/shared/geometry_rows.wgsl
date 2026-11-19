@@ -33,3 +33,8 @@ const TEETH_ROW:u32=60u;              // per column: the slab's undersides (teet
 const BODY_ROW:u32=61u;               // a packed body's last layer and where its faces shed (teeth.wgsl)
 const PLUG_ROW:u32=62u;               // a body's grains before the transport (plug.wgsl)
 const COLUMN_ROW:u32=63u;             // the column sliding through a slot between bubbles (teeth.wgsl)
+// The rows of `scratch`, in the same units: what one update's kernels write
+// before they read it.
+const RETURNED_STRESS_ROW:u32=50u;    // the stress the grain constraint returns (mechanics_work.wgsl)
+const OUTGOING_CAPACITY_ROW:u32=50u;  // each transport group's outgoing ratio per phase (transport_work.wgsl)
+const SCRATCH_ROWS:u32=52u;
