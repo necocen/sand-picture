@@ -1,0 +1,143 @@
+//! What the tools share: a GPU without a window, readbacks, and the views'
+//! pictures.
+use mikage::{GpuContext, GpuDescriptor, GpuRequirements};
+use sand_picture::model::Model;
+use sand_picture::view::{IMAGE_FORMAT, IMAGE_SIZE, Mode, Views};
+use std::path::Path;
+
+/// The GPU as the app asks for it: WebGPU's default limits.
+pub fn headless() -> GpuContext {
+    pollster::block_on(GpuContext::headless(GpuDescriptor {
+        requirements: GpuRequirements {
+            required_limits: Some(wgpu::Limits::default()),
+            ..Default::default()
+        },
+        ..Default::default()
+    }))
+    .unwrap()
+}
+
+/// Waits until the GPU has done everything submitted.
+pub fn wait(gpu: &GpuContext) {
+    gpu.device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        })
+        .unwrap();
+}
+
+/// A buffer's bytes now.
+pub fn read(gpu: &GpuContext, buffer: &wgpu::Buffer) -> Vec<u8> {
+    let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: buffer.size(),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
+    gpu.queue.submit([encoder.finish()]);
+    staging
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, |result| result.unwrap());
+    wait(gpu);
+    staging.slice(..).get_mapped_range().unwrap().to_vec()
+}
+
+/// The views and the image they draw into, as a window keeps them: one set
+/// for the whole run, since a view may keep marks from picture to picture.
+pub struct Pictures {
+    views: Views,
+    image: wgpu::Texture,
+}
+impl Pictures {
+    pub fn new(gpu: &GpuContext, model: &Model) -> Self {
+        Self {
+            views: Views::new(&gpu.device, model.buffers()),
+            image: gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("picture"),
+                size: wgpu::Extent3d {
+                    width: IMAGE_SIZE[0],
+                    height: IMAGE_SIZE[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: IMAGE_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            }),
+        }
+    }
+
+    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, mode: Mode) {
+        self.views
+            .encode(encoder, &self.image.create_view(&Default::default()), mode);
+    }
+
+    /// The picture of `mode` now: its pixels as RGBA, the top row first.
+    pub fn picture(&self, gpu: &GpuContext, mode: Mode) -> Vec<u8> {
+        let [width, height] = IMAGE_SIZE;
+        // A copied row is padded to wgpu's row alignment.
+        let row = (4 * width).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("picture readback"),
+            size: u64::from(row * height),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        self.draw(&mut encoder, mode);
+        encoder.copy_texture_to_buffer(
+            self.image.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: None,
+                },
+            },
+            self.image.size(),
+        );
+        gpu.queue.submit([encoder.finish()]);
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |result| result.unwrap());
+        wait(gpu);
+        staging
+            .slice(..)
+            .get_mapped_range()
+            .unwrap()
+            .chunks_exact(row as usize)
+            .flat_map(|padded| &padded[..4 * width as usize])
+            .copied()
+            .collect()
+    }
+}
+
+/// The name a view's picture is kept under: `image` is Photoreal, as in
+/// v2.20's baseline.
+pub fn picture_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Simple => "simple",
+        Mode::Photoreal => "image",
+        Mode::Flow => "flow",
+    }
+}
+
+/// Writes a picture's RGBA pixels as a PNG.
+pub fn write_png(path: &Path, pixels: &[u8]) {
+    let file = std::fs::File::create(path).unwrap();
+    let mut encoder =
+        png::Encoder::new(std::io::BufWriter::new(file), IMAGE_SIZE[0], IMAGE_SIZE[1]);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .unwrap()
+        .write_image_data(pixels)
+        .unwrap();
+}

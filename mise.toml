@@ -10,6 +10,14 @@ run = [
     "cargo test",
 ]
 
+[tasks.check]
+description = "回帰：0・1・5 秒、二度目の裏返し、リセットを基準のハッシュと比べる（GPU を使う。sandbox の外で）"
+run = "cargo run --release --example check"
+
+[tasks.check-full]
+description = "回帰：同じものを 60 秒まで（GPU を 3〜4 分使う）"
+run = "cargo run --release --example check -- --full"
+
 [tasks.web]
 description = "Web 向けにビルドして http://127.0.0.1:8080 で配る"
 run = "trunk serve"

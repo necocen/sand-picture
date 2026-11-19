@@ -20,133 +20,24 @@
 //! Two runs agree bit for bit in the eight buffers and the strata. In the
 //! labels they agree only in the films' counts and the cells' words: the
 //! bubbles' records are numbered in the order the GPU's threads reach them.
-use mikage::{GpuContext, GpuDescriptor, GpuRequirements};
+mod common;
+
+use common::{Pictures, headless, picture_name, read, wait, write_png};
+use mikage::GpuContext;
 use sand_picture::model::{DT, Model, Scene};
-use sand_picture::view::{IMAGE_FORMAT, IMAGE_SIZE, Mode, Views};
+use sand_picture::view::Mode;
 use std::path::{Path, PathBuf};
 
-fn wait(gpu: &GpuContext) {
-    gpu.device
-        .poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        })
-        .unwrap();
-}
-
-fn read(gpu: &GpuContext, buffer: &wgpu::Buffer) -> Vec<u8> {
-    let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: buffer.size(),
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
-    gpu.queue.submit([encoder.finish()]);
-    staging
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, |result| result.unwrap());
-    wait(gpu);
-    staging.slice(..).get_mapped_range().unwrap().to_vec()
-}
-
-/// The views and the image they draw into, as a window keeps them: one set
-/// for the whole run, since a view may keep marks from picture to picture.
-struct Pictures {
-    views: Views,
-    image: wgpu::Texture,
-}
-impl Pictures {
-    fn new(gpu: &GpuContext, model: &Model) -> Self {
-        Self {
-            views: Views::new(&gpu.device, model.buffers()),
-            image: gpu.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("picture"),
-                size: wgpu::Extent3d {
-                    width: IMAGE_SIZE[0],
-                    height: IMAGE_SIZE[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: IMAGE_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            }),
-        }
-    }
-
-    fn draw(&self, encoder: &mut wgpu::CommandEncoder, mode: Mode) {
-        self.views
-            .encode(encoder, &self.image.create_view(&Default::default()), mode);
-    }
-
-    /// The picture of `mode` now: its pixels as RGBA, the top row first.
-    fn picture(&self, gpu: &GpuContext, mode: Mode) -> Vec<u8> {
-        let [width, height] = IMAGE_SIZE;
-        // A copied row is padded to wgpu's row alignment.
-        let row = (4 * width).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("picture readback"),
-            size: u64::from(row * height),
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        self.draw(&mut encoder, mode);
-        encoder.copy_texture_to_buffer(
-            self.image.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &staging,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: None,
-                },
-            },
-            self.image.size(),
-        );
-        gpu.queue.submit([encoder.finish()]);
-        staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, |result| result.unwrap());
-        wait(gpu);
-        staging
-            .slice(..)
-            .get_mapped_range()
-            .unwrap()
-            .chunks_exact(row as usize)
-            .flat_map(|padded| &padded[..4 * width as usize])
-            .copied()
-            .collect()
-    }
-
-    /// Writes the three views into a dump's folder. Every view is drawn
-    /// before the buffers are read: the comparison of the buffers then also
-    /// shows that no view writes to them.
-    fn write(&self, gpu: &GpuContext, folder: &Path) {
-        std::fs::create_dir_all(folder).unwrap();
-        for mode in Mode::ALL {
-            let name = match mode {
-                Mode::Simple => "simple",
-                Mode::Photoreal => "image",
-                Mode::Flow => "flow",
-            };
-            let pixels = self.picture(gpu, mode);
-            std::fs::write(folder.join(format!("{name}.bin")), &pixels).unwrap();
-            let file = std::fs::File::create(folder.join(format!("{name}.png"))).unwrap();
-            let mut encoder =
-                png::Encoder::new(std::io::BufWriter::new(file), IMAGE_SIZE[0], IMAGE_SIZE[1]);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder
-                .write_header()
-                .unwrap()
-                .write_image_data(&pixels)
-                .unwrap();
-        }
+/// Writes the three views into a dump's folder. Every view is drawn before
+/// the buffers are read: the comparison of the buffers then also shows that
+/// no view writes to them.
+fn write_pictures(gpu: &GpuContext, pictures: &Pictures, folder: &Path) {
+    std::fs::create_dir_all(folder).unwrap();
+    for mode in Mode::ALL {
+        let name = picture_name(mode);
+        let pixels = pictures.picture(gpu, mode);
+        std::fs::write(folder.join(format!("{name}.bin")), &pixels).unwrap();
+        write_png(&folder.join(format!("{name}.png")), &pixels);
     }
 }
 
@@ -234,15 +125,7 @@ fn main() {
     }
     std::fs::create_dir_all(&output).unwrap();
     let started = std::time::Instant::now();
-    let gpu = pollster::block_on(GpuContext::headless(GpuDescriptor {
-        requirements: GpuRequirements {
-            // WebGPU's default limits, as the app asks for.
-            required_limits: Some(wgpu::Limits::default()),
-            ..Default::default()
-        },
-        ..Default::default()
-    }))
-    .unwrap();
+    let gpu = headless();
     let mut model = Model::new(&gpu.device, &gpu.queue, Scene::product());
     wait(&gpu);
     println!("model ready after {:.2} s", started.elapsed().as_secs_f64());
@@ -264,7 +147,7 @@ fn main() {
     let dump_all = |model: &Model, step: u64| {
         let folder = output.join(format!("step-{step:05}"));
         if let Some(pictures) = pictures.as_ref().filter(|_| views) {
-            pictures.write(&gpu, &folder);
+            write_pictures(&gpu, pictures, &folder);
         }
         write(&gpu, model, &folder, false);
     };
