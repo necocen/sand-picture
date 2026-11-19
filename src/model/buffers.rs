@@ -127,6 +127,32 @@ impl Buffers {
         buffers
     }
 
+    /// The buffer that the programs' global `name` is. A buffer can go by
+    /// more than one name: a program names it for what it reads there.
+    pub fn get(&self, name: &str) -> &wgpu::Buffer {
+        match name {
+            "cfg" => &self.config,
+            "cells" => &self.cells,
+            "geometry" => &self.geometry,
+            "faces" => &self.faces,
+            "transport" => &self.transport,
+            "members" => &self.members,
+            "next" => &self.next,
+            "compression" => &self.compression,
+            "table" => &self.table,
+            "terrain" => &self.terrain,
+            "strata" => &self.strata,
+            "arrival" => &self.arrival,
+            "labels" => &self.labels,
+            "carry_plan" | "plan" => &self.schedule,
+            "gaps" => &self.gaps,
+            "contact_work" => &self.contact_list,
+            "contact_fit_groups" => &self.contact_groups,
+            "potential" | "solution" => &self.stream.solution,
+            other => self.stream.get(other),
+        }
+    }
+
     /// The eight buffers a checkpoint compares, by name.
     pub fn named(&self) -> [(&'static str, &wgpu::Buffer); 8] {
         [

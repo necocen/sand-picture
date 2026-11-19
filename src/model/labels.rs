@@ -2,7 +2,7 @@
 //! component after each update's transport (labels.wgsl), where bubbles
 //! pressed one under another join and bubbles at rest are held.
 use super::GAS_SLOTS;
-use super::buffers::Buffers;
+use super::grid::CELLS;
 use super::kernel::Plan;
 use super::shader::Program;
 use super::update::Plans;
@@ -55,16 +55,9 @@ pub struct Labels {
     kernels: [usize; 8],
 }
 impl Labels {
-    pub fn new(plans: &mut Plans, buffers: &Buffers) -> Self {
-        let fields = [
-            (0, &buffers.config),
-            (1, &buffers.cells),
-            (4, &buffers.geometry),
-            (16, &buffers.labels),
-        ];
-        let cells = buffers.n.div_ceil(128);
-        let mut kernel =
-            |entry, groups| plans.add(Plan::new(Program::Model, entry, &fields, groups));
+    pub fn new(plans: &mut Plans) -> Self {
+        let cells = ((CELLS[0] * CELLS[1]) as u32).div_ceil(128);
+        let mut kernel = |entry, groups| plans.add(Plan::new(Program::Model, entry, groups));
         Self {
             kernels: [
                 kernel("label_init", cells),

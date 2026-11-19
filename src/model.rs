@@ -17,6 +17,7 @@ mod slab;
 mod stream;
 mod transport;
 mod update;
+mod uses;
 
 use bed::Bed;
 pub use buffers::Buffers;
@@ -142,7 +143,7 @@ impl Building {
             return Build::Unfinished(self);
         };
         if let Some(plan) = assembly.plans.next() {
-            let kernel = assembly.pipelines.kernel(device, plan);
+            let kernel = assembly.pipelines.kernel(device, &assembly.buffers, plan);
             assembly.kernels.push(kernel);
             self.kernels = Some(assembly);
             return Build::Unfinished(self);
@@ -160,73 +161,81 @@ impl Building {
         Build::Finished(model)
     }
 }
+/// Every kernel of the model as a plan, by place, and the lists that run
+/// them: the update's steps, the preparation of the first update, and the
+/// mirroring of a turn.
+struct Layout {
+    plans: Vec<Plan>,
+    steps: Vec<Step>,
+    prepare: Vec<usize>,
+    invert: Vec<usize>,
+}
+fn layout() -> Layout {
+    let mut plans = Plans::default();
+    let slab = Slab::new(&mut plans);
+    let bed = Bed::new(&mut plans);
+    let mechanics = Mechanics::new(&mut plans);
+    let stream = Stream::new(&mut plans);
+    let transport = Transport::new(&mut plans);
+    let labels = Labels::new(&mut plans);
+    let interface = Interface::new(&mut plans);
+    let [nx, ny] = CELLS.map(|v| v as u32);
+    let invert = [
+        vec![
+            plans.add(Plan::new(
+                Program::Invert,
+                "invert_cells",
+                (nx * ny).div_ceil(2).div_ceil(128),
+            )),
+            plans.add(Plan::new(
+                Program::Invert,
+                "invert_stream",
+                ((nx + 1) * (ny + 1)).div_ceil(2).div_ceil(128),
+            )),
+        ],
+        interface.kernels(),
+        vec![bed.clear_strata],
+    ]
+    .concat();
+    let prepare = [
+        vec![bed.geometry, bed.release],
+        interface.kernels(),
+        vec![
+            bed.occupancy,
+            bed.passage,
+            mechanics.predict,
+            mechanics.grain_stress,
+            mechanics.prepare_stream,
+            mechanics.cache_contact,
+        ],
+        stream.tensor(),
+        stream.assemble(false),
+        stream.coarsen(),
+    ]
+    .concat();
+    let steps = update::steps(
+        &slab, &bed, &mechanics, &stream, &transport, &labels, &interface,
+    );
+    Layout {
+        plans: plans.take(),
+        steps,
+        prepare,
+        invert,
+    }
+}
 impl Assembly {
-    /// The buffers of the scene, the programs' modules, and every module's
-    /// plans of its kernels; the kernels themselves are made one by one.
+    /// The buffers of the scene, the programs' modules, and the plans of
+    /// every kernel; the kernels themselves are made one by one.
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, building: &Building) -> Self {
-        let buffers = Buffers::new(device, queue, &building.scene, &building.table);
-        let mut plans = Plans::default();
-        let slab = Slab::new(&mut plans, &buffers);
-        let bed = Bed::new(&mut plans, &buffers);
-        let mechanics = Mechanics::new(&mut plans, &buffers);
-        let stream = Stream::new(&mut plans, device, &buffers);
-        let transport = Transport::new(&mut plans, &buffers);
-        let labels = Labels::new(&mut plans, &buffers);
-        let interface = Interface::new(&mut plans, &buffers);
-        let mirrored = [
-            (0, &buffers.config),
-            (1, &buffers.cells),
-            (4, &buffers.geometry),
-            (7, &buffers.stream.solution),
-            (16, &buffers.labels),
-        ];
-        let vertices = (buffers.nx + 1) * (buffers.ny + 1);
-        let invert = [
-            vec![
-                plans.add(Plan::new(
-                    Program::Invert,
-                    "invert_cells",
-                    &mirrored,
-                    buffers.n.div_ceil(2).div_ceil(128),
-                )),
-                plans.add(Plan::new(
-                    Program::Invert,
-                    "invert_stream",
-                    &mirrored,
-                    vertices.div_ceil(2).div_ceil(128),
-                )),
-            ],
-            interface.kernels(),
-            vec![bed.clear_strata],
-        ]
-        .concat();
-        let prepare = [
-            vec![bed.geometry, bed.release],
-            interface.kernels(),
-            vec![
-                bed.occupancy,
-                bed.passage,
-                mechanics.predict,
-                mechanics.grain_stress,
-                mechanics.prepare_stream,
-                mechanics.cache_contact,
-            ],
-            stream.tensor(),
-            stream.assemble(false),
-            stream.coarsen(),
-        ]
-        .concat();
-        let steps = update::steps(
-            &slab, &bed, &mechanics, &stream, &transport, &labels, &interface,
-        );
+        let layout = layout();
         Self {
+            buffers: Buffers::new(device, queue, &building.scene, &building.table),
             pipelines: Pipelines::new(device, &building.grains),
-            buffers,
-            plans: plans.take().into_iter(),
+            plans: layout.plans.into_iter(),
             kernels: Vec::new(),
-            steps,
-            prepare,
-            invert,
+            steps: layout.steps,
+            prepare: layout.prepare,
+            invert: layout.invert,
         }
     }
 }
@@ -331,5 +340,73 @@ impl Model {
 
     pub fn buffers(&self) -> &Buffers {
         &self.buffers
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kernel::declarations;
+    use super::uses::USES;
+    use super::{Grains, Program, layout};
+    use naga::valid::{Capabilities, ValidationFlags, Validator};
+
+    /// The table of what each entry point uses is what the shaders say, and
+    /// no entry point uses more storage buffers than WebGPU promises a stage
+    /// (eight). When a shader has changed, the failure prints the table.
+    #[test]
+    fn the_table_of_uses_is_the_shaders() {
+        let grains = Grains::default();
+        let mut table = String::new();
+        let mut crowded = Vec::new();
+        for program in Program::ALL {
+            let source = program.source(&grains);
+            let declared = declarations(&source);
+            let module = naga::front::wgsl::parse_str(&source).unwrap();
+            let info = Validator::new(ValidationFlags::all(), Capabilities::default())
+                .validate(&module)
+                .unwrap();
+            let mut entries: Vec<_> = module.entry_points.iter().enumerate().collect();
+            entries.sort_by_key(|(_, entry)| entry.name.clone());
+            for (index, entry) in entries {
+                let uses = info.get_entry_point(index);
+                // The buffers among the globals the entry point uses, in the
+                // order of their bindings.
+                let mut used: Vec<_> = module
+                    .global_variables
+                    .iter()
+                    .filter(|(handle, global)| {
+                        global.binding.is_some() && !uses[*handle].is_empty()
+                    })
+                    .map(|(_, global)| global.name.as_deref().unwrap())
+                    .collect();
+                used.sort_by_key(|name| (declared[*name].binding, *name));
+                let storage = used.iter().filter(|name| !declared[**name].uniform).count();
+                if storage > 8 {
+                    crowded.push(format!(
+                        "{program:?} {}: {storage} storage buffers",
+                        entry.name
+                    ));
+                }
+                table.push_str(&format!(
+                    "    (Program::{program:?}, {:?}, &{used:?}),\n",
+                    entry.name
+                ));
+            }
+        }
+        assert!(crowded.is_empty(), "{}", crowded.join("\n"));
+        let current: String = USES
+            .iter()
+            .map(|(program, entry, used)| {
+                format!("    (Program::{program:?}, {entry:?}, &{used:?}),\n")
+            })
+            .collect();
+        assert!(
+            current == table,
+            "the shaders use their buffers otherwise than uses.rs says; its table should be:\n{table}"
+        );
+        // Every kernel runs an entry point of the table.
+        for plan in layout().plans {
+            super::uses::uses(plan.program, plan.entry);
+        }
     }
 }

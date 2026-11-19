@@ -1,7 +1,7 @@
 //! The coupled water and interface response, solved twice per update by
 //! flexible conjugate gradients preconditioned with a multigrid V-cycle.
 use super::DT;
-use super::buffers::{Buffers, blank};
+use super::buffers::blank;
 use super::grid::{CELLS, FLOW_ITERATIONS, cell_width};
 use super::kernel::Plan;
 use super::material::SURFACE_TENSION;
@@ -34,6 +34,15 @@ fn levels() -> Vec<(u32, u32, u32)> {
     sizes
 }
 
+/// The first level the coarse cycle serves: the first small enough, and the
+/// coarsest always is.
+fn cycled(sizes: &[(u32, u32, u32)]) -> usize {
+    sizes
+        .iter()
+        .position(|&(x, y, _)| x * y <= COARSE_CYCLE_POINTS)
+        .unwrap_or(sizes.len() - 1)
+}
+
 /// The flow solver's fields.
 pub struct Fields {
     /// The streamfunction, coarse levels included: the finest level is the
@@ -47,6 +56,8 @@ pub struct Fields {
     tensor: wgpu::Buffer,
     /// The conjugate gradients' vectors and sums.
     work: wgpu::Buffer,
+    /// The levels of the coarse cycle, as it reads them.
+    hierarchy: wgpu::Buffer,
 }
 impl Fields {
     /// Every field, for a reset: all start as zeros.
@@ -85,6 +96,29 @@ impl Fields {
                 "flexible conjugate gradient vectors",
                 u64::from(6 * vertices + 2 * vertices.div_ceil(128) + 8) * 4,
             ),
+            hierarchy: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("levels of the coarse cycle"),
+                contents: &sizes[cycled(&sizes)..]
+                    .iter()
+                    .flat_map(|&(x, y, offset)| [x, y, offset, 0])
+                    .chain([0; 4])
+                    .flat_map(u32::to_le_bytes)
+                    .collect::<Vec<_>>(),
+                usage: wgpu::BufferUsages::STORAGE,
+            }),
+        }
+    }
+
+    /// The field that the flow solver's program calls `name`.
+    pub fn get(&self, name: &str) -> &wgpu::Buffer {
+        match name {
+            "rows" => &self.rows,
+            "residual" => &self.residual,
+            "anchors" => &self.anchors,
+            "tensor" => &self.tensor,
+            "fcg" => &self.work,
+            "hierarchy" => &self.hierarchy,
+            other => panic!("the model has no buffer {other}"),
         }
     }
 }
@@ -121,62 +155,33 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub fn new(plans: &mut Plans, device: &wgpu::Device, buffers: &Buffers) -> Self {
+    pub fn new(plans: &mut Plans) -> Self {
         let [nx, ny] = CELLS.map(|v| v as u32);
         let h = cell_width();
-        let dt = DT;
-        let fields = &buffers.stream;
         let sizes = levels();
-        let uniform = |label: &str, words: [u32; 12]| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: &words
-                    .into_iter()
-                    .flat_map(u32::to_le_bytes)
-                    .collect::<Vec<_>>(),
-                usage: wgpu::BufferUsages::UNIFORM,
-            })
-        };
-        // The dispatched level, the next coarser one, the grid, a kernel's
-        // colour and the capillary coefficient dt^2 sigma / (rho h^3).
-        let config = |level: usize, color: u32, entry: &str| {
+        // A kernel's own configuration: the dispatched level, the next
+        // coarser one, the grid, the kernel's colour and the capillary
+        // coefficient dt^2 sigma / (rho h^3).
+        let config = |level: usize, color: u32| {
             let (x, y, offset) = sizes[level];
             let (cx, cy, coarse) = sizes.get(level + 1).copied().unwrap_or((0, 0, 0));
-            uniform(
-                entry,
-                [
-                    x,
-                    y,
-                    offset,
-                    cx,
-                    cy,
-                    coarse,
-                    nx,
-                    ny,
-                    h.to_bits(),
-                    color,
-                    (dt * dt * SURFACE_TENSION / (997. * h * h * h)).to_bits(),
-                    9,
-                ],
-            )
+            [
+                x,
+                y,
+                offset,
+                cx,
+                cy,
+                coarse,
+                nx,
+                ny,
+                h.to_bits(),
+                color,
+                (DT * DT * SURFACE_TENSION / (997. * h * h * h)).to_bits(),
+                9,
+            ]
         };
         let build = |level: usize, color, entry, groups| {
-            Plan::new(
-                Program::Stream,
-                entry,
-                &[
-                    (0, &config(level, color, entry)),
-                    (1, &fields.rows),
-                    (2, &fields.solution),
-                    (3, &fields.residual),
-                    (4, &buffers.faces),
-                    (5, &buffers.cells),
-                    (6, &buffers.geometry),
-                    (7, &fields.tensor),
-                    (9, &fields.anchors),
-                ],
-                groups,
-            )
+            Plan::new(Program::Stream, entry, groups).with_config(&config(level, color))
         };
         let coarsen = sizes
             .windows(2)
@@ -190,12 +195,7 @@ impl Stream {
                 ))
             })
             .collect();
-        // The coarse cycle starts at the first level small enough; the
-        // coarsest always is.
-        let cycled = sizes
-            .iter()
-            .position(|&(x, y, _)| x * y <= COARSE_CYCLE_POINTS)
-            .unwrap_or(sizes.len() - 1);
+        let cycled = cycled(&sizes);
         let levels = sizes[..cycled]
             .iter()
             .enumerate()
@@ -228,71 +228,30 @@ impl Stream {
                 }
             })
             .collect();
-        let hierarchy = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("levels of the coarse cycle"),
-            contents: &sizes[cycled..]
-                .iter()
-                .flat_map(|&(x, y, offset)| [x, y, offset, 0])
-                .chain([0; 4])
-                .flat_map(u32::to_le_bytes)
-                .collect::<Vec<_>>(),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
         let (x, y, offset) = sizes[cycled];
         let (cx, cy, coarse) = sizes.get(cycled + 1).copied().unwrap_or((0, 0, 0));
-        let cycle_config = uniform(
-            "coarse cycle",
-            [
-                x,
-                y,
-                offset,
-                cx,
-                cy,
-                coarse,
-                nx,
-                ny,
-                h.to_bits(),
-                (sizes.len() - 1 - cycled) as u32,
-                0,
-                9,
-            ],
-        );
-        let coarse_cycle = plans.add(Plan::new(
-            Program::Stream,
-            "coarse_cycle",
-            &[
-                (0, &cycle_config),
-                (1, &fields.rows),
-                (2, &fields.solution),
-                (3, &fields.residual),
-                (7, &fields.tensor),
-                (10, &hierarchy),
-            ],
-            1,
-        ));
+        let coarse_cycle = plans.add(Plan::new(Program::Stream, "coarse_cycle", 1).with_config(&[
+            x,
+            y,
+            offset,
+            cx,
+            cy,
+            coarse,
+            nx,
+            ny,
+            h.to_bits(),
+            (sizes.len() - 1 - cycled) as u32,
+            0,
+            9,
+        ]));
         let vertices = (nx + 1) * (ny + 1);
         // The conjugate gradients' sums are gathered by workgroups of 128.
         let groups = vertices.div_ceil(128);
         let points = vertices.div_ceil(POINT_THREADS);
         let (x0, y0, _) = sizes[0];
         let (cx0, cy0, coarse0) = sizes.get(1).copied().unwrap_or((0, 0, 0));
-        let finest = uniform(
-            "finest flow level",
-            [x0, y0, 0, cx0, cy0, coarse0, nx, ny, h.to_bits(), 0, 0, 9],
-        );
-        let fcg = |entry, groups| {
-            Plan::new(
-                Program::Stream,
-                entry,
-                &[
-                    (0, &finest),
-                    (1, &fields.rows),
-                    (2, &fields.solution),
-                    (8, &fields.work),
-                ],
-                groups,
-            )
-        };
+        let finest = [x0, y0, 0, cx0, cy0, coarse0, nx, ny, h.to_bits(), 0, 0, 9];
+        let fcg = |entry, groups| Plan::new(Program::Stream, entry, groups).with_config(&finest);
         Self {
             fcg_start: [
                 plans.add(fcg("fcg_start", groups)),
@@ -313,17 +272,9 @@ impl Stream {
             anchor_predict: plans.add(build(0, 0, "anchor_predict", points)),
             anchor_apply: plans.add(build(0, 0, "anchor_apply", points)),
             // The tension tensor reads the gas by the relabelling's words.
-            interface: plans.add(Plan::new(
-                Program::Stream,
-                "interface_tensor",
-                &[
-                    (0, &config(0, 0, "interface_tensor")),
-                    (6, &buffers.geometry),
-                    (7, &fields.tensor),
-                    (11, &buffers.labels),
-                ],
-                points,
-            )),
+            interface: plans.add(
+                Plan::new(Program::Stream, "interface_tensor", points).with_config(&config(0, 0)),
+            ),
             coarsen,
             levels,
             coarse_cycle,

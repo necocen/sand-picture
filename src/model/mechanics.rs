@@ -1,7 +1,6 @@
 //! Predicted flow and grain/contact response, before and after each of an
 //! update's two flow solves. The flow solve itself is `stream`.
-use super::buffers::Buffers;
-use super::grid::pressure_pairs;
+use super::grid::{CELLS, pressure_pairs};
 use super::kernel::Plan;
 use super::shader::Program;
 use super::update::Plans;
@@ -25,13 +24,14 @@ pub struct Mechanics {
     pub hold_friction: usize,
 }
 impl Mechanics {
-    pub fn new(plans: &mut Plans, buffers: &Buffers) -> Self {
-        let n = buffers.n;
+    pub fn new(plans: &mut Plans) -> Self {
+        let [nx, ny] = CELLS.map(|v| v as u32);
+        let n = nx * ny;
         let groups = n.div_ceil(128);
         // A red-black sweep serves only its colour's cells, half of each row.
-        let colour = (buffers.ny * buffers.nx.div_ceil(2)).div_ceil(128);
+        let colour = (ny * nx.div_ceil(2)).div_ceil(128);
         let edges = (2 * n).div_ceil(128);
-        let mut build = |entry, groups| plans.add(common(buffers, entry, groups));
+        let mut build = |entry, groups| plans.add(Plan::new(Program::Model, entry, groups));
         Self {
             momentum: build("apply_momentum", groups),
             predict: build("predict", edges),
@@ -80,24 +80,4 @@ impl Mechanics {
             self.prepare_stream,
         ]
     }
-}
-
-/// A kernel of the model's program with the fields most of them share.
-pub fn common(buffers: &Buffers, entry: &'static str, groups: u32) -> Plan {
-    Plan::new(
-        Program::Model,
-        entry,
-        &[
-            (0, &buffers.config),
-            (1, &buffers.cells),
-            (2, &buffers.next),
-            (3, &buffers.faces),
-            (4, &buffers.geometry),
-            (5, &buffers.table),
-            (6, &buffers.compression),
-            (7, &buffers.stream.solution),
-            (8, &buffers.transport),
-        ],
-        groups,
-    )
 }

@@ -4,8 +4,7 @@
 //! reduced to the subdivisions this update needs (at most the grid's budget),
 //! and every slot of the budget is encoded; the kernels of an unused slot end
 //! at once.
-use super::buffers::Buffers;
-use super::grid::subdivisions;
+use super::grid::{CELLS, subdivisions};
 use super::kernel::Plan;
 use super::shader::Program;
 use super::update::Plans;
@@ -28,118 +27,34 @@ pub struct Transport {
     advance: usize,
 }
 impl Transport {
-    pub fn new(plans: &mut Plans, buffers: &Buffers) -> Self {
-        let n = buffers.n;
+    pub fn new(plans: &mut Plans) -> Self {
+        let n = (CELLS[0] * CELLS[1]) as u32;
         let groups = n.div_ceil(128);
         let edges = (2 * n).div_ceil(128);
-        let common = |entry, groups| {
-            Plan::new(
-                Program::Model,
-                entry,
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (2, &buffers.next),
-                    (3, &buffers.faces),
-                    (4, &buffers.geometry),
-                    (6, &buffers.compression),
-                    (12, &buffers.members),
-                    (8, &buffers.transport),
-                    (9, &buffers.schedule),
-                ],
-                groups,
-            )
-        };
-        let scheduled = |entry, groups| {
-            Plan::new(
-                Program::Schedule,
-                entry,
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.faces),
-                    (2, &buffers.schedule),
-                    (3, &buffers.cells),
-                    (4, &buffers.geometry),
-                    (5, &buffers.members),
-                ],
-                groups,
-            )
-        };
+        let model = |entry, groups| Plan::new(Program::Model, entry, groups);
+        let scheduled = |entry, groups| Plan::new(Program::Schedule, entry, groups);
         Self {
             groups: [
-                plans.add(common("request_groups", groups)),
-                plans.add(common("choose_groups", groups)),
-                plans.add(common("resolve_groups", groups)),
-                plans.add(common("accept_groups", groups)),
+                plans.add(model("request_groups", groups)),
+                plans.add(model("choose_groups", groups)),
+                plans.add(model("resolve_groups", groups)),
+                plans.add(model("accept_groups", groups)),
             ],
             carry: [
-                plans.add(Plan::new(
-                    Program::Model,
-                    "layer_flux",
-                    &[
-                        (0, &buffers.config),
-                        (1, &buffers.cells),
-                        (3, &buffers.faces),
-                        (4, &buffers.geometry),
-                        (8, &buffers.transport),
-                        (9, &buffers.schedule),
-                        (16, &buffers.labels),
-                    ],
-                    edges,
-                )),
-                plans.add(common("gas_capacity", groups)),
-                plans.add(common("compose_layer_flux", edges)),
-                plans.add(common("material_capacity", groups)),
-                plans.add(common("limit_layer_flux", edges)),
-                plans.add(common("advect_groups", groups)),
+                plans.add(model("layer_flux", edges)),
+                plans.add(model("gas_capacity", groups)),
+                plans.add(model("compose_layer_flux", edges)),
+                plans.add(model("material_capacity", groups)),
+                plans.add(model("limit_layer_flux", edges)),
+                plans.add(model("advect_groups", groups)),
             ],
-            trace: plans.add(Plan::new(
-                Program::Model,
-                "clear_trace_gas",
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (4, &buffers.geometry),
-                    (16, &buffers.labels),
-                ],
-                groups,
-            )),
-            release: plans.add(Plan::new(
-                Program::Model,
-                "free_powder",
-                &[(0, &buffers.config), (1, &buffers.cells)],
-                groups,
-            )),
-            record: plans.add(Plan::new(
-                Program::Model,
-                "plug_record",
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (4, &buffers.geometry),
-                ],
-                groups,
-            )),
-            plug: plans.add(Plan::new(
-                Program::Model,
-                "plug_descent",
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (4, &buffers.geometry),
-                ],
-                1,
-            )),
+            trace: plans.add(model("clear_trace_gas", groups)),
+            release: plans.add(model("free_powder", groups)),
+            record: plans.add(model("plug_record", groups)),
+            plug: plans.add(model("plug_descent", 1)),
             common_reconstruct: plans.add(Plan::new(
                 Program::Model,
                 "reconstruct_common",
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (4, &buffers.geometry),
-                    (12, &buffers.members),
-                    (9, &buffers.schedule),
-                ],
                 n.div_ceil(64),
             )),
             schedule: [

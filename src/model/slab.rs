@@ -1,7 +1,7 @@
 //! The slab's structure before an update's transport: its teeth, the last
 //! layers of its packed bodies and the columns sliding through the slots
 //! between bubbles (slab/*.wgsl).
-use super::buffers::Buffers;
+use super::grid::CELLS;
 use super::kernel::Plan;
 use super::shader::Program;
 use super::update::Plans;
@@ -19,51 +19,18 @@ pub struct Slab {
     columns: usize,
 }
 impl Slab {
-    pub fn new(plans: &mut Plans, buffers: &Buffers) -> Self {
-        let fields = [
-            (0, &buffers.config),
-            (1, &buffers.cells),
-            (4, &buffers.geometry),
-        ];
-        let columns = buffers.nx.div_ceil(128);
-        let cells = buffers.n.div_ceil(128);
+    pub fn new(plans: &mut Plans) -> Self {
+        let columns = (CELLS[0] as u32).div_ceil(128);
+        let cells = ((CELLS[0] * CELLS[1]) as u32).div_ceil(128);
         Self {
-            underside: plans.add(Plan::new(
-                Program::Model,
-                "teeth_underside",
-                &fields,
-                columns,
-            )),
-            faces: plans.add(Plan::new(Program::Model, "body_faces", &fields, cells)),
+            underside: plans.add(Plan::new(Program::Model, "teeth_underside", columns)),
+            faces: plans.add(Plan::new(Program::Model, "body_faces", cells)),
             // The marks read the wet apertures the mechanics recorded on the
             // faces (slot_span): the water of two cells is one slot only
             // across a face open to water; and the bubbles' areas from the
             // last relabelling (spacer_in_row).
-            gaps: plans.add(Plan::new(
-                Program::Model,
-                "gap_marks",
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (3, &buffers.faces),
-                    (4, &buffers.geometry),
-                    (15, &buffers.gaps),
-                    (16, &buffers.labels),
-                ],
-                cells,
-            )),
-            columns: plans.add(Plan::new(
-                Program::Model,
-                "column_cells",
-                &[
-                    (0, &buffers.config),
-                    (1, &buffers.cells),
-                    (4, &buffers.geometry),
-                    (15, &buffers.gaps),
-                    (16, &buffers.labels),
-                ],
-                columns,
-            )),
+            gaps: plans.add(Plan::new(Program::Model, "gap_marks", cells)),
+            columns: plans.add(Plan::new(Program::Model, "column_cells", columns)),
         }
     }
 
