@@ -11,10 +11,13 @@ mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3" }
 # 移植の元（v2.20）と同じ版に固定する：naga が WGSL を訳す形が変わると、結果のビットが変わりうる。
 # 上げるのは v2.20 との照合が通ったあと、回帰の基準を取り直してから。
 wgpu = "=30.0.1"
+# 時刻：ブラウザでも動く Instant（mikage と同じ crate）。
+web-time = "1"
 
 # 操作口（HTTP）はネイティブだけ：道具と回帰が、窓の絵と状態を読む。
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3", features = ["agent"] }
+serde_json = "1"
 
 [dev-dependencies]
 pollster = "1.0"

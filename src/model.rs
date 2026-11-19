@@ -20,7 +20,7 @@ mod update;
 
 use bed::Bed;
 pub use buffers::Buffers;
-pub use grid::cell_width;
+pub use grid::{CELLS, TANK, cell_width};
 use interface::Interface;
 use kernel::{Kernel, Pipelines, Plan};
 use labels::Labels;

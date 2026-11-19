@@ -2817,6 +2817,8 @@ dependencies = [
  "naga",
  "png",
  "pollster",
+ "serde_json",
+ "web-time",
  "wgpu",
 ]
 
