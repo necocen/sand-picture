@@ -121,7 +121,7 @@ fn label_plane_normal(i:u32,label:f32)->vec2<f32> {
     return label_normal(p,label);
 }
 // Two lanes per cell compute its identities' normals into shared_normals;
-// the first then builds its layers and the plane of all its gas (row 0).
+// the first then builds its layers.
 fn paired_reconstruct(thread:u32,enabled:bool) {
     let i=thread/2u;let lane=thread%2u;let base=(thread%128u)/2u*GAS_SLOTS;
     if i<cfg.n&&enabled {
@@ -135,9 +135,6 @@ fn paired_reconstruct(thread:u32,enabled:bool) {
     workgroupBarrier();
     if i>=cfg.n||lane!=0u||!enabled{return;}
     parallel_gas_layers(i,base);
-    let c=cells[i].volume.gas;let g=-young_gradient(point(i));let scale=abs(g.x)+abs(g.y);
-    var n=vec2<f32>(1.,0.);if scale>0.{n=g/scale;}
-    geometry[PLANE_ROW*cfg.n+i]=vec4<f32>(n,intercept(n,clamp(c,0.,1.)),0.);
 }
 
 // Whether the half-plane n.x x + n.y y <= alpha covers some area of the unit

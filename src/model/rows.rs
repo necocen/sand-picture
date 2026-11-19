@@ -17,8 +17,6 @@ type Use = (&'static str, u64);
 const SLOTS: u64 = GAS_SLOTS as u64;
 
 pub const GEOMETRY: &[Use] = &[
-    // Each cell's gas plane (contacts.wgsl).
-    ("PLANE", 1),
     // Each identity's gas volume and label.
     ("LAYER", SLOTS),
     // Each identity's interface plane.

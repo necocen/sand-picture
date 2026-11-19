@@ -5,14 +5,6 @@
 // The MYC normal and threshold-one parallelization are transcribed from
 // Aphros b60ce3da52c19935fa24c778f62f02141eaf7f80; see APHROS_LICENSE.txt.
 
-fn gas_fraction(p:vec2<i32>)->f32 {return cell(p).volume.gas;}
-fn young_gradient(p:vec2<i32>)->vec2<f32> {
-    var gradient=vec2<f32>(0.);
-    for(var a=0u;a<2u;a++){for(var d=-1;d<=1;d++) {
-        let q=p+d*axis(1u-a);let weight=select(1.,2.,d==0);
-        gradient[a]+=weight*(gas_fraction(q+axis(a))-gas_fraction(q-axis(a)));
-    }}return gradient/8.;
-}
 // The intercept at which n . x <= alpha covers `fraction` of the unit cell.
 fn intercept(n:vec2<f32>,fraction:f32)->f32 {
     let a=min(abs(n.x),abs(n.y));let b=max(abs(n.x),abs(n.y));let c=min(fraction,1.-fraction);var t=0.;
