@@ -1,12 +1,19 @@
-//! Runs the product's scene without a window and writes the model's buffers
-//! after chosen updates:
-//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY]`
+//! Runs the model without a window and writes its buffers after chosen
+//! updates:
+//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..]`
 //!
-//! As in the app, the picture rests and is turned over at once. `--dump`
-//! writes the eight compared buffers, the strata and the labels after the
-//! listed updates (0 is the scene before any update) into
-//! `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the terrain
-//! every EVERY updates. Run outside a sandbox: it needs the GPU.
+//! The run starts from the product's scene at rest, and as in the app the
+//! picture is turned over at once (`--turn 0`); `--turn` names instead the
+//! updates after which a turn starts. `--load FOLDER,STEP` starts from a
+//! dump's folder as the state after update STEP, with no turn unless one is
+//! named. `--steps` is the number of the last update. `--dump` writes the
+//! eight compared buffers, the strata and the labels after the listed updates
+//! into `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the
+//! terrain every EVERY updates. Run outside a sandbox: it needs the GPU.
+//!
+//! Two runs agree bit for bit in the eight buffers and the strata. In the
+//! labels they agree only in the films' counts and the cells' words: the
+//! bubbles' records are numbered in the order the GPU's threads reach them.
 use mikage::{GpuContext, GpuDescriptor, GpuRequirements};
 use sand_picture::model::{Model, Scene};
 use std::path::{Path, PathBuf};
@@ -37,38 +44,63 @@ fn read(gpu: &GpuContext, buffer: &wgpu::Buffer) -> Vec<u8> {
     staging.slice(..).get_mapped_range().unwrap().to_vec()
 }
 
-fn write(gpu: &GpuContext, model: &Model, folder: &Path, light: bool) {
-    std::fs::create_dir_all(folder).unwrap();
+/// What a full dump holds and a loaded run starts from: the eight compared
+/// buffers, the strata and the labels.
+fn saved(model: &Model) -> Vec<(&'static str, &wgpu::Buffer)> {
     let buffers = model.buffers();
     let extra = [("strata", &buffers.strata), ("labels", &buffers.labels)];
-    for (name, buffer) in buffers.named().into_iter().chain(extra) {
-        if light && name != "cells" && name != "terrain" {
+    buffers.named().into_iter().chain(extra).collect()
+}
+
+fn write(gpu: &GpuContext, model: &Model, folder: &Path, light: bool) {
+    std::fs::create_dir_all(folder).unwrap();
+    for (name, buffer) in saved(model) {
+        if light && !["cells", "terrain"].contains(&name) {
             continue;
         }
         std::fs::write(folder.join(format!("{name}.bin")), read(gpu, buffer)).unwrap();
     }
 }
 
+/// Writes a dump into a model just built: the state after an update. The
+/// model's working buffers keep what its preparation of the scene left.
+fn load(gpu: &GpuContext, model: &Model, folder: &Path) {
+    for (name, buffer) in saved(model) {
+        let bytes = std::fs::read(folder.join(format!("{name}.bin")))
+            .unwrap_or_else(|error| panic!("{name}.bin of {}: {error}", folder.display()));
+        assert_eq!(bytes.len() as u64, buffer.size(), "{name} size differs");
+        gpu.queue.write_buffer(buffer, 0, &bytes);
+    }
+}
+
+fn numbers(text: &str, option: &str) -> Vec<u64> {
+    text.split(',')
+        .map(|v| v.parse().unwrap_or_else(|_| panic!("{option} A,B,..")))
+        .collect()
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
-    let output = PathBuf::from(
-        args.next()
-            .expect("OUTPUT --steps N [--dump A,B,..] [--light EVERY]"),
-    );
+    let output = PathBuf::from(args.next().expect(
+        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..]",
+    ));
     let mut steps = 0_u64;
     let mut dump: Vec<u64> = Vec::new();
     let mut light = None;
+    let mut loaded: Option<(PathBuf, u64)> = None;
+    let mut turns: Option<Vec<u64>> = None;
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_else(|| panic!("{arg} needs a value"));
         match arg.as_str() {
             "--steps" => steps = value().parse().expect("--steps N"),
-            "--dump" => {
-                dump = value()
-                    .split(',')
-                    .map(|v| v.parse().expect("--dump A,B,.."))
-                    .collect();
-            }
+            "--dump" => dump = numbers(&value(), "--dump"),
             "--light" => light = Some(value().parse::<u64>().expect("--light EVERY")),
+            "--turn" => turns = Some(numbers(&value(), "--turn")),
+            "--load" => {
+                let value = value();
+                let (folder, step) = value.rsplit_once(',').expect("--load FOLDER,STEP");
+                loaded = Some((folder.into(), step.parse().expect("--load FOLDER,STEP")));
+            }
             other => panic!("unknown argument {other:?}"),
         }
     }
@@ -88,12 +120,27 @@ fn main() {
     let mut model = Model::new(&gpu.device, &gpu.queue, &Scene::product());
     wait(&gpu);
     println!("model ready after {:.2} s", started.elapsed().as_secs_f64());
-    model.start_turn();
-    if dump.contains(&0) {
-        write(&gpu, &model, &output.join("step-00000"), false);
+    let start = match &loaded {
+        Some((folder, step)) => {
+            load(&gpu, &model, folder);
+            *step
+        }
+        None => 0,
+    };
+    let turns = turns.unwrap_or(if loaded.is_some() { vec![] } else { vec![0] });
+    if dump.contains(&start) {
+        write(
+            &gpu,
+            &model,
+            &output.join(format!("step-{start:05}")),
+            false,
+        );
     }
     let running = std::time::Instant::now();
-    for step in 1..=steps {
+    for step in start + 1..=steps {
+        if turns.contains(&(step - 1)) {
+            model.start_turn();
+        }
         let mirror = model.advance_turn(&gpu.queue);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
@@ -114,8 +161,9 @@ fn main() {
     }
     wait(&gpu);
     let seconds = running.elapsed().as_secs_f64();
+    let run = steps.saturating_sub(start);
     println!(
-        "{steps} updates in {seconds:.1} s ({:.2} ms an update, readbacks included)",
-        1e3 * seconds / steps.max(1) as f64
+        "{run} updates in {seconds:.1} s ({:.2} ms an update, readbacks included)",
+        1e3 * seconds / run.max(1) as f64
     );
 }

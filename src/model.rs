@@ -26,7 +26,7 @@ use labels::Labels;
 use material::Grains;
 use mechanics::Mechanics;
 pub use scene::Scene;
-use shader::{Program, Shaders};
+use shader::Program;
 use slab::Slab;
 use stream::Stream;
 use transport::Transport;
@@ -72,7 +72,6 @@ impl Model {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> Self {
         let grains = Grains::default();
         let buffers = Buffers::new(device, queue, scene, &grains);
-        let shaders = Shaders::new(&grains);
         let mut plans = Plans::default();
         let slab = Slab::new(&mut plans, &buffers);
         let bed = Bed::new(&mut plans, &buffers);
@@ -128,7 +127,7 @@ impl Model {
             &slab, &bed, &mechanics, &stream, &transport, &labels, &interface,
         );
         let model = Self {
-            kernels: Kernels::new(device, &shaders, plans),
+            kernels: Kernels::new(device, &grains, plans),
             buffers,
             steps,
             prepare,

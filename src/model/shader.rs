@@ -1,8 +1,6 @@
-//! Shader assembly: the four programs of the model as text, and the module a
-//! kernel is compiled from. A program is its constants and its fragments in a
-//! fixed order, with its loops of constant bounds written out (`unroll`); a
-//! kernel's module is what its entry point reaches of that (`prune`).
-mod prune;
+//! Shader assembly: the four programs of the model as text. A program is its
+//! constants and its fragments in a fixed order, with its loops of constant
+//! bounds written out (`unroll`).
 mod unroll;
 
 use super::DT;
@@ -20,7 +18,8 @@ use unroll::unroll;
 /// addresses the buffer starts with them.
 const GEOMETRY_ROWS: &str = include_str!("shared/geometry_rows.wgsl");
 
-/// A program: the text several kernels' entry points live in.
+/// A program: the text several kernels' entry points live in, compiled as
+/// one shader module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Program {
     /// Mechanics, interface, bed, slab, transport and labels: one text,
@@ -34,46 +33,32 @@ pub enum Program {
     Invert,
 }
 
-pub struct Shaders {
-    model: String,
-    stream: String,
-    schedule: String,
-    invert: String,
-}
-impl Shaders {
-    pub fn new(grains: &Grains) -> Self {
+impl Program {
+    pub const ALL: [Self; 4] = [Self::Model, Self::Stream, Self::Schedule, Self::Invert];
+
+    /// The program's WGSL.
+    pub fn source(self, grains: &Grains) -> String {
         let cells = (CELLS[0] * CELLS[1]) as u32;
-        Self {
-            model: model(grains),
+        match self {
+            Self::Model => model(grains),
             // The update interval and the surface tension enter the capillary
             // terms as shader constants; DT and SURFACE_TENSION stay their
             // sources, as COARSEN_ROWS does for the coarsening's workgroup
             // memory and the labels' layout for the place of the cells' words.
-            stream: unroll(&format!(
+            Self::Stream => unroll(&format!(
                 "const CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
                 cell_words(cells),
                 include_str!("stream/stream.wgsl"),
                 include_str!("stream/free_stream.wgsl"),
                 include_str!("stream/fcg.wgsl")
             )),
-            schedule: with_geometry_rows(include_str!("carry_schedule.wgsl")),
-            invert: with_geometry_rows(&format!(
+            Self::Schedule => with_geometry_rows(include_str!("carry_schedule.wgsl")),
+            Self::Invert => with_geometry_rows(&format!(
                 "const LABEL_CELL_WORDS:u32={}u;\n{}",
                 cell_words(cells),
                 include_str!("invert.wgsl")
             )),
         }
-    }
-
-    /// The module of the kernel that runs `entry` of `program`.
-    pub fn module(&self, program: Program, entry: &str) -> String {
-        let text = match program {
-            Program::Model => &self.model,
-            Program::Stream => &self.stream,
-            Program::Schedule => &self.schedule,
-            Program::Invert => &self.invert,
-        };
-        prune::reach(text, entry)
     }
 }
 

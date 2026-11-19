@@ -5,8 +5,8 @@ use super::bed::Bed;
 use super::interface::Interface;
 use super::kernel::{Kernel, Pipelines, Plan};
 use super::labels::Labels;
+use super::material::Grains;
 use super::mechanics::Mechanics;
-use super::shader::Shaders;
 use super::slab::Slab;
 use super::stream::{Solve, Stream};
 use super::transport::Transport;
@@ -100,13 +100,13 @@ pub struct Kernels {
     kernels: Vec<Kernel>,
 }
 impl Kernels {
-    pub fn new(device: &wgpu::Device, shaders: &Shaders, plans: Plans) -> Self {
-        let mut pipelines = Pipelines::default();
+    pub fn new(device: &wgpu::Device, grains: &Grains, plans: Plans) -> Self {
+        let mut pipelines = Pipelines::new(device, grains);
         Self {
             kernels: plans
                 .plans
                 .into_iter()
-                .map(|plan| pipelines.kernel(device, shaders, plan))
+                .map(|plan| pipelines.kernel(device, plan))
                 .collect(),
         }
     }

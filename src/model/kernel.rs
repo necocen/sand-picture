@@ -1,8 +1,9 @@
 //! One dispatch of the update: a compute pipeline, its bindings (binding 0 is
 //! a uniform configuration, the others storage buffers) and its workgroup
-//! count. A pipeline is made once for an entry point and shared by every
-//! kernel that runs it; the kernels differ in what they bind.
-use super::shader::{Program, Shaders};
+//! count. A program is one shader module and a pipeline is made once for an
+//! entry point; the kernels that run it differ in what they bind.
+use super::material::Grains;
+use super::shader::Program;
 use std::collections::HashMap;
 
 /// A fixed workgroup count, or one that an earlier kernel of the same update
@@ -64,19 +65,40 @@ impl Kernel {
     }
 }
 
-/// The pipelines made so far, by program and entry point.
-#[derive(Default)]
+/// The programs' shader modules, and the pipelines made from them so far by
+/// entry point.
 pub struct Pipelines {
+    /// A program's text is parsed and checked once, here: doing that again
+    /// for each kernel is what a slow start is made of. A pipeline takes from
+    /// its module only what its entry point reaches (wgpu sees to that).
+    modules: HashMap<Program, wgpu::ShaderModule>,
     made: HashMap<(Program, &'static str), (wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
 }
 impl Pipelines {
+    pub fn new(device: &wgpu::Device, grains: &Grains) -> Self {
+        Self {
+            modules: Program::ALL
+                .into_iter()
+                .map(|program| {
+                    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some(&format!("{program:?}")),
+                        source: wgpu::ShaderSource::Wgsl(program.source(grains).into()),
+                    });
+                    (program, module)
+                })
+                .collect(),
+            made: HashMap::new(),
+        }
+    }
+
     /// The kernel of `plan`; its pipeline is compiled if this is the first
     /// kernel of its entry point.
-    pub fn kernel(&mut self, device: &wgpu::Device, shaders: &Shaders, plan: Plan) -> Kernel {
+    pub fn kernel(&mut self, device: &wgpu::Device, plan: Plan) -> Kernel {
+        let module = &self.modules[&plan.program];
         let (pipeline, layout) = self
             .made
             .entry((plan.program, plan.entry))
-            .or_insert_with(|| compile(device, shaders, &plan));
+            .or_insert_with(|| compile(device, module, &plan));
         let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(plan.entry),
             layout,
@@ -100,7 +122,7 @@ impl Pipelines {
 
 fn compile(
     device: &wgpu::Device,
-    shaders: &Shaders,
+    module: &wgpu::ShaderModule,
     plan: &Plan,
 ) -> (wgpu::ComputePipeline, wgpu::BindGroupLayout) {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -124,10 +146,6 @@ fn compile(
             })
             .collect::<Vec<_>>(),
     });
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(plan.entry),
-        source: wgpu::ShaderSource::Wgsl(shaders.module(plan.program, plan.entry).into()),
-    });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some(plan.entry),
         layout: Some(
@@ -137,7 +155,7 @@ fn compile(
                 immediate_size: 0,
             }),
         ),
-        module: &module,
+        module,
         entry_point: Some(plan.entry),
         compilation_options: Default::default(),
         cache: None,
