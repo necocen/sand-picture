@@ -236,10 +236,8 @@ fn main() {
     let started = std::time::Instant::now();
     let gpu = pollster::block_on(GpuContext::headless(GpuDescriptor {
         requirements: GpuRequirements {
-            required_limits: Some(wgpu::Limits {
-                max_storage_buffers_per_shader_stage: 8,
-                ..wgpu::Limits::downlevel_defaults()
-            }),
+            // WebGPU's default limits, as the app asks for.
+            required_limits: Some(wgpu::Limits::default()),
             ..Default::default()
         },
         ..Default::default()
