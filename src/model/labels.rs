@@ -22,6 +22,19 @@ pub fn cell_words(n: u32) -> u32 {
     4 * layers + 1 + (17 + 4 * GAS_SLOTS as u32) * MAX_COMPONENTS
 }
 
+/// The parts of the labels buffer (bytes) in which two runs agree: the
+/// union-find's nodes, and each cell's pressed and held counts by identity
+/// with its word. The rest holds the bubbles' record numbers, which follow
+/// the order in which the GPU's threads reach the records.
+pub fn agreeing(n: u32) -> [std::ops::Range<usize>; 2] {
+    let layers = GAS_SLOTS * n as usize;
+    let words = cell_words(n) as usize;
+    [
+        0..4 * layers,
+        4 * (words - 2 * layers)..4 * (words + n as usize),
+    ]
+}
+
 /// The labels buffer of a picture at rest.
 pub fn initial(n: u32) -> Vec<u8> {
     let layers = GAS_SLOTS as u64 * u64::from(n);

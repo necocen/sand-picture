@@ -13,8 +13,9 @@
 //! that size or brought to it, as a window that is resized brings them.
 //! `--full` runs on from there to 15, 30 and 60 s. A checkpoint is the
 //! SHA-256 of the buffers of the picture's state and of the three views'
-//! pictures; of the state the labels are left out (their records are
-//! numbered in the order the GPU's threads reach them). `--record FOLDER`
+//! pictures; of the labels only the parts two runs agree in are taken (the
+//! bubbles' records are numbered in the order the GPU's threads reach
+//! them). `--record FOLDER`
 //! also writes what was found, with the pictures as PNG, as a candidate for
 //! a new baseline. Run outside a sandbox: it needs the GPU.
 mod common;
@@ -57,10 +58,19 @@ fn checkpoint(
         }
         fields.insert(picture_name(mode).to_owned(), hash(&pixels));
     }
-    for (field, buffer) in model.buffers().state() {
-        if field != "labels" {
-            fields.insert(field.to_owned(), hash(&read(gpu, buffer)));
+    let buffers = model.buffers();
+    for (field, buffer) in buffers.state() {
+        let mut bytes = read(gpu, buffer);
+        if field == "labels" {
+            // Only what two runs agree in.
+            let agreeing = buffers.agreeing_labels();
+            bytes = agreeing
+                .into_iter()
+                .flat_map(|part| &bytes[part])
+                .copied()
+                .collect();
         }
+        fields.insert(field.to_owned(), hash(&bytes));
     }
     fields
 }

@@ -167,8 +167,7 @@ impl Buffers {
     /// progress is the model's own, not the buffers'). Every other buffer
     /// is a constant of the model or is written by an update before the
     /// update reads it. Two runs agree bit for bit in all of the state but
-    /// the labels, whose records are numbered in the order the GPU's
-    /// threads reach them.
+    /// parts of the labels (`agreeing_labels`).
     pub fn state(&self) -> [(&'static str, &wgpu::Buffer); 7] {
         [
             ("cells", &self.cells),
@@ -179,6 +178,11 @@ impl Buffers {
             ("strata", &self.strata),
             ("labels", &self.labels),
         ]
+    }
+
+    /// The parts of the labels (bytes) in which two runs agree.
+    pub fn agreeing_labels(&self) -> [std::ops::Range<usize>; 2] {
+        labels::agreeing(self.n)
     }
 
     /// Writes the picture at rest in `scene` into buffers that hold zeros:
