@@ -49,6 +49,18 @@ pub struct Fields {
     work: wgpu::Buffer,
 }
 impl Fields {
+    /// Every field, for a reset: all start as zeros.
+    pub fn all(&self) -> [&wgpu::Buffer; 6] {
+        [
+            &self.solution,
+            &self.rows,
+            &self.residual,
+            &self.anchors,
+            &self.tensor,
+            &self.work,
+        ]
+    }
+
     pub fn new(device: &wgpu::Device) -> Self {
         let sizes = levels();
         let &(x, y, offset) = sizes.last().unwrap();

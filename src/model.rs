@@ -22,15 +22,17 @@ use bed::Bed;
 pub use buffers::Buffers;
 pub use grid::cell_width;
 use interface::Interface;
+use kernel::{Kernel, Pipelines, Plan};
 use labels::Labels;
 pub use material::{Grains, POWDER_DIAMETER};
+use material::{TABLE_STRIPS, table_strip};
 use mechanics::Mechanics;
 pub use scene::Scene;
 use shader::Program;
 use slab::Slab;
 use stream::Stream;
 use transport::Transport;
-use update::{Kernels, Plans};
+use update::Plans;
 pub use update::{Stage, Step};
 
 /// Seconds per update: the single source for the shaders and the tools.
@@ -53,8 +55,12 @@ const SHAKE_DISPLACEMENT: f32 = 0.02;
 pub const GAS_SLOTS: usize = 9;
 
 pub struct Model {
+    /// The picture at rest that a reset returns to.
+    scene: Scene,
     buffers: Buffers,
-    kernels: Kernels,
+    /// The modules' kernels by place: those of the update and those that run
+    /// only at the start or at a turn.
+    kernels: Vec<Kernel>,
     steps: Vec<Step>,
     /// The kernels that prepare the first update from the scene.
     prepare: Vec<usize>,
@@ -68,10 +74,97 @@ struct Turn {
     elapsed: f32,
     mirrored: bool,
 }
-impl Model {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> Self {
-        let grains = Grains::default();
-        let buffers = Buffers::new(device, queue, scene, &grains);
+
+/// A model being built, piece by piece: its materials' table takes seconds
+/// on the CPU and its pipelines can take seconds to compile, and a window
+/// draws its progress between pieces.
+pub struct Building {
+    scene: Scene,
+    grains: Grains,
+    /// The strips of the materials' table computed so far.
+    table: Vec<[f32; 4]>,
+    /// What follows the table: the buffers, and the kernels made so far.
+    kernels: Option<Assembly>,
+}
+struct Assembly {
+    buffers: Buffers,
+    pipelines: Pipelines,
+    plans: std::vec::IntoIter<Plan>,
+    kernels: Vec<Kernel>,
+    steps: Vec<Step>,
+    prepare: Vec<usize>,
+    invert: Vec<usize>,
+}
+/// What a piece of the work leaves: more work, or the model.
+pub enum Build {
+    Unfinished(Building),
+    Finished(Model),
+}
+/// What a model being built is working on, and how far it is.
+#[derive(Clone, Copy)]
+pub enum Progress {
+    /// The materials' table: strips computed, of how many.
+    Materials(usize, usize),
+    /// The kernels: made, of how many.
+    Kernels(usize, usize),
+}
+impl Building {
+    /// Starts building the model of the picture at rest in `scene`.
+    pub fn new(scene: Scene) -> Self {
+        Self {
+            scene,
+            grains: Grains::default(),
+            table: Vec::new(),
+            kernels: None,
+        }
+    }
+
+    pub fn progress(&self) -> Progress {
+        match &self.kernels {
+            None => Progress::Materials(self.table.len() / (2 * material::SIDE), TABLE_STRIPS),
+            Some(assembly) => Progress::Kernels(
+                assembly.kernels.len(),
+                assembly.kernels.len() + assembly.plans.len(),
+            ),
+        }
+    }
+
+    /// Does one piece of the work: a strip of the table, or the buffers, or a
+    /// kernel; once nothing is left, the model.
+    pub fn advance(mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Build {
+        let Some(mut assembly) = self.kernels.take() else {
+            let strip = self.table.len() / (2 * material::SIDE);
+            if strip < TABLE_STRIPS {
+                self.table.extend(table_strip(&self.grains, strip));
+            } else {
+                self.kernels = Some(Assembly::new(device, queue, &self));
+            }
+            return Build::Unfinished(self);
+        };
+        if let Some(plan) = assembly.plans.next() {
+            let kernel = assembly.pipelines.kernel(device, plan);
+            assembly.kernels.push(kernel);
+            self.kernels = Some(assembly);
+            return Build::Unfinished(self);
+        }
+        let model = Model {
+            scene: self.scene,
+            buffers: assembly.buffers,
+            kernels: assembly.kernels,
+            steps: assembly.steps,
+            prepare: assembly.prepare,
+            invert: assembly.invert,
+            turn: None,
+        };
+        model.prepare(device, queue);
+        Build::Finished(model)
+    }
+}
+impl Assembly {
+    /// The buffers of the scene, the programs' modules, and every module's
+    /// plans of its kernels; the kernels themselves are made one by one.
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, building: &Building) -> Self {
+        let buffers = Buffers::new(device, queue, &building.scene, &building.table);
         let mut plans = Plans::default();
         let slab = Slab::new(&mut plans, &buffers);
         let bed = Bed::new(&mut plans, &buffers);
@@ -90,13 +183,13 @@ impl Model {
         let vertices = (buffers.nx + 1) * (buffers.ny + 1);
         let invert = [
             vec![
-                plans.add(kernel::Plan::new(
+                plans.add(Plan::new(
                     Program::Invert,
                     "invert_cells",
                     &mirrored,
                     buffers.n.div_ceil(2).div_ceil(128),
                 )),
-                plans.add(kernel::Plan::new(
+                plans.add(Plan::new(
                     Program::Invert,
                     "invert_stream",
                     &mirrored,
@@ -126,29 +219,54 @@ impl Model {
         let steps = update::steps(
             &slab, &bed, &mechanics, &stream, &transport, &labels, &interface,
         );
-        let model = Self {
-            kernels: Kernels::new(device, &grains, plans),
+        Self {
+            pipelines: Pipelines::new(device, &building.grains),
             buffers,
+            plans: plans.take().into_iter(),
+            kernels: Vec::new(),
             steps,
             prepare,
             invert,
-            turn: None,
-        };
+        }
+    }
+}
+
+impl Model {
+    /// The model of the picture at rest in `scene`, built in one go.
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: Scene) -> Self {
+        let mut building = Building::new(scene);
+        loop {
+            match building.advance(device, queue) {
+                Build::Finished(model) => return model,
+                Build::Unfinished(unfinished) => building = unfinished,
+            }
+        }
+    }
+
+    /// Prepares the first update from the buffers of a picture at rest.
+    fn prepare(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            for &kernel in &model.prepare {
-                model.kernels.record(kernel, &mut pass);
+            for &kernel in &self.prepare {
+                self.kernels[kernel].record(&mut pass);
             }
         }
         queue.submit([encoder.finish()]);
-        model
+    }
+
+    /// Back to the picture at rest in the scene the model was built from, as
+    /// if built anew: no pipeline is made again. Call it between updates.
+    pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.turn = None;
+        self.buffers.restore(device, queue, &self.scene);
+        self.prepare(device, queue);
     }
 
     /// One complete 8 ms update: every step, in order, in the caller's pass.
     pub fn encode(&self, pass: &mut wgpu::ComputePass<'_>) {
         for step in &self.steps {
-            self.kernels.record(step.kernel, pass);
+            self.kernels[step.kernel].record(pass);
         }
     }
 
@@ -207,7 +325,7 @@ impl Model {
     /// Face and transport caches are regenerated by the next regular update.
     pub fn invert(&self, pass: &mut wgpu::ComputePass<'_>) {
         for &kernel in &self.invert {
-            self.kernels.record(kernel, pass);
+            self.kernels[kernel].record(pass);
         }
     }
 

@@ -1,12 +1,14 @@
 //! Runs the model without a window and writes its buffers after chosen
 //! updates:
-//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--views] [--frames]`
+//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--reset A,B,..] [--views] [--frames]`
 //!
 //! The run starts from the product's scene at rest, and as in the app the
 //! picture is turned over at once (`--turn 0`); `--turn` names instead the
 //! updates after which a turn starts. `--load FOLDER,STEP` starts from a
 //! dump's folder as the state after update STEP, with no turn unless one is
-//! named. `--steps` is the number of the last update. `--dump` writes the
+//! named. `--reset` returns the model to the scene at rest after the named
+//! updates (before a turn named for the same update), as the app's reset
+//! does. `--steps` is the number of the last update. `--dump` writes the
 //! eight compared buffers, the strata and the labels after the listed updates
 //! into `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the
 //! terrain every EVERY updates. `--views` adds the three views' pictures to
@@ -202,13 +204,14 @@ fn numbers(text: &str, option: &str) -> Vec<u64> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let output = PathBuf::from(args.next().expect(
-        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--views] [--frames]",
+        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--reset A,B,..] [--views] [--frames]",
     ));
     let mut steps = 0_u64;
     let mut dump: Vec<u64> = Vec::new();
     let mut light = None;
     let mut loaded: Option<(PathBuf, u64)> = None;
     let mut turns: Option<Vec<u64>> = None;
+    let mut resets: Vec<u64> = Vec::new();
     let mut views = false;
     let mut frames = false;
     while let Some(arg) = args.next() {
@@ -218,6 +221,7 @@ fn main() {
             "--dump" => dump = numbers(&value(), "--dump"),
             "--light" => light = Some(value().parse::<u64>().expect("--light EVERY")),
             "--turn" => turns = Some(numbers(&value(), "--turn")),
+            "--reset" => resets = numbers(&value(), "--reset"),
             "--views" => views = true,
             "--frames" => frames = true,
             "--load" => {
@@ -241,7 +245,7 @@ fn main() {
         ..Default::default()
     }))
     .unwrap();
-    let mut model = Model::new(&gpu.device, &gpu.queue, &Scene::product());
+    let mut model = Model::new(&gpu.device, &gpu.queue, Scene::product());
     wait(&gpu);
     println!("model ready after {:.2} s", started.elapsed().as_secs_f64());
     println!(
@@ -271,6 +275,9 @@ fn main() {
     }
     let running = std::time::Instant::now();
     for step in start + 1..=steps {
+        if resets.contains(&(step - 1)) {
+            model.reset(&gpu.device, &gpu.queue);
+        }
         if turns.contains(&(step - 1)) {
             model.start_turn();
         }

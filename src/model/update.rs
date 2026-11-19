@@ -3,9 +3,8 @@
 //! pass; a tool can walk the same list stage by stage.
 use super::bed::Bed;
 use super::interface::Interface;
-use super::kernel::{Kernel, Pipelines, Plan};
+use super::kernel::Plan;
 use super::labels::Labels;
-use super::material::Grains;
 use super::mechanics::Mechanics;
 use super::slab::Slab;
 use super::stream::{Solve, Stream};
@@ -74,7 +73,7 @@ impl Stage {
     }
 }
 
-/// One dispatch of the update: a kernel of `Kernels`, by its place.
+/// One dispatch of the update: a kernel of the model, by its place.
 #[derive(Clone, Copy)]
 pub struct Step {
     pub stage: Stage,
@@ -92,27 +91,10 @@ impl Plans {
         self.plans.push(plan);
         self.plans.len() - 1
     }
-}
 
-/// The modules' kernels by place: those of the update and those that run
-/// only at the start or at a turn.
-pub struct Kernels {
-    kernels: Vec<Kernel>,
-}
-impl Kernels {
-    pub fn new(device: &wgpu::Device, grains: &Grains, plans: Plans) -> Self {
-        let mut pipelines = Pipelines::new(device, grains);
-        Self {
-            kernels: plans
-                .plans
-                .into_iter()
-                .map(|plan| pipelines.kernel(device, plan))
-                .collect(),
-        }
-    }
-
-    pub fn record(&self, kernel: usize, pass: &mut wgpu::ComputePass<'_>) {
-        self.kernels[kernel].record(pass);
+    /// The plans in their places.
+    pub fn take(self) -> Vec<Plan> {
+        self.plans
     }
 }
 

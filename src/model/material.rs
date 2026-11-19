@@ -134,32 +134,34 @@ pub const POWDER_SHARE: f32 = 6. / 11.;
 
 /// The material table: the two rows of `coefficients` for every powder level,
 /// SIDE fine shares of the solid and SIDE total solid fractions (quadratic in
-/// the index, up to MAX_SOLID).
-pub fn table(grains: &Grains) -> Vec<[f32; 4]> {
+/// the index, up to MAX_SOLID). It is made of strips, one for each powder
+/// level and fine share, in that order: the whole takes seconds, and a window
+/// can draw between strips.
+pub const TABLE_STRIPS: usize = POWDER_LEVELS * SIDE;
+/// Strip `strip` of the material table: one powder level and fine share over
+/// the SIDE total solid fractions.
+pub fn table_strip(grains: &Grains, strip: usize) -> Vec<[f32; 4]> {
+    let (level, share) = (strip / SIDE, strip % SIDE);
     let [grit, heavy] = grains.terminal_speeds();
     let viscosity = liquid_viscosity();
-    let mut result = Vec::with_capacity(POWDER_LEVELS * SIDE * SIDE * 2);
-    for level in 0..POWDER_LEVELS {
-        let powder = level as f64 / (POWDER_LEVELS - 1) as f64;
-        let speeds = [white_speed(grit, powder), heavy];
-        let packed = white_packed_ratio(grit, grains.diameters[0], powder);
-        for share in 0..SIDE {
-            for total in 0..SIDE {
-                let solid = MAX_SOLID * (total as f64 / (SIDE - 1) as f64).powi(2);
-                let fine = solid * share as f64 / (SIDE - 1) as f64;
-                result.extend(
-                    coefficients(
-                        fine,
-                        solid - fine,
-                        grains.diameters,
-                        speeds,
-                        packed,
-                        viscosity,
-                    )
-                    .map(|row| row.map(|v| v as f32)),
-                );
-            }
-        }
+    let powder = level as f64 / (POWDER_LEVELS - 1) as f64;
+    let speeds = [white_speed(grit, powder), heavy];
+    let packed = white_packed_ratio(grit, grains.diameters[0], powder);
+    let mut result = Vec::with_capacity(SIDE * 2);
+    for total in 0..SIDE {
+        let solid = MAX_SOLID * (total as f64 / (SIDE - 1) as f64).powi(2);
+        let fine = solid * share as f64 / (SIDE - 1) as f64;
+        result.extend(
+            coefficients(
+                fine,
+                solid - fine,
+                grains.diameters,
+                speeds,
+                packed,
+                viscosity,
+            )
+            .map(|row| row.map(|v| v as f32)),
+        );
     }
     result
 }
@@ -337,10 +339,10 @@ fn condensed_energy_matches_resolved_gap() {
     let speeds = grains.terminal_speeds();
     let viscosity = liquid_viscosity();
     assert!(
-        table(&grains)
-            .iter()
+        (0..TABLE_STRIPS)
+            .flat_map(|strip| table_strip(&grains, strip))
             .flatten()
-            .all(|v| v.is_finite() && *v >= 0.)
+            .all(|v| v.is_finite() && v >= 0.)
     );
     for (fine, heavy) in [
         (0., 0.),
