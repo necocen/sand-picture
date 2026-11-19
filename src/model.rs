@@ -20,9 +20,10 @@ mod update;
 
 use bed::Bed;
 pub use buffers::Buffers;
+pub use grid::cell_width;
 use interface::Interface;
 use labels::Labels;
-use material::Grains;
+pub use material::{Grains, POWDER_DIAMETER};
 use mechanics::Mechanics;
 pub use scene::Scene;
 use shader::Program;
@@ -49,7 +50,7 @@ const SHAKE_FREQUENCY: f32 = 3.;
 const SHAKE_DISPLACEMENT: f32 = 0.02;
 /// The gas identities a cell can hold; `GAS_SLOTS` of geometry_rows.wgsl
 /// must agree with it.
-const GAS_SLOTS: usize = 9;
+pub const GAS_SLOTS: usize = 9;
 
 pub struct Model {
     buffers: Buffers,

@@ -2815,6 +2815,7 @@ dependencies = [
  "faer",
  "mikage",
  "naga",
+ "png",
  "pollster",
  "wgpu",
 ]

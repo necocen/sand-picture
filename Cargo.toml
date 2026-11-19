@@ -18,6 +18,7 @@ mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3", featur
 
 [dev-dependencies]
 pollster = "1.0"
+png = "0.18.0"
 naga = { version = "=30.0.1", features = ["wgsl-in"] }
 faer = { version = "0.24.4", default-features = false, features = ["std", "linalg"] }
 
