@@ -1,8 +1,5 @@
 //! Shader assembly: the four programs of the model as text. A program is its
-//! constants and its fragments in a fixed order; where that pays, its loops of
-//! constant bounds are then written out (`unroll`).
-mod unroll;
-
+//! constants and its fragments in a fixed order.
 use super::DT;
 use super::grid::{CELLS, pressure_omega};
 use super::labels::{MAX_COMPONENTS, cell_words};
@@ -12,18 +9,11 @@ use super::material::{
     powder_speed,
 };
 use super::stream::{COARSEN_ROWS, POINT_THREADS};
-use unroll::unroll;
+use crate::wgsl;
 
 /// The rows of the shared `geometry` buffer, by name: every program that
 /// addresses the buffer starts with them.
 const GEOMETRY_ROWS: &str = include_str!("shared/geometry_rows.wgsl");
-
-/// Whether the loops of constant bounds are written out. wgpu hands Metal a
-/// loop in a form its compiler does not unroll, and v2.20's results are those
-/// of the written-out loops, so Apple's native targets write them out. A
-/// browser compiles the WGSL itself, and no other backend was measured: there
-/// the loops stay as written.
-const WRITE_OUT_LOOPS: bool = cfg!(target_vendor = "apple");
 
 /// A program: the text several kernels' entry points live in, compiled as
 /// one shader module.
@@ -45,8 +35,7 @@ impl Program {
 
     /// The program's WGSL, as it is compiled.
     pub fn source(self, grains: &Grains) -> String {
-        let text = self.text(grains);
-        if WRITE_OUT_LOOPS { unroll(&text) } else { text }
+        wgsl::compiled(self.text(grains))
     }
 
     /// The program's constants and fragments, its loops as written.
@@ -163,24 +152,13 @@ fn model(grains: &Grains) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Grains, Program, unroll};
-    use naga::valid::{Capabilities, ValidationFlags, Validator};
+    use super::{Grains, Program, wgsl};
 
-    /// Metal gets the loops written out and a browser gets them as written:
-    /// both forms of every program are valid WGSL.
     #[test]
-    fn every_program_is_valid_with_its_loops_and_with_them_written_out() {
+    fn every_program_is_valid_wgsl() {
         let grains = Grains::default();
         for program in Program::ALL {
-            let text = program.text(&grains);
-            for source in [unroll(&text), text] {
-                let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|error| {
-                    panic!("{program:?}: {}", error.emit_to_string(&source))
-                });
-                Validator::new(ValidationFlags::all(), Capabilities::default())
-                    .validate(&module)
-                    .unwrap_or_else(|error| panic!("{program:?}: {error:?}"));
-            }
+            wgsl::assert_valid(&format!("{program:?}"), &program.text(&grains));
         }
     }
 }
