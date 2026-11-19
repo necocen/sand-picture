@@ -353,7 +353,8 @@ mod tests {
 
     /// The table of what each entry point uses is what the shaders say, and
     /// no entry point uses more storage buffers than WebGPU promises a stage
-    /// (eight). When a shader has changed, the failure prints the table.
+    /// (eight). When a shader has changed, `WRITE_USES=1 cargo test uses`
+    /// (`mise run uses`) writes the table anew.
     #[test]
     fn the_table_of_uses_is_the_shaders() {
         let grains = Grains::default();
@@ -394,17 +395,25 @@ mod tests {
                 ));
             }
         }
-        assert!(crowded.is_empty(), "{}", crowded.join("\n"));
         let current: String = USES
             .iter()
             .map(|(program, entry, used)| {
                 format!("    (Program::{program:?}, {entry:?}, &{used:?}),\n")
             })
             .collect();
+        if current != table && std::env::var_os("WRITE_USES").is_some() {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/model/uses.rs");
+            let text = std::fs::read_to_string(path).unwrap();
+            let head = &text[..text.find("pub const USES").unwrap()];
+            let list = "pub const USES: &[(Program, &str, &[&str])] = &[\n";
+            std::fs::write(path, format!("{head}{list}{table}];\n")).unwrap();
+            panic!("uses.rs is written anew: run the tests again");
+        }
         assert!(
             current == table,
-            "the shaders use their buffers otherwise than uses.rs says; its table should be:\n{table}"
+            "the shaders use their buffers otherwise than uses.rs says (WRITE_USES=1 writes its table anew)"
         );
+        assert!(crowded.is_empty(), "{}", crowded.join("\n"));
         // Every kernel runs an entry point of the table.
         for plan in layout().plans {
             super::uses::uses(plan.program, plan.entry);

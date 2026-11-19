@@ -12,6 +12,10 @@ run = [
     "cargo test --features fixed-picture every_window",
 ]
 
+[tasks.uses]
+description = "シェーダーを変えたあと、入口ごとに使うバッファの表（src/model/uses.rs）を書き直す"
+run = "WRITE_USES=1 cargo test the_table_of_uses || cargo test the_table_of_uses"
+
 [tasks.check]
 description = "回帰：0・1・5 秒、二度目の裏返し、リセットを基準のハッシュと比べる（GPU を使う。sandbox の外で）"
 run = "cargo run --release --example check"

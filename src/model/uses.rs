@@ -1,7 +1,8 @@
 //! What each entry point uses of its program's buffers, by their names in
 //! the WGSL. A kernel binds exactly these. The table mirrors the shaders:
-//! the test `the_table_of_uses_is_the_shaders` derives it from them again,
-//! and when a shader has changed it fails and prints the table to put here.
+//! the test `the_table_of_uses_is_the_shaders` derives it from them again
+//! and fails when a shader has changed; `WRITE_USES=1 cargo test uses`
+//! then writes the table below anew.
 use super::shader::Program;
 
 /// The buffers the entry point `entry` of `program` uses.
