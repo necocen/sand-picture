@@ -33,6 +33,10 @@ controls, the picture's own time and its speed (seconds of the picture per
 second: on an M1 Max about 0.5 for the first seconds, 0.35 while the machine is
 cool, under 0.3 once it is warm).
 
+The picture is drawn at the window's own pixels when the window is larger
+than 1440 x 960 pixels, up to a pixel of one grain of the fine sand
+(2727 x 1818); a smaller window shows the 1440 x 960 picture scaled down.
+
 The window opens at once and shows its progress while the model is built: its
 materials' table takes a second or two on the CPU, and the first start after
 an update also compiles the kernels.
