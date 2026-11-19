@@ -370,7 +370,7 @@ fn corrected_relative(f:u32)->vec3<f32>{return relative_at_velocity(f,wet_veloci
 // The common velocity a return reads: the solved flow's, or for the second
 // return (`predictor`) the first projection's, kept in FACE_PREDICTION_ROW.
 fn contact_velocity(f:u32,predictor:bool)->f32 {
-    if predictor{return geometry[FACE_PREDICTION_ROW*cfg.n+f].x;}
+    if predictor{return scratch[FACE_PREDICTION_ROW*cfg.n+f].x;}
     return wet_velocity(f);
 }
 fn grain_sample(f:u32,predictor:bool)->vec3<f32>{

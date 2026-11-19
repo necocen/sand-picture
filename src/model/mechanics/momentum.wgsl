@@ -94,7 +94,7 @@ fn viscous_laplacian(p:vec2<i32>,a:u32,phase:u32)->f32 {
     faces[f].velocity=vec4<f32>(relative,gas_velocity(f));
     // A changing aperture preserves a velocity trace for the local predictor.
     // Reusing old volume current / new area would invent a velocity impulse.
-    geometry[FACE_PREDICTION_ROW*cfg.n+f]=vec4<f32>(velocity,0.,0.,0.);
+    scratch[FACE_PREDICTION_ROW*cfg.n+f]=vec4<f32>(velocity,0.,0.,0.);
 }
 // A bubble smaller than the gap moves with the flow and its own slip through
 // the water (gas_transport.wgsl, bubble_slip), whatever the faces' gas carries

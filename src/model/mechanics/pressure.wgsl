@@ -71,11 +71,11 @@ fn cache_pressure_couplings(i:u32){
                 coupling=(compression_response(f)+common_compression_response(f))*aperture*aperture/(cfg.h*cfg.h);
             }
         }
-        geometry[PRESSURE_COUPLING_ROW*cfg.n+f]=vec4<f32>(coupling,0.,0.,0.);
+        scratch[PRESSURE_COUPLING_ROW*cfg.n+f]=vec4<f32>(coupling,0.,0.,0.);
     }
     var factor=0.;if wet>0.&&!(grain_work(i).pressure_mode==0.){factor=1./wet;}
-    geometry[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(c.stress.pressure,factor,0.,0.);
-    geometry[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(0.);
+    scratch[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(c.stress.pressure,factor,0.,0.);
+    scratch[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(0.);
 }
 // The local problem of a cell whose return applies (dilation rate at the
 // solved flow, pressure response, shear compliance, trial strength), its
@@ -83,22 +83,22 @@ fn cache_pressure_couplings(i:u32){
 // its trial stress, in rows of `geometry` that are free from the interface
 // update until the transport overwrites them.
 fn cache_pressure_problem(i:u32,theta:f32,alpha:f32,beta:f32,trial:vec2<f32>,material:vec3<f32>,pressure:f32){
-    geometry[PRESSURE_PROBLEM_ROW*cfg.n+i]=vec4<f32>(theta,alpha,beta,scaled_norm(trial));
-    geometry[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(material,1.);
-    geometry[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(pressure,0.);
-    geometry[PRESSURE_TRIAL_ROW*cfg.n+i]=vec4<f32>(trial,0.,0.);
+    scratch[PRESSURE_PROBLEM_ROW*cfg.n+i]=vec4<f32>(theta,alpha,beta,scaled_norm(trial));
+    scratch[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(material,1.);
+    scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(pressure,0.);
+    scratch[PRESSURE_TRIAL_ROW*cfg.n+i]=vec4<f32>(trial,0.,0.);
 }
-fn pressure_iterate(i:u32)->f32{return geometry[PRESSURE_ITERATE_ROW*cfg.n+i].z;}
+fn pressure_iterate(i:u32)->f32{return scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z;}
 // Change of the wet pressure on the faces since the flow solve.
 fn pressure_shift(i:u32)->f32{
-    let base=geometry[PRESSURE_ITERATE_ROW*cfg.n+i];return (base.z-base.x)*base.y;
+    let base=scratch[PRESSURE_ITERATE_ROW*cfg.n+i];return (base.z-base.x)*base.y;
 }
 fn coupled_last(i:u32,p:vec2<i32>)->f32{
     let own=pressure_shift(i);var coupled=0.;
     for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
         let base=p-select(axis(a),vec2<i32>(0),side==1u);
         if !valid(base)||!valid(base+axis(a)){continue;}
-        let f=2u*at(base)+a;let coupling=geometry[PRESSURE_COUPLING_ROW*cfg.n+f].x;if coupling==0.{continue;}
+        let f=2u*at(base)+a;let coupling=scratch[PRESSURE_COUPLING_ROW*cfg.n+f].x;if coupling==0.{continue;}
         let other=select(at(base),at(base+axis(a)),side==1u);
         coupled+=coupling*(own-pressure_shift(other));
     }}
@@ -119,14 +119,14 @@ fn colour_cell(t:u32,color:u32)->u32{
 fn relax_pressure(t:u32,color:u32,last:bool){
     let i=colour_cell(t,color);if i>=cfg.n{return;}
     let p=point(i);
-    let problem=geometry[PRESSURE_PROBLEM_ROW*cfg.n+i];let material=geometry[PRESSURE_MATERIAL_ROW*cfg.n+i];
+    let problem=scratch[PRESSURE_PROBLEM_ROW*cfg.n+i];let material=scratch[PRESSURE_MATERIAL_ROW*cfg.n+i];
     var pressure=0.;var returned=0.;let old=pressure_iterate(i);let mu=grain_friction(grains(cells[i]));
     if material.w>0.{
         let own=pressure_shift(i);var coupled=0.;
         for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
             let base=p-select(axis(a),vec2<i32>(0),side==1u);
             if !valid(base)||!valid(base+axis(a)){continue;}
-            let f=2u*at(base)+a;let coupling=geometry[PRESSURE_COUPLING_ROW*cfg.n+f].x;if coupling==0.{continue;}
+            let f=2u*at(base)+a;let coupling=scratch[PRESSURE_COUPLING_ROW*cfg.n+f].x;if coupling==0.{continue;}
             let other=select(at(base),at(base+axis(a)),side==1u);
             coupled+=coupling*(own-pressure_shift(other));
         }}
@@ -139,14 +139,14 @@ fn relax_pressure(t:u32,color:u32,last:bool){
             returned=shear_return(problem.w,material.x,material.y,pressure,problem.z,mu);
         }
     }
-    if !last{geometry[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(old+OMEGA*(pressure-old),0.);return;}
-    geometry[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(pressure,0.);
+    if !last{scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(old+OMEGA*(pressure-old),0.);return;}
+    scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(pressure,0.);
     if material.w==0.{return;}
     let theta_last=problem.x+coupled_last(i,p)/material.y;
     let darcy=dilatancy_suction(i,theta_last);
     if darcy>0.{returned=shear_return(problem.w,material.x,material.y,pressure+darcy,problem.z,mu);}
     if pressure+darcy<=0.{put_returned_stress(i,vec4<f32>(0.));put_returned_suction(i,0.);return;}
-    var tau=geometry[PRESSURE_TRIAL_ROW*cfg.n+i].xy;if problem.w>0.{tau*=returned/problem.w;}
+    var tau=scratch[PRESSURE_TRIAL_ROW*cfg.n+i].xy;if problem.w>0.{tau*=returned/problem.w;}
     // The load is measured from the law's memory, the stored pressure the
     // update began with, as the second return measures it. The sweeps' own
     // iterate already carries the dilatancy demand of the earlier sweeps:
