@@ -15,7 +15,7 @@
 //! labels they agree only in the films' counts and the cells' words: the
 //! bubbles' records are numbered in the order the GPU's threads reach them.
 use mikage::{GpuContext, GpuDescriptor, GpuRequirements};
-use sand_picture::model::{Model, Scene};
+use sand_picture::model::{DT, Model, Scene};
 use std::path::{Path, PathBuf};
 
 fn wait(gpu: &GpuContext) {
@@ -73,6 +73,22 @@ fn load(gpu: &GpuContext, model: &Model, folder: &Path) {
     }
 }
 
+/// The update's stages in order, each with its number of steps.
+fn composition(model: &Model) -> String {
+    let mut stages = Vec::new();
+    for step in model.steps() {
+        match stages.last_mut() {
+            Some((stage, count)) if *stage == step.stage => *count += 1,
+            _ => stages.push((step.stage, 1)),
+        }
+    }
+    stages
+        .iter()
+        .map(|(stage, count)| format!("{} {count}", stage.label()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn numbers(text: &str, option: &str) -> Vec<u64> {
     text.split(',')
         .map(|v| v.parse().unwrap_or_else(|_| panic!("{option} A,B,..")))
@@ -120,6 +136,11 @@ fn main() {
     let mut model = Model::new(&gpu.device, &gpu.queue, &Scene::product());
     wait(&gpu);
     println!("model ready after {:.2} s", started.elapsed().as_secs_f64());
+    println!(
+        "an update is {} steps: {}",
+        model.steps().len(),
+        composition(&model)
+    );
     let start = match &loaded {
         Some((folder, step)) => {
             load(&gpu, &model, folder);
@@ -163,7 +184,8 @@ fn main() {
     let seconds = running.elapsed().as_secs_f64();
     let run = steps.saturating_sub(start);
     println!(
-        "{run} updates in {seconds:.1} s ({:.2} ms an update, readbacks included)",
+        "{run} updates ({:.0} s of the picture) in {seconds:.1} s: {:.2} ms an update, readbacks included",
+        run as f64 * f64::from(DT),
         1e3 * seconds / run.max(1) as f64
     );
 }

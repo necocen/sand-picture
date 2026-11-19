@@ -20,7 +20,6 @@ mod update;
 
 use bed::Bed;
 pub use buffers::Buffers;
-pub use grid::{CELLS, TANK};
 use interface::Interface;
 use labels::Labels;
 use material::Grains;
@@ -152,20 +151,9 @@ impl Model {
         }
     }
 
-    /// The update's steps. Only their order forms a valid update; tools may
-    /// give each step or stage its own pass to time or probe it.
+    /// The update's steps. Only their order forms a valid update.
     pub fn steps(&self) -> &[Step] {
         &self.steps
-    }
-
-    /// One step of the update.
-    pub fn encode_step(&self, step: Step, pass: &mut wgpu::ComputePass<'_>) {
-        self.kernels.record(step.kernel, pass);
-    }
-
-    /// The entry point a step runs, for profiles.
-    pub fn entry(&self, step: Step) -> &'static str {
-        self.kernels.entry(step.kernel)
     }
 
     /// Begin turning the picture over; a turn in progress goes on unchanged.
@@ -176,10 +164,6 @@ impl Model {
                 mirrored: false,
             });
         }
-    }
-
-    pub fn turning(&self) -> bool {
-        self.turn.is_some()
     }
 
     /// Advance a turn by one update, before that update is encoded: writes the

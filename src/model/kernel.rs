@@ -43,7 +43,6 @@ impl Plan {
 }
 
 pub struct Kernel {
-    entry: &'static str,
     pipeline: wgpu::ComputePipeline,
     bindings: wgpu::BindGroup,
     groups: Groups,
@@ -57,11 +56,6 @@ impl Kernel {
             Groups::Fixed(groups) => pass.dispatch_workgroups(*groups, 1, 1),
             Groups::Indirect(arguments) => pass.dispatch_workgroups_indirect(arguments, 0),
         }
-    }
-
-    /// The shader entry point, for profiles.
-    pub fn entry(&self) -> &'static str {
-        self.entry
     }
 }
 
@@ -112,7 +106,6 @@ impl Pipelines {
                 .collect::<Vec<_>>(),
         });
         Kernel {
-            entry: plan.entry,
             pipeline: pipeline.clone(),
             bindings,
             groups: plan.groups,

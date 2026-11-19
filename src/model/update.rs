@@ -1,6 +1,6 @@
 //! One complete 8 ms update as a list of steps, each a kernel's dispatch, in
 //! their only valid order. The product records the list into one compute
-//! pass; tools time, probe or replay the same list step by step.
+//! pass; a tool can walk the same list stage by stage.
 use super::bed::Bed;
 use super::interface::Interface;
 use super::kernel::{Kernel, Pipelines, Plan};
@@ -13,7 +13,7 @@ use super::transport::Transport;
 
 /// The stages of an update, in order. Physically alike steps in another
 /// order give another splitting error, history and rounding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     /// The slab's teeth, body layers and joint columns, read by this update's
     /// transport.
@@ -113,11 +113,6 @@ impl Kernels {
 
     pub fn record(&self, kernel: usize, pass: &mut wgpu::ComputePass<'_>) {
         self.kernels[kernel].record(pass);
-    }
-
-    /// The entry point a kernel runs, for profiles.
-    pub fn entry(&self, kernel: usize) -> &'static str {
-        self.kernels[kernel].entry()
     }
 }
 

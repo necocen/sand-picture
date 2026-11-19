@@ -1,6 +1,6 @@
 //! Shader assembly: the four programs of the model as text. A program is its
-//! constants and its fragments in a fixed order, with its loops of constant
-//! bounds written out (`unroll`).
+//! constants and its fragments in a fixed order; where that pays, its loops of
+//! constant bounds are then written out (`unroll`).
 mod unroll;
 
 use super::DT;
@@ -17,6 +17,13 @@ use unroll::unroll;
 /// The rows of the shared `geometry` buffer, by name: every program that
 /// addresses the buffer starts with them.
 const GEOMETRY_ROWS: &str = include_str!("shared/geometry_rows.wgsl");
+
+/// Whether the loops of constant bounds are written out. wgpu hands Metal a
+/// loop in a form its compiler does not unroll, and v2.20's results are those
+/// of the written-out loops, so Apple's native targets write them out. A
+/// browser compiles the WGSL itself, and no other backend was measured: there
+/// the loops stay as written.
+const WRITE_OUT_LOOPS: bool = cfg!(target_vendor = "apple");
 
 /// A program: the text several kernels' entry points live in, compiled as
 /// one shader module.
@@ -36,8 +43,14 @@ pub enum Program {
 impl Program {
     pub const ALL: [Self; 4] = [Self::Model, Self::Stream, Self::Schedule, Self::Invert];
 
-    /// The program's WGSL.
+    /// The program's WGSL, as it is compiled.
     pub fn source(self, grains: &Grains) -> String {
+        let text = self.text(grains);
+        if WRITE_OUT_LOOPS { unroll(&text) } else { text }
+    }
+
+    /// The program's constants and fragments, its loops as written.
+    fn text(self, grains: &Grains) -> String {
         let cells = (CELLS[0] * CELLS[1]) as u32;
         match self {
             Self::Model => model(grains),
@@ -45,25 +58,21 @@ impl Program {
             // terms as shader constants; DT and SURFACE_TENSION stay their
             // sources, as COARSEN_ROWS does for the coarsening's workgroup
             // memory and the labels' layout for the place of the cells' words.
-            Self::Stream => unroll(&format!(
+            Self::Stream => format!(
                 "const CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
                 cell_words(cells),
                 include_str!("stream/stream.wgsl"),
                 include_str!("stream/free_stream.wgsl"),
                 include_str!("stream/fcg.wgsl")
-            )),
-            Self::Schedule => with_geometry_rows(include_str!("carry_schedule.wgsl")),
-            Self::Invert => with_geometry_rows(&format!(
-                "const LABEL_CELL_WORDS:u32={}u;\n{}",
+            ),
+            Self::Schedule => [GEOMETRY_ROWS, include_str!("carry_schedule.wgsl")].join("\n"),
+            Self::Invert => format!(
+                "{GEOMETRY_ROWS}\nconst LABEL_CELL_WORDS:u32={}u;\n{}",
                 cell_words(cells),
                 include_str!("invert.wgsl")
-            )),
+            ),
         }
     }
-}
-
-fn with_geometry_rows(source: &str) -> String {
-    unroll(&[GEOMETRY_ROWS, source].join("\n"))
 }
 
 /// The arrival bookkeeping keeps one value per row of a column, and the
@@ -92,7 +101,7 @@ fn model(grains: &Grains) -> String {
     let rise = bubble_rise_speeds()
         .map(|v| format!("{:?}", v as f32))
         .join(",");
-    let source = [
+    [
         format!(
             "const COLUMNS:u32={columns}u;const ROWS:u32={rows}u;const OMEGA:f32={omega:?};\
              const GRAIN_DIAMETER=vec2<f32>({fine:?},{coarse:?});\
@@ -149,6 +158,29 @@ fn model(grains: &Grains) -> String {
         include_str!("transport/plug.wgsl"),
         include_str!("labels.wgsl"),
     ]
-    .join("\n");
-    unroll(&source)
+    .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Grains, Program, unroll};
+    use naga::valid::{Capabilities, ValidationFlags, Validator};
+
+    /// Metal gets the loops written out and a browser gets them as written:
+    /// both forms of every program are valid WGSL.
+    #[test]
+    fn every_program_is_valid_with_its_loops_and_with_them_written_out() {
+        let grains = Grains::default();
+        for program in Program::ALL {
+            let text = program.text(&grains);
+            for source in [unroll(&text), text] {
+                let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|error| {
+                    panic!("{program:?}: {}", error.emit_to_string(&source))
+                });
+                Validator::new(ValidationFlags::all(), Capabilities::default())
+                    .validate(&module)
+                    .unwrap_or_else(|error| panic!("{program:?}: {error:?}"));
+            }
+        }
+    }
 }
