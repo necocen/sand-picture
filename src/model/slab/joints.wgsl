@@ -38,7 +38,7 @@ fn between_bubbles(p:vec2<i32>)->bool{
 // wide as its grains make it, with the bubbles' liquid borders beside it.
 // The bubbles cannot enter it (its pores' entry pressure is kPa against
 // tens of Pa of pressing), and its sand goes down the chain (joint_mouth).
-fn column_cell(i:u32)->bool{return geometry[COLUMN_ROW*cfg.n+i].x>0.;}
+fn column_cell(i:u32)->bool{return scratch[COLUMN_ROW*cfg.n+i].x>0.;}
 // A column cell whose sand holds its slot at the chain's packing is a plug:
 // sand that arches, jammed in its slot, which the transport keeps to the
 // chain's faces. The mouth feeding a slot opens at the jamming width, so a
@@ -46,7 +46,7 @@ fn column_cell(i:u32)->bool{return geometry[COLUMN_ROW*cfg.n+i].x>0.;}
 // holding a suspension: its grains move with the water and the bubbles
 // press the gap shut as it drains.
 fn column_plug(i:u32)->bool{
-    let chain=geometry[COLUMN_ROW*cfg.n+i];if chain.x<=0.||chain.z<=0.{return false;}
+    let chain=scratch[COLUMN_ROW*cfg.n+i];if chain.x<=0.||chain.z<=0.{return false;}
     return plug_holds_slot(i,chain.z);
 }
 // Sand that holds a slot open against the bubbles: caged grains
@@ -61,7 +61,7 @@ fn plug_holds_slot(i:u32,packing:f32)->bool{
 // any other cell.
 fn plug_width(i:u32)->f32{
     if !column_plug(i){return 0.;}
-    let g=grains(cells[i]);return (g.x+g.y)/geometry[COLUMN_ROW*cfg.n+i].z;
+    let g=grains(cells[i]);return (g.x+g.y)/scratch[COLUMN_ROW*cfg.n+i].z;
 }
 // Whether the face between cells i and j lies between a column's plug and a
 // bubble, a cell holding a grain layer of gas or more (the raft's bubble
@@ -153,11 +153,11 @@ fn spacer_in_row(i:u32)->i32{
 // outside; the gas the grid smears into it is the large bubbles' rounded
 // edges, which move with their own bubbles. The flow solve leaves it open:
 // closed there too, the room above the mouth is sealed and ratchets.
-fn border_cell(i:u32)->bool{return geometry[COLUMN_ROW*cfg.n+i].y>0.;}
+fn border_cell(i:u32)->bool{return scratch[COLUMN_ROW*cfg.n+i].y>0.;}
 // Whether gas of slot l is kept out of channel cell i: the channel is
 // another small bubble's.
 fn spacer_channel_closed(l:u32,i:u32)->bool{
-    let row=geometry[COLUMN_ROW*cfg.n+i];
+    let row=scratch[COLUMN_ROW*cfg.n+i];
     return row.y>0.&&f32(l+1u)!=row.w;
 }
 // The width (cells) of the Plateau border beside a small bubble: l_c/2.
@@ -201,7 +201,7 @@ fn gap_spacer(i:u32)->i32{return i32(gaps[i].z)-1;}
 // the relabelling itself.
 @compute @workgroup_size(128) fn column_cells(@builtin(global_invocation_id) id:vec3<u32>){
     let col=id.x;if col>=cfg.nx{return;}
-    for(var r=0;r<i32(cfg.ny);r++){geometry[COLUMN_ROW*cfg.n+at(vec2<i32>(i32(col),r))]=vec4<f32>(0.);}
+    for(var r=0;r<i32(cfg.ny);r++){scratch[COLUMN_ROW*cfg.n+at(vec2<i32>(i32(col),r))]=vec4<f32>(0.);}
     // The slab's sand below the ceiling (and below a crater's water).
     var y=i32(cfg.ny)-1;
     while y>=i32(cfg.ny)/2&&!teeth_sandy(cells[at(vec2<i32>(i32(col),y))]){y-=1;}
@@ -227,12 +227,12 @@ fn gap_spacer(i:u32)->i32{return i32(gaps[i].z)-1;}
         // or a foam, narrower than the jamming width, the chain ends.
         if border.y>0.&&gap_between(i){
             if !gap_open(i){break;}
-            geometry[COLUMN_ROW*cfg.n+i]=vec4<f32>(1.,border.x,packing,border.y);y-=1;continue;
+            scratch[COLUMN_ROW*cfg.n+i]=vec4<f32>(1.,border.x,packing,border.y);y-=1;continue;
         }
         if chain&&wet>0.&&gap_between(i)&&chain_slot(i,packing){
             let slot=spacer_slot(i);
             var mouth=0.;if slot>=0{mouth=spacer_mouth(i,u32(slot));border=vec2<f32>(mouth,f32(slot+1));}
-            geometry[COLUMN_ROW*cfg.n+i]=vec4<f32>(1.,mouth,packing,f32(slot+1));y-=1;continue;
+            scratch[COLUMN_ROW*cfg.n+i]=vec4<f32>(1.,mouth,packing,f32(slot+1));y-=1;continue;
         }
         if teeth_sandy(c){chain=false;y-=1;continue;}
         break;
@@ -243,12 +243,12 @@ fn gap_spacer(i:u32)->i32{return i32(gaps[i].z)-1;}
     // whenever the mouth's body cell drains below the body's packing).
     var mark=vec2<f32>(0.);
     for(var r=i32(cfg.ny)-1;r>=0;r--){
-        let i=at(vec2<i32>(i32(col),r));let entry=geometry[COLUMN_ROW*cfg.n+i];
+        let i=at(vec2<i32>(i32(col),r));let entry=scratch[COLUMN_ROW*cfg.n+i];
         if entry.x>0.{mark=select(vec2<f32>(0.),entry.yw,entry.y>0.);continue;}
         if !gap_between(i)||plug_deposit(cells[i])||!gap_open(i){mark=vec2<f32>(0.);continue;}
         let slot=spacer_slot(i);
         if slot>=0{mark=vec2<f32>(spacer_mouth(i,u32(slot)),f32(slot+1));}
-        if mark.y>0.{geometry[COLUMN_ROW*cfg.n+i]=vec4<f32>(0.,mark.x,0.,mark.y);}
+        if mark.y>0.{scratch[COLUMN_ROW*cfg.n+i]=vec4<f32>(0.,mark.x,0.,mark.y);}
     }
 }
 // The span (cells) of the slot the cell at `p` lies in: its own wet part
@@ -285,7 +285,7 @@ fn open_passage(p:vec2<i32>)->bool{return slot_span(p)*cfg.h>=JAMMING_WIDTH*GRAI
 fn joint_mouth(f:u32,interval:f32)->f32{
     if f%2u!=1u{return -1.;}
     let i=f/2u;let q=point(i)+axis(1u);if !valid(q){return -1.;}
-    let j=at(q);let chain=geometry[COLUMN_ROW*cfg.n+j];let column=chain.x>0.;
+    let j=at(q);let chain=scratch[COLUMN_ROW*cfg.n+j];let column=chain.x>0.;
     if !column&&!plug_body(j){return -1.;}
     let throat=cells[i];let gt=grains(throat);let st=gt.x+gt.y;let wt=max(throat.volume.water,0.)+st;
     if plug_deposit(throat)||wt<=0.{return -1.;}
@@ -297,7 +297,7 @@ fn joint_mouth(f:u32,interval:f32)->f32{
     // A slot a small bubble holds is its Plateau border, on either side of
     // the face: the capillary balance of the three bodies sets its width
     // below the grid, however the gas planes cut the face.
-    let border=geometry[COLUMN_ROW*cfg.n+i].y;
+    let border=scratch[COLUMN_ROW*cfg.n+i].y;
     var held=0.;if border>0.||chain.y>0.{held=spacer_channel();}
     // A slot a plug holds is as wide as the plug: its sand at the chain's
     // packing arches over no narrower orifice than its own.

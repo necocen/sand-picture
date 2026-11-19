@@ -49,7 +49,7 @@ fn free_face_breach(f:u32,interval:f32)->f32{
     if f%2u==1u{return -roof_breach(i,j,aperture,interval);}
     for(var k=0u;k<2u;k++){
         let donor=select(j,i,k==0u);let receiver=select(i,j,k==0u);
-        let record=geometry[BODY_ROW*cfg.n+receiver];
+        let record=scratch[BODY_ROW*cfg.n+receiver];
         if select(record.w,record.z,k==0u)<=0.||record.y>=0.||column_cell(receiver){continue;}
         let c=cells[donor];if plug_deposit(c)||column_cell(donor){continue;}
         let g=grains(c);let solid=g.x+g.y;let dense=dense_volume(donor);
@@ -78,7 +78,7 @@ fn roof_breach(below:u32,above:u32,aperture:f32,interval:f32)->f32{
     let g=grains(c);let solid=g.x+g.y;let dense=dense_volume(above);
     if solid<=0.||solid<CRITICAL_PACKING*dense{return 0.;}
     let r=cells[below];
-    if !open_water(r)||geometry[BODY_ROW*cfg.n+below].y>=0.||!falls_through(point(below)){return 0.;}
+    if !open_water(r)||scratch[BODY_ROW*cfg.n+below].y>=0.||!falls_through(point(below)){return 0.;}
     let phi=min(solid/dense,CLOSE_PACKING);
     let gr=grains(r);let wr=max(r.volume.water,0.)+gr.x+gr.y;
     let room=max(LOOSE_PACKING*wr-gr.x-gr.y,0.);

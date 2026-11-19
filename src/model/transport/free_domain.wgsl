@@ -136,7 +136,7 @@ fn group_outgoing(donor:u32)->f32{
 fn gas_refused(f:u32,donor:u32)->bool{
     let i=f/2u;let j=at(point(i)+axis(f%2u));let receiver=select(i,j,donor==i);
     let c=cells[receiver];if !packed_wet(c)||!held_still(receiver){return false;}
-    let entry=geometry[BODY_ROW*cfg.n+receiver];
+    let entry=scratch[BODY_ROW*cfg.n+receiver];
     return entry.y<0.||entry.x>=1.;
 }
 // The donor's film water crosses in the refused gas's place, while its

@@ -49,7 +49,7 @@
         in_last-=sign*select(f8.z,f8.x,leaving);
         outgoing_common+=max(sign*common_carrier(f),0.);
       }}
-      geometry[PLUG_INFLOW_ROW*cfg.n+at(p)]+=inflow;
+      scratch[PLUG_INFLOW_ROW*cfg.n+at(p)]+=inflow;
     }
     let retained=max(old.volume-outgoing,vec4<f32>(0.));var result:GroupPayload;
     result.volume=retained+incoming.volume;

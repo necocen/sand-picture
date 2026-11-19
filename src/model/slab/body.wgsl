@@ -69,7 +69,7 @@ fn body_speed(c:Cell)->vec2<f32>{
         if valid(left)&&breach_donor(cells[at(left)]){out.z=select(0.,1.,falls_away(p,1));}
         if valid(right)&&breach_donor(cells[at(right)]){out.w=select(0.,1.,falls_away(p,-1));}
     }
-    geometry[BODY_ROW*cfg.n+i]=out;
+    scratch[BODY_ROW*cfg.n+i]=out;
 }
 // The part (cells) of cell i's wet volume that its grains fill at their
 // body's packing: all of it, or the fraction f for a body's last layer. The
@@ -78,14 +78,14 @@ fn body_speed(c:Cell)->vec2<f32>{
 // beside it; that dilatancy is suction, which holds and does not push.
 fn dense_volume(i:u32)->f32{
     let c=cells[i];let wet=max(c.volume.water,0.)+grains(c).x+grains(c).y;
-    let entry=geometry[BODY_ROW*cfg.n+i];
+    let entry=scratch[BODY_ROW*cfg.n+i];
     if entry.y<0.||entry.x>=1.||entry.x<=0.{return wet;}
     return entry.x*wet;
 }
 // Whether `donor` is a body's last layer that does not fill its cell and
 // `f` is one of its faces other than the one toward its body.
 fn layer_far_face(f:u32,donor:u32)->bool{
-    let entry=geometry[BODY_ROW*cfg.n+donor];if entry.y<0.||entry.x>=1.{return false;}
+    let entry=scratch[BODY_ROW*cfg.n+donor];if entry.y<0.||entry.x>=1.{return false;}
     let a=f%2u;let body=u32(entry.y);if body/2u!=a{return true;}
     let face_plus=donor==f/2u;let body_plus=body%2u==1u;
     return face_plus!=body_plus;
@@ -95,7 +95,7 @@ fn layer_far_face(f:u32,donor:u32)->bool{
 // as its body moves or as it breaches. Unbounded (1e9) for a cell that is
 // no layer and through the face toward the body, into which it may compact.
 fn layer_supply(f:u32,donor:u32,interval:f32)->vec2<f32>{
-    let entry=geometry[BODY_ROW*cfg.n+donor];if entry.y<0.||entry.x>=1.{return vec2<f32>(1e9);}
+    let entry=scratch[BODY_ROW*cfg.n+donor];if entry.y<0.||entry.x>=1.{return vec2<f32>(1e9);}
     let a=f%2u;let body=u32(entry.y);let body_axis=body/2u;let body_plus=body%2u==1u;
     let face_plus=donor==f/2u;
     if body_axis==a&&face_plus==body_plus{return vec2<f32>(1e9);}
@@ -129,11 +129,11 @@ fn layer_supply(f:u32,donor:u32,interval:f32)->vec2<f32>{
     // the face: between the plates such a wall stands far steeper than the
     // angle of repose (Taberlet et al. 2003).
     let c=cells[donor];let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
-    let dense=max(geometry[BODY_ROW*cfg.n+donor].x,1e-3)*wet;let phi=min(solid/dense,CLOSE_PACKING);
+    let dense=max(scratch[BODY_ROW*cfg.n+donor].x,1e-3)*wet;let phi=min(solid/dense,CLOSE_PACKING);
     var falls=a==1u&&!face_plus;
     if a==0u{
         let receiver=point(donor)+select(-axis(0u),axis(0u),face_plus);
-        if valid(receiver){let record=geometry[BODY_ROW*cfg.n+at(receiver)];falls=select(record.w,record.z,face_plus)>0.;}
+        if valid(receiver){let record=scratch[BODY_ROW*cfg.n+at(receiver)];falls=select(record.w,record.z,face_plus)>0.;}
     }
     if solid>0.&&falls{
         var up=-1.;

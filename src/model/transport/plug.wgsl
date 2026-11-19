@@ -17,7 +17,7 @@ fn plug_body(i:u32)->bool{
     let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
     if solid<=0.||wet<=0.{return false;}
     if solid>=CRITICAL_PACKING*wet{return true;}
-    let entry=geometry[BODY_ROW*cfg.n+i];
+    let entry=scratch[BODY_ROW*cfg.n+i];
     return entry.y>=0.&&entry.x<1.;
 }
 // Sand that can stand in a chain: no bubble and no deposit.
@@ -47,8 +47,8 @@ fn plug_link(i:u32)->bool{
 @compute @workgroup_size(128) fn plug_record(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}
     let c=cells[i];let g=grains(c);
-    geometry[PLUG_ROW*cfg.n+i]=vec4<f32>(g.x,g.y,select(0.,1.,plug_link(i)),max(c.volume.water,0.)+g.x+g.y);
-    geometry[PLUG_INFLOW_ROW*cfg.n+i]=vec4<f32>(0.);
+    scratch[PLUG_ROW*cfg.n+i]=vec4<f32>(g.x,g.y,select(0.,1.,plug_link(i)),max(c.volume.water,0.)+g.x+g.y);
+    scratch[PLUG_INFLOW_ROW*cfg.n+i]=vec4<f32>(0.);
 }
 // Momentum scaled with its phase's volume, for a reduction only: scaled
 // up, the leftover of a near-empty phase is amplified.
@@ -86,10 +86,10 @@ struct PlugStep{left:f32,centre:f32,right:f32,fine:f32,ask:f32,up:vec3<f32>,up_f
 // straight up, the surplus of a slot that the drawdown fills from both
 // sides would climb the slot's own column and pack it dry.
 fn plug_return(i:u32,x:i32,y:i32)->vec3<f32>{
-    let flow=max(geometry[PLUG_INFLOW_ROW*cfg.n+i],vec4<f32>(0.));
+    let flow=max(scratch[PLUG_INFLOW_ROW*cfg.n+i],vec4<f32>(0.));
     var w=vec3<f32>(flow.x,flow.z+flow.w,flow.y);
-    if x==0||geometry[PLUG_ROW*cfg.n+at(vec2<i32>(x-1,y+1))].z<=0.{w.y+=w.x;w.x=0.;}
-    if x+1>=i32(cfg.nx)||geometry[PLUG_ROW*cfg.n+at(vec2<i32>(x+1,y+1))].z<=0.{w.y+=w.z;w.z=0.;}
+    if x==0||scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x-1,y+1))].z<=0.{w.y+=w.x;w.x=0.;}
+    if x+1>=i32(cfg.nx)||scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x+1,y+1))].z<=0.{w.y+=w.z;w.z=0.;}
     let total=w.x+w.y+w.z;
     if total<=0.{return vec3<f32>(0.,1.,0.);}
     return w/total;
@@ -102,7 +102,7 @@ fn plug_room(c:Cell)->f32{
 // grains did not touch, and it is not a layer hanging under its body.
 fn plug_settles(i:u32,record:vec4<f32>)->bool{
     if record.x+record.y>=CRITICAL_PACKING*record.w{return false;}
-    let entry=geometry[BODY_ROW*cfg.n+i];
+    let entry=scratch[BODY_ROW*cfg.n+i];
     return !(entry.x<1.&&entry.y==3.);
 }
 // The grains the open cell over a chain's top link can take until they
@@ -115,7 +115,7 @@ fn plug_open_room(j:u32)->f32{
 }
 // The fine share of a cell's grains by the record, -1 without grains.
 fn plug_share(x:i32,y:i32)->f32{
-    let r=geometry[PLUG_ROW*cfg.n+at(vec2<i32>(x,y))];let solid=r.x+r.y;
+    let r=scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x,y))];let solid=r.x+r.y;
     if solid<=0.{return -1.;}return r.x/solid;
 }
 // The fine share `face` of `amount`, as far as g holds each species.
@@ -171,10 +171,10 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
         // diagonal share: only the difference crosses between their columns.
         // The voids' sideways spread is a velocity (u = -K dv/dx, zero
         // where the columns descend alike), not an exchange of grains.
-        if x>0&&geometry[PLUG_ROW*cfg.n+at(vec2<i32>(x-1,y))].z>0.{
+        if x>0&&scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x-1,y))].z>0.{
             let crossed=min(want_left,k*asked.y);want_left-=crossed;want_centre+=crossed;
         }
-        if x+1<nx&&geometry[PLUG_ROW*cfg.n+at(vec2<i32>(x+1,y))].z>0.{
+        if x+1<nx&&scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x+1,y))].z>0.{
             let crossed=min(want_right,k*asked.y);want_right-=crossed;want_centre+=crossed;
         }
         let want=want_left+want_centre+want_right;
@@ -203,7 +203,7 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
     // room for grains.
     let above=at(vec2<i32>(x,y+1));
     if y+1<i32(cfg.ny)&&record.w>0.{
-        let linked=geometry[PLUG_ROW*cfg.n+above].z>0.;
+        let linked=scratch[PLUG_ROW*cfg.n+above].z>0.;
         let restore=(record.x+record.y)*min((water+solid)/record.w,1.);
         if linked{ask=max(given+restore-solid,0.);}
         // The link hands up what the carry left it beyond that packing. The
@@ -303,7 +303,7 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
     workgroupBarrier();
     for(var i=t;i<cfg.n;i+=4u*PLUG_THREADS){
         var z=vec4<f32>(0.);
-        for(var u=0u;u<4u;u++){let c=i+u*PLUG_THREADS;if c<cfg.n{z[u]=geometry[PLUG_ROW*cfg.n+c].z;}}
+        for(var u=0u;u<4u;u++){let c=i+u*PLUG_THREADS;if c<cfg.n{z[u]=scratch[PLUG_ROW*cfg.n+c].z;}}
         for(var u=0u;u<4u;u++){let c=i+u*PLUG_THREADS;if c<cfg.n&&z[u]>0.{atomicOr(&plug_marks[c/cfg.nx],1u);}}
     }
     workgroupBarrier();
@@ -344,7 +344,7 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
             if y<ny{plug_receive(at(vec2<i32>(x,y)),x,y-1,up,up_fine);}
         }
         if walked&&y<ny&&plug_linked[y]!=0u{
-            let i=at(vec2<i32>(x,y));let record=geometry[PLUG_ROW*cfg.n+i];
+            let i=at(vec2<i32>(x,y));let record=scratch[PLUG_ROW*cfg.n+i];
             var step=PlugStep();if record.z>0.{step=plug_give(i,x,y,record,k,asked);}
             let r=cell%PLUG_KEPT;
             plug_ask[r]=step.ask;

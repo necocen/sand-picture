@@ -31,7 +31,7 @@ fn teeth_firm(c:Cell)->bool{
 }
 fn teeth_column(col:i32)->vec2<f32>{
     if col<0||col>=i32(cfg.nx){return vec2<f32>(-1.);}
-    return geometry[TEETH_ROW*cfg.n+u32(col)].xy;
+    return scratch[TEETH_ROW*cfg.n+u32(col)].xy;
 }
 // Per column, geometry[TEETH_ROW n + col] = (the lowest row of the sandy run
 // hanging from the ceiling, the lowest row of the firm sand unbroken from
@@ -41,7 +41,7 @@ fn teeth_column(col:i32)->vec2<f32>{
     let col=id.x;if col>=cfg.nx{return;}
     var y=i32(cfg.ny)-1;
     while y>=0&&!teeth_sandy(cells[at(vec2<i32>(i32(col),y))]){y-=1;}
-    if y<0||y<i32(cfg.ny)/2{geometry[TEETH_ROW*cfg.n+col]=vec4<f32>(-1.,-1.,0.,0.);return;}
+    if y<0||y<i32(cfg.ny)/2{scratch[TEETH_ROW*cfg.n+col]=vec4<f32>(-1.,-1.,0.,0.);return;}
     var firm=-1.;var run=true;
     for(var r=y;r>=0;r--){
         let c=cells[at(vec2<i32>(i32(col),r))];
@@ -52,7 +52,7 @@ fn teeth_column(col:i32)->vec2<f32>{
         if run&&teeth_firm(c){firm=f32(r);}else{run=false;}
         y=r;
     }
-    geometry[TEETH_ROW*cfg.n+col]=vec4<f32>(f32(y),firm,0.,0.);
+    scratch[TEETH_ROW*cfg.n+col]=vec4<f32>(f32(y),firm,0.,0.);
 }
 // Whether a bubble's gas is kept from crossing from `source` into `dest`:
 // `dest` lies within TEETH_SHADOW below a tooth, the firm underside of its

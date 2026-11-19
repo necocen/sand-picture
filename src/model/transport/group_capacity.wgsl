@@ -49,7 +49,7 @@
       // caged and at the freezing packing if looser. A bubble does not
       // filter the water out of a packing or a suspension.
       let cj=cells[j];let gj=grains(cj);let solid_j=gj.x+gj.y;let wet_j=max(cj.volume.water,0.)+solid_j;
-      let entry=geometry[BODY_ROW*cfg.n+j];
+      let entry=scratch[BODY_ROW*cfg.n+j];
       if entry.y>=0.&&entry.x>0.&&entry.x<1.{dense+=entry.x*wet_j;}
       else if solid_j>0.&&wet_j>0.{dense+=solid_j/max(solid_j/wet_j,FREEZING_PACKING);}
       if solid_j>0.&&wet_j>0.&&solid_j>=CRITICAL_PACKING*wet_j{packed=true;}

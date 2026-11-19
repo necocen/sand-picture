@@ -33,7 +33,7 @@
 // does not show a layer packed on one side of it.
 fn powder_held(i:u32)->bool{
     let c=cells[i];let wet=free_wet(c);let g=grains(c);let solid=g.x+g.y;
-    if wet<=0.||solid>=FREEZING_PACKING*wet||geometry[BODY_ROW*cfg.n+i].y>=0.{return true;}
+    if wet<=0.||solid>=FREEZING_PACKING*wet||scratch[BODY_ROW*cfg.n+i].y>=0.{return true;}
     if solid<=0.||solid<dot(g,GRAIN_DIAMETER)/(solid*cfg.h)*CRITICAL_PACKING{return false;}
     let below=point(i)-axis(1u);
     return c.bed.z>0.||(valid(below)&&cells[at(below)].bed.z>0.);

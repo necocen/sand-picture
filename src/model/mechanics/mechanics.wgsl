@@ -135,8 +135,8 @@ fn friction_limit(i:u32,c:Cell,mu:f32)->f32{
 // funnel's wall, whose grains come to rest on its floor, keeps it and stands.
 fn free_face(i:u32)->bool{
     let p=point(i);let left=p-axis(0u);let right=p+axis(0u);
-    if valid(right)&&open_water(cells[at(right)])&&geometry[BODY_ROW*cfg.n+at(right)].z>0.{return true;}
-    if valid(left)&&open_water(cells[at(left)])&&geometry[BODY_ROW*cfg.n+at(left)].w>0.{return true;}
+    if valid(right)&&open_water(cells[at(right)])&&scratch[BODY_ROW*cfg.n+at(right)].z>0.{return true;}
+    if valid(left)&&open_water(cells[at(left)])&&scratch[BODY_ROW*cfg.n+at(left)].w>0.{return true;}
     return false;
 }
 fn limited(tau:vec2<f32>,limit:f32)->vec2<f32>{

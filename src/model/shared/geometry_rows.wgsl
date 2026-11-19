@@ -24,15 +24,15 @@ const FACE_PREDICTION_ROW:u32=41u;    // 2 rows, per face: the first projection'
 const GROUP_PARENT_ROW:u32=41u;       // the group's union-find parent
 const GROUP_MAP_ROW:u32=42u;          // a cell's group: owner, size, free inventory
 const GROUP_PAYLOAD_ROW:u32=43u;      // 4 rows: the group's contents
-const PLUG_INFLOW_ROW:u32=47u;        // the grains the transport brings in through each face (plug.wgsl)
+const PLUG_INFLOW_ROW:u32=36u;        // the grains the transport brings in through each face (plug.wgsl)
 const GROUP_LABEL_ROW:u32=48u;        // GAS_SLOTS rows: the group's gas by identity
 const SOLVE_APERTURE_ROW:u32=57u;     // the four faces' apertures at the last stress solve
 const SOLVE_STATE_ROW:u32=58u;        // the pressure and the wet volume at the last stress solve
 const HOLD_ROW:u32=59u;               // the traction the plates hold, sliding or not, and the creep
-const TEETH_ROW:u32=60u;              // per column: the slab's undersides (teeth.wgsl)
-const BODY_ROW:u32=61u;               // a packed body's last layer and where its faces shed (teeth.wgsl)
-const PLUG_ROW:u32=62u;               // a body's grains before the transport (plug.wgsl)
-const COLUMN_ROW:u32=63u;             // the column sliding through a slot between bubbles (teeth.wgsl)
+const TEETH_ROW:u32=46u;              // per column: the slab's undersides (teeth.wgsl)
+const BODY_ROW:u32=47u;               // a packed body's last layer and where its faces shed (teeth.wgsl)
+const PLUG_ROW:u32=48u;               // a body's grains before the transport (plug.wgsl)
+const COLUMN_ROW:u32=49u;             // the column sliding through a slot between bubbles (teeth.wgsl)
 // The rows of `scratch`, in the same units: what one update's kernels write
 // before they read it.
 const RETURNED_STRESS_ROW:u32=50u;    // the stress the grain constraint returns (mechanics_work.wgsl)
