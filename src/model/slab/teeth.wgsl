@@ -33,7 +33,7 @@ fn teeth_column(col:i32)->vec2<f32>{
     if col<0||col>=i32(cfg.nx){return vec2<f32>(-1.);}
     return scratch[TEETH_ROW*cfg.n+u32(col)].xy;
 }
-// Per column, geometry[TEETH_ROW n + col] = (the lowest row of the sandy run
+// Per column, scratch[TEETH_ROW n + col] = (the lowest row of the sandy run
 // hanging from the ceiling, the lowest row of the firm sand unbroken from
 // its top), or (-1, -1) with no sand in the tank's upper half. Water above
 // the run (a crater) is skipped; one loose cell over sand stays in the run.

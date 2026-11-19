@@ -37,9 +37,9 @@
         incoming.stress+=payload;
         // Component 2*origin of an identity's flux: this side's own origin
         // leaves the group, the other enters it.
-        let f0=geometry[flux_index(f,0u)];let f1=geometry[flux_index(f,1u)];let f2=geometry[flux_index(f,2u)];
-        let f3=geometry[flux_index(f,3u)];let f4=geometry[flux_index(f,4u)];let f5=geometry[flux_index(f,5u)];
-        let f6=geometry[flux_index(f,6u)];let f7=geometry[flux_index(f,7u)];let f8=geometry[flux_index(f,8u)];
+        let f0=scratch[flux_index(f,0u)];let f1=scratch[flux_index(f,1u)];let f2=scratch[flux_index(f,2u)];
+        let f3=scratch[flux_index(f,3u)];let f4=scratch[flux_index(f,4u)];let f5=scratch[flux_index(f,5u)];
+        let f6=scratch[flux_index(f,6u)];let f7=scratch[flux_index(f,7u)];let f8=scratch[flux_index(f,8u)];
         let leaving=side==0u;
         out_low+=sign*select(vec4<f32>(f0.x,f1.x,f2.x,f3.x),vec4<f32>(f0.z,f1.z,f2.z,f3.z),leaving);
         out_high+=sign*select(vec4<f32>(f4.x,f5.x,f6.x,f7.x),vec4<f32>(f4.z,f5.z,f6.z,f7.z),leaving);
@@ -86,14 +86,14 @@
     // The identities are scaled to make up the bulk gas, which is carried on
     // its own; no phase and no cell is normalised.
     var gas_scale=0.;if gas>0.{gas_scale=result.volume.w/gas;}
-    let count=group_count(i);let total_free=geometry[GROUP_MAP_ROW*cfg.n+i].w;
+    let count=group_count(i);let total_free=scratch[GROUP_MAP_ROW*cfg.n+i].w;
     var remainder=1.;
     // The members share everything carried by their free inventories at the
     // grouping, the owner taking the remainder; the deposit and its pore
     // water stay.
     for(var member=1u;member<=count;member++){
         let slot=select(member,0u,member==count);let j=group_member(i,slot);var fraction=remainder;
-        if slot>0u{fraction=geometry[GROUP_MAP_ROW*cfg.n+j].z/total_free;remainder-=fraction;}
+        if slot>0u{fraction=scratch[GROUP_MAP_ROW*cfg.n+j].z/total_free;remainder-=fraction;}
         // The fourth component of the first four layers is an observation,
         // kept: slot 1 adds the gas its identities were overdrawn by, slot
         // 3 keeps the largest common volume a group sent out.

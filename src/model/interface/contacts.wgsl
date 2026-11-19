@@ -238,7 +238,8 @@ fn shape_segment(s:vec4<f32>)->vec4<f32> {
 }
 
 // A cell's two contact shapes, a plane (n, alpha, 0) or a disk (centre,
-// radius, 1), kept until the next transport reuses the rows for its fluxes.
+// radius, 1), fitted at the end of an update for the next one. Once the
+// transport has moved the gas they are no longer its shapes.
 fn contact_index(i:u32,l:u32)->u32{return CONTACT_ROW*cfg.n+2u*i+l;}
 fn contact_diagnostic(i:u32,l:u32)->u32{return CONTACT_AUDIT_ROW*cfg.n+2u*i+l;}
 struct DiskFit { shape:vec4<f32>, audit:vec4<f32> }

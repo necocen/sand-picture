@@ -19,13 +19,13 @@
         let donor=select(at(base+axis(a)),at(base),origin==0u);
         let inventory=group_payload(donor).volume;let labels=group_label_index(donor,0u);
         for(var l=0u;l<GAS_SLOTS;l++){
-            let low=sign*upwind_label_flux(upwind,amount,inventory,geometry[labels+l].x);low_out[l]+=low;
+            let low=sign*upwind_label_flux(upwind,amount,inventory,scratch[labels+l].x);low_out[l]+=low;
             increase[l]+=max(sign*source_gas_flux(f,l,origin)-low,0.);
         }
       }}
     }
     for(var l=0u;l<GAS_SLOTS;l++){
-        let slot=group_label_index(i,l);geometry[slot].z=capacity_ratio(geometry[slot].x-low_out[l],increase[l]);
+        let slot=group_label_index(i,l);scratch[slot].z=capacity_ratio(scratch[slot].x-low_out[l],increase[l]);
     }
 }
 // The outgoing ratio of each phase and the receiving ratio. Hard grains do

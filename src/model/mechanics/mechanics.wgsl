@@ -603,7 +603,7 @@ fn return_grains(i:u32,predictor:bool) {
     if id.x<cfg.n{remember_contact(id.x);}
 }
 // The record of a stress solve from which transfer_contact projects the
-// pressure after the geometry changes, in rows no scratch use overwrites.
+// pressure after the geometry changes: it lasts into the next update.
 fn remember_contact(i:u32){
     let p=point(i);var aperture=vec4<f32>(0.);
     for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){

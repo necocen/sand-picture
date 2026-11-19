@@ -192,7 +192,7 @@ fn spacer_mouth(i:u32,l:u32)->f32{
 fn gap_between(i:u32)->bool{return gaps[i].x>0.;}
 fn gap_open(i:u32)->bool{return gaps[i].y>0.;}
 fn gap_spacer(i:u32)->i32{return i32(gaps[i].z)-1;}
-// Per grid column, after body_faces: geometry[COLUMN_ROW n + i] =
+// Per grid column, after body_faces: scratch[COLUMN_ROW n + i] =
 // (1, w, the body's packing at the chain's top, s) for a column cell,
 // (0, w, 0, s) for a cell of a small bubble's border that no chain runs
 // through, and 0 for any other cell. s is the small bubble's identity and
@@ -309,8 +309,8 @@ fn joint_mouth(f:u32,interval:f32)->f32{
         if slot_span(point(i))*cfg.h<JAMMING_WIDTH*GRAIN_DIAMETER.y{return 0.;}
         // The face is then the orifice, and one narrower than the jamming
         // width arches. Its aperture is the mechanics' record on the face:
-        // the transport has since overwritten the contact fits (CONTACT_ROW)
-        // that free_wet_aperture reads.
+        // the transport has since moved the gas away from the contact fits
+        // (CONTACT_ROW) that free_wet_aperture reads.
         if aperture*cfg.h<JAMMING_WIDTH*GRAIN_DIAMETER.y{return 0.;}
     }
     var allowed=0.;

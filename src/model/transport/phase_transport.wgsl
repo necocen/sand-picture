@@ -28,7 +28,7 @@ fn upwind_label_flux(upwind:bool,amount:f32,inventory:vec4<f32>,label:f32)->f32{
         let receiver=select(i,j,origin==0u);
         let closed=teeth_shadow(point(donor),point(receiver))||plug_wall(donor,receiver)||close_drained(cells[receiver])||(border_cell(receiver)&&!border_cell(donor))||gas_sieved(f,donor);
         for(var l=0u;l<GAS_SLOTS;l++){
-            let entry=geometry[labels+l];let low=upwind_label_flux(origin==upwind,amount,inventory,entry.x);
+            let entry=scratch[labels+l];let low=upwind_label_flux(origin==upwind,amount,inventory,entry.x);
             lows[l]=low;
             candidate[l]=select(mix(low,source_gas_flux(f,l,origin),entry.z),0.,closed||spacer_channel_closed(l,receiver));total+=candidate[l];low_total+=low;
         }
@@ -135,7 +135,7 @@ fn side_payload(first:GroupPayload,second:GroupPayload,forward:bool)->GroupPaylo
       if inventory.w<=0.{continue;}let labels=group_label_index(source_cell,0u);
       let sieved=gas_sieved(f,source_cell);
       for(var l=0u;l<GAS_SLOTS;l++){
-        let low=select(upwind_label_flux(origin==upwind,amount,inventory,geometry[labels+l].x),0.,sieved);
+        let low=select(upwind_label_flux(origin==upwind,amount,inventory,scratch[labels+l].x),0.,sieved);
         let value=mix(low,source_gas_flux(f,l,origin),blend);
         put_source_gas_flux(f,l,origin,value);gas+=value;
     }}

@@ -7,11 +7,11 @@
 fn gas_carrier(f:u32)->f32{
     if internal_face(f){return 0.;}return faces[f].velocity.w*cfg.dt/(carry_divisions()*cfg.h);
 }
-// geometry[flux_index(f, l)] = (forward amount, identity, backward amount,
+// scratch[flux_index(f, l)] = (forward amount, identity, backward amount,
 // identity) of identity l + 1: one amount from each side's cell, since the
 // gas and the common flow may cross a face in opposite directions.
-fn source_gas_flux(f:u32,l:u32,origin:u32)->f32{return geometry[flux_index(f,l)][2u*origin];}
-fn put_source_gas_flux(f:u32,l:u32,origin:u32,value:f32){geometry[flux_index(f,l)][2u*origin]=value;}
+fn source_gas_flux(f:u32,l:u32,origin:u32)->f32{return scratch[flux_index(f,l)][2u*origin];}
+fn put_source_gas_flux(f:u32,l:u32,origin:u32,value:f32){scratch[flux_index(f,l)][2u*origin]=value;}
 // The gas crossing face f (forward, backward; both nonnegative): the net
 // flux where the gas moves with the common flow, else each side's sum.
 fn gas_sweeps(f:u32)->vec2<f32>{
@@ -19,7 +19,7 @@ fn gas_sweeps(f:u32)->vec2<f32>{
         let gas=transport[f].volume.w;return vec2<f32>(max(gas,0.),max(-gas,0.));
     }
     var amount=vec2<f32>(0.);
-    for(var l=0u;l<GAS_SLOTS;l++){let v=geometry[flux_index(f,l)];amount+=vec2<f32>(v.x,-v.z);}
+    for(var l=0u;l<GAS_SLOTS;l++){let v=scratch[flux_index(f,l)];amount+=vec2<f32>(v.x,-v.z);}
     return amount;
 }
 // A bubble smaller than a cell: no neighbour holds a grain layer of gas.
@@ -104,12 +104,12 @@ fn identity_velocity(p:vec2<i32>,label:f32)->vec2<f32>{
     if carry_plan.current>=carry_plan.steps{return;}
     let f=id.x;if f>=2u*cfg.n{return;}let i=f/2u;let a=f%2u;let q=point(i)+axis(a);
     var out:Transport;
-    if !valid(q)||internal_face(f){transport[f]=out;/*loop: slower written out*/for(var l=0u;l<GAS_SLOTS;l++){geometry[flux_index(f,l)]=vec4<f32>(0.);}return;}
+    if !valid(q)||internal_face(f){transport[f]=out;/*loop: slower written out*/for(var l=0u;l<GAS_SLOTS;l++){scratch[flux_index(f,l)]=vec4<f32>(0.);}return;}
     let j=at(q);
     let amount=gas_carrier(f);
     let origin=select(1u,0u,amount>=0.);let donor=select(j,i,origin==0u);
     // Slot l holds identity l + 1 on both sides.
-    /*loop: slower written out*/for(var l=0u;l<GAS_SLOTS;l++){geometry[flux_index(f,l)]=vec4<f32>(0.,f32(l+1u),0.,f32(l+1u));}
+    /*loop: slower written out*/for(var l=0u;l<GAS_SLOTS;l++){scratch[flux_index(f,l)]=vec4<f32>(0.,f32(l+1u),0.,f32(l+1u));}
     if cells[donor].volume.gas>0.{
         var high:array<f32,GAS_SLOTS>;var low:array<f32,GAS_SLOTS>;var total_high=0.;var total_low=0.;
         /*loop: slower written out*/for(var l=0u;l<GAS_SLOTS;l++){

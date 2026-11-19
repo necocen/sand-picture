@@ -33,7 +33,7 @@ fn body_speed(c:Cell)->vec2<f32>{
     let g=grains(c);let s=g.x+g.y;if s<=0.{return vec2<f32>(0.);}
     return (c.momentum[1]+c.momentum[2])/s;
 }
-// Per cell, geometry[BODY_ROW n + i] = (f, side, left, right). A cell below
+// Per cell, scratch[BODY_ROW n + i] = (f, side, left, right). A cell below
 // CRITICAL_PACKING with a grain layer or more that sits against a packed
 // neighbour moving with it (within TEETH_STILL), or rests on a packed cell
 // below it, is that body's last layer: its grains fill the fraction f of

@@ -41,7 +41,7 @@ fn plug_link(i:u32)->bool{
     }
     return false;
 }
-// geometry[PLUG_ROW n + i] = (fine, coarse, link, wet) before the carry:
+// scratch[PLUG_ROW n + i] = (fine, coarse, link, wet) before the carry:
 // the cell's free grains, whether it is a link, and its wet part. Clears
 // PLUG_INFLOW_ROW, where advect_groups sums the grains the carry brings in.
 @compute @workgroup_size(128) fn plug_record(@builtin(global_invocation_id) id:vec3<u32>){

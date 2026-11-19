@@ -10,7 +10,7 @@ struct Plan {maximum:atomic<u32>,steps:u32,current:u32,required:u32,sum_steps:u3
 @group(0) @binding(2) var<storage,read_write> plan:Plan;
 @compute @workgroup_size(1) fn reset(){atomicStore(&plan.maximum,0u);plan.current=0u;}
 @group(0) @binding(3) var<storage,read_write> cells:array<array<vec4<f32>,6>>;
-@group(0) @binding(4) var<storage,read_write> geometry:array<vec4<f32>>;
+@group(0) @binding(4) var<storage,read_write> scratch:array<vec4<f32>>;
 @group(0) @binding(5) var<storage,read_write> members:array<atomic<u32>>;
 fn group_member(i:u32,k:u32)->u32{
     if k==0u{return i;}var j=atomicLoad(&members[i]);
@@ -27,18 +27,18 @@ var<workgroup> speeds:array<u32,128>;
     let i=id.x;var amount=0.;var speed=0.;
     if i<cfg.n {
         let x=i%cfg.nx;let y=i/cfg.nx;
-        let map=geometry[GROUP_MAP_ROW*cfg.n+i];let owner=u32(map.x);
+        let map=scratch[GROUP_MAP_ROW*cfg.n+i];let owner=u32(map.x);
         if owner==i{
             let count=1u+u32(map.y);var free=0.;var outgoing=0.;
             for(var member=0u;member<count;member++){
                 let j=group_member(i,member);
-                free+=geometry[GROUP_MAP_ROW*cfg.n+j].z;
+                free+=scratch[GROUP_MAP_ROW*cfg.n+j].z;
                 let px=j%cfg.nx;let py=j/cfg.nx;
                 let ids=array<u32,4>(2u*j,2u*(j-1u),2u*j+1u,2u*(j-cfg.nx)+1u);
                 let neighbors=array<u32,4>(j+1u,j-1u,j+cfg.nx,j-cfg.nx);
                 let valid=array<bool,4>(px+1u<cfg.nx,px>0u,py+1u<cfg.ny,py>0u);
                 for(var k=0u;k<4u;k++){if valid[k]{
-                    if u32(geometry[GROUP_MAP_ROW*cfg.n+neighbors[k]].x)==owner{continue;}
+                    if u32(scratch[GROUP_MAP_ROW*cfg.n+neighbors[k]].x)==owner{continue;}
                     outgoing+=max(select(-1.,1.,k%2u==0u)*faces[ids[k]].data[4].w,0.);
                 }}
             }

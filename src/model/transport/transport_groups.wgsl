@@ -10,10 +10,10 @@
 fn free_inventory(i:u32)->f32{
     let v=mobile_volumes(cells[i]);return v.x+v.y+v.z+v.w;
 }
-// geometry[GROUP_MAP_ROW n + i] = (i's owner, the owner's other members,
+// scratch[GROUP_MAP_ROW n + i] = (i's owner, the owner's other members,
 // i's free inventory, the group's on its owner).
-fn group_owner(i:u32)->u32{return u32(geometry[GROUP_MAP_ROW*cfg.n+i].x);}
-fn group_count(i:u32)->u32{return 1u+u32(geometry[GROUP_MAP_ROW*cfg.n+i].y);}
+fn group_owner(i:u32)->u32{return u32(scratch[GROUP_MAP_ROW*cfg.n+i].x);}
+fn group_count(i:u32)->u32{return 1u+u32(scratch[GROUP_MAP_ROW*cfg.n+i].y);}
 fn group_member(i:u32,k:u32)->u32{
     if k==0u{return i;}var j=atomicLoad(&members[i]);
     for(var n=1u;n<k;n++){j=atomicLoad(&members[cfg.n+j]);}
@@ -37,29 +37,29 @@ fn internal_face(f:u32)->bool{
     // Compared as products: the reciprocal of a subnormal inventory turns
     // no flow into NaN.
     let needs_merge=cells[i].bed.z>0.&&outgoing>0.&&(cfg.dt/cfg.h)*outgoing>=4.*free;
-    geometry[GROUP_REQUEST_ROW*cfg.n+i]=vec4<f32>(select(0.,1.,needs_merge),0.,free,outgoing);
+    scratch[GROUP_REQUEST_ROW*cfg.n+i]=vec4<f32>(select(0.,1.,needs_merge),0.,free,outgoing);
 }
 // The parent of a cell that asks: the neighbour across an open face with
 // the largest free inventory above its own, the larger index on a tie, so
 // that the chains of parents hold no cycle.
 @compute @workgroup_size(128) fn choose_groups(@builtin(global_invocation_id) id:vec3<u32>){
-    let i=id.x;if i>=cfg.n{return;}let own=geometry[GROUP_REQUEST_ROW*cfg.n+i];let p=point(i);
+    let i=id.x;if i>=cfg.n{return;}let own=scratch[GROUP_REQUEST_ROW*cfg.n+i];let p=point(i);
     var parent=i;var largest=own.z;
     if own.x>0.{
         for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
             let q=p+select(-axis(a),axis(a),side==1u);if !valid(q){continue;}
-            let j=at(q);let candidate=geometry[GROUP_REQUEST_ROW*cfg.n+j];let f=2u*select(j,i,side==1u)+a;
+            let j=at(q);let candidate=scratch[GROUP_REQUEST_ROW*cfg.n+j];let f=2u*select(j,i,side==1u)+a;
             if free_area(f)>0.&&(candidate.z>largest||(candidate.z==largest&&j>parent)){
                 parent=j;largest=candidate.z;
             }
         }}
     }
-    geometry[GROUP_PARENT_ROW*cfg.n+i]=vec4<f32>(f32(parent),0.,0.,0.);
+    scratch[GROUP_PARENT_ROW*cfg.n+i]=vec4<f32>(f32(parent),0.,0.,0.);
 }
 @compute @workgroup_size(128) fn resolve_groups(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}var root=i;
-    loop{let parent=u32(geometry[GROUP_PARENT_ROW*cfg.n+root].x);if parent==root{break;}root=parent;}
-    geometry[GROUP_MAP_ROW*cfg.n+i]=vec4<f32>(f32(root),0.,geometry[GROUP_REQUEST_ROW*cfg.n+i].z,0.);
+    loop{let parent=u32(scratch[GROUP_PARENT_ROW*cfg.n+root].x);if parent==root{break;}root=parent;}
+    scratch[GROUP_MAP_ROW*cfg.n+i]=vec4<f32>(f32(root),0.,scratch[GROUP_REQUEST_ROW*cfg.n+i].z,0.);
     if root!=i{
         let previous=atomicExchange(&members[root],i);
         atomicStore(&members[cfg.n+i],previous);
@@ -79,23 +79,23 @@ fn internal_face(f:u32)->bool{
         count++;
     }
     atomicStore(&members[i],sorted);
-    var total=geometry[GROUP_REQUEST_ROW*cfg.n+i].z;var cursor=sorted;
-    loop{if cursor==cfg.n{break;}total+=geometry[GROUP_REQUEST_ROW*cfg.n+cursor].z;cursor=atomicLoad(&members[cfg.n+cursor]);}
-    geometry[GROUP_MAP_ROW*cfg.n+i].y=f32(count);geometry[GROUP_MAP_ROW*cfg.n+i].w=total;
+    var total=scratch[GROUP_REQUEST_ROW*cfg.n+i].z;var cursor=sorted;
+    loop{if cursor==cfg.n{break;}total+=scratch[GROUP_REQUEST_ROW*cfg.n+cursor].z;cursor=atomicLoad(&members[cfg.n+cursor]);}
+    scratch[GROUP_MAP_ROW*cfg.n+i].y=f32(count);scratch[GROUP_MAP_ROW*cfg.n+i].w=total;
 }
 
 fn native_payload(i:u32)->GroupPayload{
     let c=cells[i];var out:GroupPayload;out.volume=mobile_volumes(c);out.momentum=c.momentum;
     out.stress=vec2<f32>(c.stress.normal,c.stress.shear);out.powder=vec2<f32>(c.powder.mobile,c.powder.free);return out;
 }
-// A group's payload is kept in four rows of geometry: the volumes, the four
+// A group's payload is kept in four scratch rows: the volumes, the four
 // momenta, and (free powder, normal stress, shear stress, powder).
 fn group_payload(i:u32)->GroupPayload{
     let owner=group_owner(i);
     let base=GROUP_PAYLOAD_ROW*cfg.n+4u*owner;var out:GroupPayload;
-    out.volume=geometry[base];out.momentum[0]=geometry[base+1u].xy;out.momentum[1]=geometry[base+1u].zw;
-    out.momentum[2]=geometry[base+2u].xy;out.momentum[3]=geometry[base+2u].zw;
-    let carried=geometry[base+3u];out.stress=carried.yz;out.powder=carried.wx;return out;
+    out.volume=scratch[base];out.momentum[0]=scratch[base+1u].xy;out.momentum[1]=scratch[base+1u].zw;
+    out.momentum[2]=scratch[base+2u].xy;out.momentum[3]=scratch[base+2u].zw;
+    let carried=scratch[base+3u];out.stress=carried.yz;out.powder=carried.wx;return out;
 }
 // The group's gas of identity l + 1: (amount, identity, the share of the
 // sweeps' increase that the stock pays (gas_capacity), 0).
@@ -103,7 +103,7 @@ fn group_label_index(i:u32,l:u32)->u32{
     let owner=group_owner(i);
     return GROUP_LABEL_ROW*cfg.n+GAS_SLOTS*owner+l;
 }
-fn group_label(i:u32,l:u32)->vec4<f32>{return geometry[group_label_index(i,l)];}
+fn group_label(i:u32,l:u32)->vec4<f32>{return scratch[group_label_index(i,l)];}
 // Owner i gathers its members' payload and gas identities for this
 // subdivision.
 fn cache_group(i:u32){
@@ -113,14 +113,14 @@ fn cache_group(i:u32){
         for(var phase=0u;phase<4u;phase++){value.momentum[phase]+=right.momentum[phase];}
         value.stress+=right.stress;value.powder+=right.powder;
     }
-    let base=GROUP_PAYLOAD_ROW*cfg.n+4u*i;geometry[base]=value.volume;
-    geometry[base+1u]=vec4<f32>(value.momentum[0],value.momentum[1]);
-    geometry[base+2u]=vec4<f32>(value.momentum[2],value.momentum[3]);
-    geometry[base+3u]=vec4<f32>(value.powder.y,value.stress,value.powder.x);
+    let base=GROUP_PAYLOAD_ROW*cfg.n+4u*i;scratch[base]=value.volume;
+    scratch[base+1u]=vec4<f32>(value.momentum[0],value.momentum[1]);
+    scratch[base+2u]=vec4<f32>(value.momentum[2],value.momentum[3]);
+    scratch[base+3u]=vec4<f32>(value.powder.y,value.stress,value.powder.x);
     for(var l=0u;l<GAS_SLOTS;l++){
         var amount=geometry[layer_index(i,l)].x;
         for(var member=1u;member<count;member++){amount+=geometry[layer_index(group_member(i,member),l)].x;}
-        geometry[group_label_index(i,l)]=vec4<f32>(amount,f32(l+1u),0.,0.);
+        scratch[group_label_index(i,l)]=vec4<f32>(amount,f32(l+1u),0.,0.);
     }
 }
 // The momentum the amount `amount` of a phase carries out of a payload.

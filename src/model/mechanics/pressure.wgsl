@@ -80,8 +80,7 @@ fn cache_pressure_couplings(i:u32){
 // The local problem of a cell whose return applies (dilation rate at the
 // solved flow, pressure response, shear compliance, trial strength), its
 // material (grain and wet volume, shear-rate norm), its first iterate and
-// its trial stress, in rows of `geometry` that are free from the interface
-// update until the transport overwrites them.
+// its trial stress.
 fn cache_pressure_problem(i:u32,theta:f32,alpha:f32,beta:f32,trial:vec2<f32>,material:vec3<f32>,pressure:f32){
     scratch[PRESSURE_PROBLEM_ROW*cfg.n+i]=vec4<f32>(theta,alpha,beta,scaled_norm(trial));
     scratch[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(material,1.);
