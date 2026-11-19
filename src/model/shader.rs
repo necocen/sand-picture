@@ -48,7 +48,7 @@ impl Program {
             // sources, as COARSEN_ROWS does for the coarsening's workgroup
             // memory and the labels' layout for the place of the cells' words.
             Self::Stream => format!(
-                "const CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
+                "{GEOMETRY_ROWS}\nconst CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
                 cell_words(cells),
                 include_str!("stream/stream.wgsl"),
                 include_str!("stream/free_stream.wgsl"),

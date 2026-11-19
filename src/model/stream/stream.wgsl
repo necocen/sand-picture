@@ -24,6 +24,7 @@ struct Face {composition:vec4<f32>,velocity:vec4<f32>,response:vec4<f32>,grain_r
 @group(0) @binding(4) var<storage,read_write> faces:array<Face>;
 @group(0) @binding(5) var<storage,read_write> cells:array<f32>;
 @group(0) @binding(6) var<storage,read_write> geometry:array<vec4<f32>>;
+@group(0) @binding(12) var<storage,read_write> scratch:array<vec4<f32>>;
 // Per finest vertex i: [i] = the tension's tensor (xx, xy, yy) times
 // cfg.capillary, with w = 1 where the bed fixes psi, else minus the vertex's
 // interpolation weight; then nine entries a vertex, its gradient_basis.
@@ -52,10 +53,9 @@ fn gradient_tensor(g:vec2<f32>)->vec3<f32> {
     let u=g/scale;
     return (scale/length(u))*vec3<f32>(u.y*u.y,-u.x*u.y,u.x*u.x);
 }
-// The gas of identity slot l in cell c: LAYER_ROW of `geometry`, written as
-// a number because this module does not include the rows' names.
+// The gas of identity slot l in cell c.
 fn corner_gas(c:u32,l:u32)->f32 {
-    let amount=geometry[cfg.fx*cfg.fy+cfg.gas_slots*c+l].x;
+    let amount=geometry[LAYER_ROW*cfg.fx*cfg.fy+cfg.gas_slots*c+l].x;
     return select(0.,amount,amount>0.);
 }
 // The relabelling's word of each cell (labels.wgsl, label_cell_word), from

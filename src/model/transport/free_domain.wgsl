@@ -15,15 +15,15 @@ fn occupied_wet_fraction(c:Cell)->f32{
     if c.bed.z>=free{return 1.-free/total;}
     return c.bed.z/total;
 }
-fn free_area(f:u32)->f32{return geometry[BED_PASSAGE_ROW*cfg.n+f].x;}
+fn free_area(f:u32)->f32{return scratch[BED_PASSAGE_ROW*cfg.n+f].x;}
 // The share of face f open to the free liquid: its wet span less the
 // deposit's trace, and none where the deposit fills a cell's wet part (the
 // difference of the two reconstructions would leave a residue there).
 fn free_wet_aperture(f:u32)->f32{
     let i=f/2u;let q=point(i)+axis(f%2u);
     if !valid(q){return 0.;}
-    if geometry[BED_OCCUPANCY_ROW*cfg.n+i].x>=1.||geometry[BED_OCCUPANCY_ROW*cfg.n+at(q)].x>=1.{return 0.;}
-    return max(0.,label_liquid_aperture(f)-geometry[BED_PASSAGE_ROW*cfg.n+f].z);
+    if scratch[BED_OCCUPANCY_ROW*cfg.n+i].x>=1.||scratch[BED_OCCUPANCY_ROW*cfg.n+at(q)].x>=1.{return 0.;}
+    return max(0.,label_liquid_aperture(f)-scratch[BED_PASSAGE_ROW*cfg.n+f].z);
 }
 fn face_gas(f:u32)->f32{
     let q=point(f/2u)+axis(f%2u);if !valid(q){return 0.;}
@@ -149,7 +149,7 @@ fn gas_sieved(f:u32,donor:u32)->bool{
 // as deep as its volume V over the surface's wetted width w:
 // eta w^2/(V h^2). A trace of free water is no layer to shear.
 fn bed_shear(i:u32)->f32{
-    let c=cells[i];let bed=geometry[BED_OCCUPANCY_ROW*cfg.n+i];let wet=free_wet(c);
+    let c=cells[i];let bed=scratch[BED_OCCUPANCY_ROW*cfg.n+i];let wet=free_wet(c);
     if bed.x<=0.||bed.x>=1.||wet<=1e-6{return 0.;}
     let p=wet_polygon(i);let y=bed.x-.5;var lo=-.5;var hi=.5;
     let gas=outer_gas_shapes(i);

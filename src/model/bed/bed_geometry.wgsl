@@ -56,14 +56,14 @@ fn polygon_area(p:WetPolygon)->f32{
         }
         out.y=(c.bed.x+c.bed.y)/c.bed.z;
     }
-    geometry[BED_OCCUPANCY_ROW*cfg.n+i]=out;
+    scratch[BED_OCCUPANCY_ROW*cfg.n+i]=out;
 }
 // The interval that cell i's bed covers of the cell's edge on `side` (-0.5
 // or 0.5) of axis a, in cell coordinates along the edge, or zero: a side
 // edge up to the bed's surface, the bottom edge whole, the top edge only
 // under a full cell, each less what the gas planes cut off.
 fn bed_edge_interval(i:u32,a:u32,side:f32)->vec2<f32>{
-    let bed=geometry[BED_OCCUPANCY_ROW*cfg.n+i];if bed.x<=0.{return vec2<f32>(0.);}
+    let bed=scratch[BED_OCCUPANCY_ROW*cfg.n+i];if bed.x<=0.{return vec2<f32>(0.);}
     var span=vec2<f32>(-.5,.5);
     if a==0u{span.y=min(span.y,bed.x-.5);}
     else if side>0.&&bed.x<1.{return vec2<f32>(0.);}
@@ -88,11 +88,11 @@ fn bed_edge_interval(i:u32,a:u32,side:f32)->vec2<f32>{
         let left=max(0.,l.y-l.x);let right=max(0.,r.y-r.x);
         let overlap=max(0.,min(l.y,r.y)-max(l.x,r.x));
         let occupied=clamp(left+right-overlap,0.,1.);
-        let lp=geometry[BED_OCCUPANCY_ROW*cfg.n+i].y;let rp=geometry[BED_OCCUPANCY_ROW*cfg.n+j].y;
+        let lp=scratch[BED_OCCUPANCY_ROW*cfg.n+i].y;let rp=scratch[BED_OCCUPANCY_ROW*cfg.n+j].y;
         // Where the two cells' traces overlap the denser one sets the solid;
         // apart, their solids add.
         let solid=lp*left+rp*right-min(lp,rp)*overlap;
         out=vec4<f32>(1.-occupied,max(0.,occupied-solid),occupied,solid);
     }
-    geometry[BED_PASSAGE_ROW*cfg.n+f]=out;
+    scratch[BED_PASSAGE_ROW*cfg.n+f]=out;
 }
