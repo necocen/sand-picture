@@ -21,8 +21,8 @@
 - ビューは今と同じ三つ（単純・リアル・流れ）。リアルの美麗さは、あとからしっかり調整する。
 - 初回の読み込みが長いならスプラッシュ。
 - 描画のフレームレートは、低すぎず、計算を圧迫しない程度に。
-- mikage は軽い描画の枠組みのまま使う（頼んでいるのは #30 だけ）。窓は論理画素。環境で効き方の変わる最適化は
-  増やさない。
+- mikage は軽い描画の枠組みのまま使う。窓は論理画素。環境で効き方の変わる最適化は増やさない。
+  （計画の時点で mikage に頼んでいた #30 は、前提にした読みが誤りだった。下の 2.3）
 
 **承認で始めたこと**：段取りの 0（土台）と 1（模型の移植と v2.20 との照合）。それぞれの終わりで報告する。
 2 以降は、1 の結果を見てから進める。旧 repo（`../sand-picture`）は読むだけの参照にして、書き換えない。
@@ -48,9 +48,9 @@ sand-picture2/
       material.rs       物性の定数（唯一の正本）と、奥行きの抵抗の表
       scene.rs          場面：scene.bin・air.bin、床につながる堆積の分類
       buffers.rs        全バッファの確保と、保存・復元する組
-      shader.rs         断片 → 定数 → 入口から届く宣言だけ → ループの書き下し
-      shader/prune.rs unroll.rs
-      kernel.rs         入口ごとの pipeline と Kernel
+      shader.rs         断片 → 定数 → ループの書き下し（プログラムごとの WGSL）
+      shader/unroll.rs
+      kernel.rs         プログラムごとの module、入口ごとの pipeline、Kernel
       update.rs         1 更新の手順の表（Step の列）
       slab.rs bed.rs mechanics.rs stream.rs transport.rs labels.rs interface.rs
                         持ち主ごとに、自分の kernel を作って Step を並べる
@@ -74,13 +74,14 @@ sand-picture2/
 ### 2.1 手順の表
 
 ```rust
-pub struct Kernel { entry: &'static str, pipeline: Arc<wgpu::ComputePipeline>,
+pub struct Kernel { entry: &'static str, pipeline: wgpu::ComputePipeline,
                     bindings: wgpu::BindGroup, groups: Groups }   // Groups：固定の数か、間接
-pub struct Step   { pub stage: Stage, pub kernel: usize }
-pub struct Update { kernels: Vec<Kernel>, steps: Vec<Step> }      // Step は 608 個
+pub struct Step   { pub stage: Stage, pub kernel: usize }         // kernel は Kernels の中の位置
+pub struct Kernels { kernels: Vec<Kernel> }                       // 1 更新は Vec<Step>（608 個）
 ```
 
-- pipeline は入口ごとに 1 つ（compute は 91。いまは 128 個の Kernel がそれぞれ作っている）。
+- module はプログラムごとに 1 つ（模型・流れの解法・輸送の分割の予定・鏡映の 4 つ）、pipeline は入口ごとに 1 つ。
+  v2.20 は 128 個の Kernel がそれぞれ module と pipeline を作っていた。
 - 1 更新を、モジュールごとの `encode` の手続きではなく `Step` の列として持つ。製品は 1 つの pass に流し、道具は
   同じ列を段階ごと・kernel ごとに分けて測り、任意の Step の前後で書き出し、1 つだけ再生する。
 - kernel は少しずつ作れるようにする（読み込み中の画面を出すため。下の 4.3）。
@@ -107,10 +108,14 @@ pub struct Update { kernels: Vec<Kernel>, steps: Vec<Step> }      // Step は 60
 
 ### 2.3 シェーダー
 
-`断片 ＋ 定数 → 入口ごとに届く宣言だけ → ループの書き下し → module → pipeline`
+`断片 ＋ 定数 → ループの書き下し → プログラムごとの module → 入口ごとの pipeline`
 
-- wgpu の Metal 側は pipeline ごとに module の全関数を訳してコンパイルする（wgpu-hal 30.0.1 で確認）。1 つの入口が
-  届くのは関数の本文の平均 3.4% なので、入口ごとに届く宣言だけを集める。本文は一字も変えない。
+- module はプログラムごとに 1 つだけ作る。v2.20 の起動が重かったのは、同じプログラムの全文を kernel ごとに解析・検証
+  し直していたためである（1 回 約 22 ms）。
+- 入口に届く宣言だけを集める段は置かない。計画の時点では「wgpu の Metal 側は pipeline ごとに module の全関数を訳して
+  コンパイルする」と読んでいたが、誤りだった（2026-11-19）：naga 30.0.1 は、入口が複数ある module から pipeline を
+  作るとき、その入口に届くものだけに縮めてから MSL を書く（`process_overrides` の中の `compact`）。入口ごとに刈り込んだ
+  module を作る実装も書いて測ったが、プログラムごとに 1 つの module と起動の時間が同じ（1.9 秒）だったので外した。
 - 書き下しは最後の、スイッチで外せる段。ネイティブ（Metal）では v2.20 と同じ書き下しを使い、Web では測るまで
   外しておく。
 
@@ -190,7 +195,7 @@ V-cycle の 66：`anchor_predict, anchor_apply`、階層 3 つを下りながら
 
 - 窓をすぐ出し、kernel を 1 フレームあたり十数 ms ぶんずつ作る。そのあいだ、名前と進み具合だけの画面を描く。
 - Web では、最初のフレームが出るまで `index.html` の「Loading…」を出しておく（mikage の例と同じ）。
-- 入口ごとのシェーダーにしたあとの起動の時間を測り、十分短ければ進み具合の表示は省く。
+- 起動の時間を測り、十分短ければ進み具合の表示は省く（測った値は「段取り 1 の結果」。窓と Web での値は段取り 2 で見る）。
 
 ### 4.4 Web
 
@@ -215,8 +220,8 @@ GPU を使う照合は、ユーザーがアプリを見ていないときに流�
 
 0. **土台**：フォルダ、ツールチェーン、ignore、空のアプリ（窓・パネル・読み込み中の画面）がネイティブと
    `trunk build` の両方で動くところまで。→ 報告
-1. **模型の移植**：バッファは v2.20 の並びのまま、kernel を写し、手順の表と入口ごとのシェーダーで組む。
-   検証の 1 が通るまで。起動の時間を測る（いまは 14 秒）。→ 報告
+1. **模型の移植**：バッファは v2.20 の並びのまま、kernel を写し、手順の表で組む。
+   検証の 1 が通るまで。起動の時間を測る。→ 報告
 2. **アプリ**：tick、裏返し、作り直さないリセット、三つのビュー、描画の頻度、Web で動かす。回帰の基準を取る。
 3. **窓の画素で描く**：絵の大きさを窓に合わせ、粒の見え方を画素の大きさから決める。1440×960 では基準と一致。
    ほかの大きさの絵を見せる。
@@ -243,4 +248,4 @@ GPU を使う照合は、ユーザーがアプリを見ていないときに流�
 - 0：`cargo run --release` で窓・パネル・読み込み中の画面が出る。`trunk build` が通り、Chrome で同じものが出る。
   `cargo fmt --check`・`cargo clippy --all-targets`・`cargo test` が通る。
 - 1：`cargo run --release --example run -- …` の保存状態が、v2.20 の 30 秒ごとの状態と全部一致する（起動からの
-  一生と、裏返した二回目）。起動から最初の更新までの秒数を、いまの 14 秒と並べて報告する。
+  一生と、裏返した二回目）。起動から最初の更新までの秒数を、v2.20 の道具と同じ条件で並べて報告する。
