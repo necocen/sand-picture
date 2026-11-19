@@ -93,13 +93,22 @@ impl SandPicture {
                     return;
                 }
             };
-            // The window's first frame, and the frame before the views are
-            // made, show where the work stands before it goes on.
-            if matches!(self.state, State::Building(_)) && started.elapsed() < BUILD_BUDGET {
-                continue;
+            // A frame shows where the work stands before it goes on: the
+            // first frame, a frame every BUILD_BUDGET, the frame before the
+            // views are made - and a frame once every kernel is made, before
+            // the model's first work goes to the GPU: a browser compiles the
+            // kernels only then, and takes seconds over it.
+            let goes_on = match &self.state {
+                State::Building(building) => {
+                    !matches!(building.progress(), Progress::Kernels(made, of) if made == of)
+                        && started.elapsed() < BUILD_BUDGET
+                }
+                _ => false,
+            };
+            if !goes_on {
+                self.request_redraw();
+                return;
             }
-            self.request_redraw();
-            return;
         }
     }
 
