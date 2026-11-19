@@ -36,5 +36,5 @@ const COLUMN_ROW:u32=63u;             // the column sliding through a slot betwe
 // The rows of `scratch`, in the same units: what one update's kernels write
 // before they read it.
 const RETURNED_STRESS_ROW:u32=50u;    // the stress the grain constraint returns (mechanics_work.wgsl)
-const OUTGOING_CAPACITY_ROW:u32=50u;  // each transport group's outgoing ratio per phase (transport_work.wgsl)
+const OUTGOING_CAPACITY_ROW:u32=51u;  // each transport group's outgoing ratio per phase (transport_work.wgsl)
 const SCRATCH_ROWS:u32=52u;
