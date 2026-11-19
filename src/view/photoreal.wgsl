@@ -48,14 +48,14 @@ const GRAIN_SAMPLES: i32 = 8;
 // The share of the pixel at p that black grains cover. Sand against the
 // glass is seen grain by grain: each site a grain across shows one grain,
 // black with the black's share of the projected area. A pixel shows the
-// grains under it, so it is sampled at as many points a side as it is sites
-// across (one at least: a pixel finer than a grain shows the grain it lies
-// in). Grains that move more than their size in a frame are smeared into the
-// mean share.
+// grains under it: it is sampled at points no further apart than a site, as
+// many a side as it is sites across, rounded up (a pixel no wider than a
+// grain shows the grain it lies in). Grains that move more than their size
+// in a frame are smeared into the mean share.
 fn black_cover(p: vec2<f32>, black: f32) -> f32 {
     let site = cfg.diameters.x / cfg.cell_width;
     let pixel = vec2<f32>(cfg.size) / vec2<f32>(cfg.image_size);
-    let side = clamp(i32(round(pixel.x / site)), 1, GRAIN_SAMPLES);
+    let side = clamp(i32(ceil(pixel.x / site)), 1, GRAIN_SAMPLES);
     var grains = 0.;
     for (var k = 0; k < side * side; k++) {
         let o = ((vec2<f32>(f32(k % side), f32(k / side)) + .5) / f32(side) - .5) * pixel;
