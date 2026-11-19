@@ -10,8 +10,15 @@ pub struct Buffers {
     pub n: u32,
     pub nx: u32,
     pub ny: u32,
+
+    // What the model is given.
     /// The tank, the update interval and the gravity of this update (uniform).
     pub config: wgpu::Buffer,
+    /// The cross-gap resistance table of the materials.
+    pub table: wgpu::Buffer,
+
+    // The picture's state between updates (`state`); the flow's
+    // streamfunction, among the solver's fields below, belongs to it.
     /// 96 bytes a cell: mobile phase volumes, momenta and stress, the white's
     /// powder, deposited grains and pore water.
     pub cells: wgpu::Buffer,
@@ -21,34 +28,35 @@ pub struct Buffers {
     /// Two staggered faces a cell, 160 bytes each: response, projected flow
     /// and displacement.
     pub faces: wgpu::Buffer,
-    /// Two faces a cell, 80 bytes each: the conservative phase flux.
-    pub transport: wgpu::Buffer,
-    /// Transport group membership.
-    pub members: wgpu::Buffer,
-    /// What one update's kernels write before they read it: the rows of
-    /// `rows::SCRATCH`.
-    pub scratch: wgpu::Buffer,
-    /// The grain constraint's working values of each cell, 48 bytes
-    /// (mechanics/mechanics_work.wgsl).
-    pub grain_works: wgpu::Buffer,
-    /// The cross-gap resistance table of the materials.
-    pub table: wgpu::Buffer,
     /// The floor-connected bed's columns.
     pub terrain: wgpu::Buffer,
     /// The record of the bed's layers as they were laid (bed/strata.wgsl).
     pub strata: wgpu::Buffer,
-    /// The arrival snapshot of the bed's capture.
-    pub arrival: wgpu::Buffer,
     /// The bubbles' relabelling: components, films' counts, cells' words.
     pub labels: wgpu::Buffer,
+
+    // An update's own work: it writes these before it reads them, and
+    // nothing in them lasts into the next update.
+    /// The rows of `rows::SCRATCH`.
+    pub scratch: wgpu::Buffer,
+    /// The grain constraint's working values of each cell, 48 bytes
+    /// (mechanics/mechanics_work.wgsl).
+    pub grain_works: wgpu::Buffer,
+    /// Two faces a cell, 80 bytes each: the conservative phase flux.
+    pub transport: wgpu::Buffer,
+    /// Transport group membership.
+    pub members: wgpu::Buffer,
     /// The transport's subdivision schedule.
     pub schedule: wgpu::Buffer,
+    /// The arrival snapshot of the bed's capture.
+    pub arrival: wgpu::Buffer,
     /// The slots between bubbles per cell (slab/joints.wgsl).
     pub gaps: wgpu::Buffer,
     /// The contact fits' list of cells and its indirect workgroup count.
     pub contact_list: wgpu::Buffer,
     pub contact_groups: wgpu::Buffer,
-    /// The flow solver's fields.
+
+    /// The flow solver's fields: the streamfunction is state, the rest work.
     pub stream: stream::Fields,
 }
 
@@ -93,6 +101,11 @@ impl Buffers {
             nx,
             ny,
             config,
+            table: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cross-gap resistance"),
+                contents: &floats(table.iter().flatten().copied()),
+                usage: wgpu::BufferUsages::STORAGE,
+            }),
             cells: blank("phase volumes momenta and stress", cells * 96),
             geometry: blank(
                 "gas identities, contact geometry and the last stress solve",
@@ -102,24 +115,19 @@ impl Buffers {
                 "staggered phase flow and finite displacement",
                 cells * 2 * 160,
             ),
-            transport: blank("conservative phase flux", cells * 2 * 80),
-            members: blank("connected transport member indices", cells * 8),
+            terrain: blank("connected bed geometry", u64::from(nx) * 48),
+            // Eight slices per cell height and a three-entry header per column.
+            strata: blank("bed strata", u64::from(nx) * u64::from(3 + 8 * ny) * 8),
+            labels: blank("gas components", labels::initial(n).len() as u64),
             scratch: blank(
                 "an update's scratch rows",
                 cells * 16 * rows::count(rows::SCRATCH),
             ),
             grain_works: blank("the grain constraint's working values", cells * 48),
-            table: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("cross-gap resistance"),
-                contents: &floats(table.iter().flatten().copied()),
-                usage: wgpu::BufferUsages::STORAGE,
-            }),
-            terrain: blank("connected bed geometry", u64::from(nx) * 48),
-            // Eight slices per cell height and a three-entry header per column.
-            strata: blank("bed strata", u64::from(nx) * u64::from(3 + 8 * ny) * 8),
-            arrival: blank("finite arrival source", cells * 96),
-            labels: blank("gas components", labels::initial(n).len() as u64),
+            transport: blank("conservative phase flux", cells * 2 * 80),
+            members: blank("connected transport member indices", cells * 8),
             schedule: blank("common transport schedule", 48),
+            arrival: blank("finite arrival source", cells * 96),
             gaps: blank("slots between bubbles per cell", cells * 16),
             contact_list: blank("contact fit list", 4 * (1 + cells)),
             contact_groups: device.create_buffer(&wgpu::BufferDescriptor {

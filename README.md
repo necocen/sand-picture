@@ -55,8 +55,9 @@ cargo run --release --example run -- OUT --steps 7500 --dump 0,7500
 ```
 
 runs the product's scene for 7,500 updates (60 s of the picture) on the GPU
-and writes the model's buffers before the first and after the last update
-into `OUT/step-NNNNN/`. `--light EVERY` writes the cells and the bed's columns
+and writes the picture's state (seven buffers: with them a model goes on as
+the one that wrote them) before the first and after the last update into
+`OUT/step-NNNNN/`. `--light EVERY` writes the cells and the bed's columns
 every EVERY updates, `--load FOLDER,STEP` starts from such a dump, `--turn
 A,B,..` turns the picture over after the named updates, and `--steps 0` only
 prints an update's stages. An update is 8 ms of the picture and 608 dispatches
@@ -71,7 +72,7 @@ cargo run --release --example check             # 0, 1 and 5 s, a second turn, a
 cargo run --release --example check -- --full   # on to 60 s
 ```
 
-compare the model's buffers and the views' pixels with the hashes in
+compare the picture's state and the views' pixels with the hashes in
 `tests/baseline/hashes.txt`, bit for bit ([tests/README.md](tests/README.md)).
 
 ## Layout
@@ -80,7 +81,7 @@ compare the model's buffers and the views' pixels with the hashes in
 |---|---|
 | `src/lib.rs` | The library: the model, the views, and WGSL as it is compiled (`wgsl.rs`) |
 | `src/view.rs`, `src/view/` | The three views and their WGSL |
-| `src/model.rs`, `src/model/` | The model: its buffers, its kernels and their WGSL (one folder a module), an update as a list of steps |
+| `src/model.rs`, `src/model/` | The model: its buffers (`buffers.rs`; the rows of the two row buffers in `rows.rs`), its kernels and their WGSL (one folder a module), what each kernel binds (`uses.rs`), an update as a list of steps |
 | `assets/` | The product's scene: a deposit the model laid itself, and its bubbles |
 | `src/model/APHROS_LICENSE.txt` | The licence of Aphros (ETH Zurich, MIT), from which `interface/interface.wgsl` takes its interface normals and plane areas |
 | `tools/run.rs`, `tools/check.rs` | The model without a window (`--example run`) and the regression check (`--example check`) |

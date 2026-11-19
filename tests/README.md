@@ -13,16 +13,26 @@ What a run does, in the picture's own time (an update is 8 ms):
 | The picture rests, is turned over at once and runs | 0 s, 1 s (the shake), 5 s (the turn ends): updates 0, 125, 625 |
 | It is turned over again | 6 s: `turned 750` |
 | It is reset, as with the app's Reset | 0, 1 and 5 s again: they must equal the first three |
-| `--full` (`mise run check-full`) runs on | 15, 30 and 60 s: updates 1875, 3750, 7500 |
+| It is reset again and given the state it had one update before the turn mirrored the grid | 5 s: it must equal the first run's |
+| `--full` (`mise run check-full`) runs on from that state | 15, 30 and 60 s: updates 1875, 3750, 7500 |
 
-A checkpoint is the SHA-256 of twelve things: the eight buffers `cells`,
-`geometry`, `faces`, `stream`, `transport`, `terrain`, `members` and
-`schedule`, the `strata`, and the raw RGBA pixels of the three views at
-1440 x 960 (`image` is Photoreal, then `simple` and `flow`). The views are
-drawn before the buffers are read, so a view that wrote to the model would
-show. The `labels` buffer is left out: the records of its bubbles are numbered
-in the order the GPU's threads reach them, and two runs of one build differ
-there while everything else is equal.
+A checkpoint is the SHA-256 of ten things: the seven buffers of the picture's
+state (`cells`, `geometry`, `faces`, `stream`, `terrain`, `strata` and
+`labels`) and the raw RGBA pixels of the three views at 1440 x 960 (`image`
+is Photoreal, then `simple` and `flow`). The views are drawn before the
+buffers are read, so a view that wrote to the model would show. Of the
+`labels` only the parts two runs agree in are taken (the union-find's nodes,
+each cell's counts and word): the records of its bubbles are numbered in the
+order the GPU's threads reach them, and two runs of one build differ there
+while everything else is equal.
+
+The state is what a model needs to go on as the model that wrote it
+(`Buffers::state`); every other buffer is a constant or is written by an
+update before the update reads it, and is neither saved nor compared. The
+fourth step holds the check to that: the model's other buffers then hold what
+a reset and its preparation left, its turn is brought to the same point by
+advancing a new one without running updates, and its next update mirrors the
+grid.
 
 ## When the check fails
 
@@ -52,6 +62,11 @@ Apple M1 Max with macOS 27.2.1, Rust 1.95.0 and wgpu and naga 30.0.1. Before any
 of these is raised, record a candidate in the new environment first, with the
 code unchanged.
 
-The first baseline (2026-11-19) is v2.20 of `../sand-picture`: its 60 entries
-that v2.20's baseline also has (the eight buffers, Photoreal and Simple at
-the six times) are equal to it.
+The first baseline (2026-11-19) was v2.20 of `../sand-picture`: its 60 entries
+that v2.20's baseline also had (eight buffers, Photoreal and Simple at the six
+times) were equal to it. Since 2026-11-20 the `geometry` buffer holds only the
+rows that last between updates, in a new order, and the transport's fluxes,
+its groups' members and its schedule are no longer compared: of today's
+entries, `cells`, `faces`, `stream`, `terrain`, Photoreal and Simple at the
+six times (36) are v2.20's own hashes, and each change of the baseline since
+was checked to leave every other entry as it was.
