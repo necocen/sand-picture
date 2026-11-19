@@ -15,7 +15,8 @@ pub struct Buffers {
     /// 96 bytes a cell: mobile phase volumes, momenta and stress, the white's
     /// powder, deposited grains and pore water.
     pub cells: wgpu::Buffer,
-    /// 64 rows of one vec4 a cell, named in shared/geometry_rows.wgsl.
+    /// What an update leaves for the next beside the cells: rows of one vec4
+    /// a cell, named in shared/geometry_rows.wgsl.
     pub geometry: wgpu::Buffer,
     /// Two staggered faces a cell, 160 bytes each: response, projected flow
     /// and displacement.
@@ -51,7 +52,8 @@ pub struct Buffers {
     pub stream: stream::Fields,
 }
 
-/// The rows of `scratch` (SCRATCH_ROWS of shared/geometry_rows.wgsl).
+/// The rows of `geometry` and of `scratch` (shared/geometry_rows.wgsl).
+const GEOMETRY_ROWS: u64 = 26;
 const SCRATCH_ROWS: u64 = 52;
 
 impl Buffers {
@@ -96,7 +98,10 @@ impl Buffers {
             ny,
             config,
             cells: blank("phase volumes momenta and stress", cells * 96),
-            geometry: blank("local gas identities and contact geometry", cells * 16 * 64),
+            geometry: blank(
+                "gas identities, contact geometry and the last stress solve",
+                cells * 16 * GEOMETRY_ROWS,
+            ),
             faces: blank(
                 "staggered phase flow and finite displacement",
                 cells * 2 * 160,

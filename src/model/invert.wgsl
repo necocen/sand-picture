@@ -26,8 +26,8 @@ fn rotated(value:Cell)->Cell {
     // The plates' traction on the grains is a vector.
     let held=geometry[HOLD_ROW*cfg.n+i];let other=geometry[HOLD_ROW*cfg.n+j];
     geometry[HOLD_ROW*cfg.n+i]=vec4<f32>(-other.xy,other.zw);geometry[HOLD_ROW*cfg.n+j]=vec4<f32>(-held.xy,held.zw);
-    for(var slot=0u;slot<9u;slot++){
-        let left=cfg.n+9u*i+slot;let right=cfg.n+9u*j+slot;
+    for(var slot=0u;slot<GAS_SLOTS;slot++){
+        let left=LAYER_ROW*cfg.n+GAS_SLOTS*i+slot;let right=LAYER_ROW*cfg.n+GAS_SLOTS*j+slot;
         let before=geometry[left];geometry[left]=geometry[right];geometry[right]=before;
     }
     // The cells' words stay in place, as their anchored identities always
