@@ -11,11 +11,14 @@ use wgpu::util::DeviceExt;
 /// The size (pixels) of the pictures the regression compares, and of every
 /// picture of v2.20. A picture is optical sampling only, at whatever size:
 /// the simulation stays on its own grid.
+///
+/// It is also the coarsest picture a window gets. Photoreal integrates a
+/// bubble's rim over a pixel as if the outline were straight across it,
+/// which holds for a pixel of about a fifth of the plates' gap, as here; at
+/// half this size the bubbles of the raft come out grey. And a coarser
+/// picture would save little: most of a picture's cost is the distance
+/// field, which does not depend on its size.
 pub const REFERENCE_SIZE: [u32; 2] = [1440, 960];
-/// The coarsest picture the views draw. Photoreal's distance field is exact
-/// only within reach of a pixel no wider than three eighths of a cell
-/// (geometry.wgsl, SHOWN).
-const LEAST_SIZE: [u32; 2] = [720, 480];
 /// The format of the image the views draw into.
 pub const IMAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// The gap between the tank's plates (m), the model's PLATE_GAP.
@@ -27,16 +30,16 @@ const SCENE_WGSL: &str = include_str!("view/scene.wgsl");
 const CELLS_WGSL: &str = include_str!("view/cells.wgsl");
 
 /// The size of the picture for a window of `available` pixels: the largest
-/// in the tank's shape that fits, but no coarser than the views can draw and
-/// no finer than the sand itself - a pixel is at least a fine grain wide.
-/// A window outside that range shows the picture scaled.
+/// in the tank's shape that fits, but no coarser than REFERENCE_SIZE and no
+/// finer than the sand itself - a pixel is at least a fine grain wide. A
+/// window outside that range shows the picture scaled.
 pub fn picture_size(available: [u32; 2]) -> [u32; 2] {
     // The tank's shape in whole numbers, as the grid has it.
     let [across, up] = CELLS.map(|cells| cells as u64);
     let finest = (TANK[0] / Grains::default().diameters[0]) as u64;
     let width = u64::from(available[0])
         .min(u64::from(available[1]) * across / up)
-        .clamp(u64::from(LEAST_SIZE[0]), finest);
+        .clamp(u64::from(REFERENCE_SIZE[0]), finest);
     let height = (2 * width * up + across) / (2 * across);
     [width as u32, height as u32]
 }
@@ -160,9 +163,10 @@ mod tests {
         // The window's own pixels, in the tank's shape.
         assert_eq!(picture_size([1440, 960]), [1440, 960]);
         assert_eq!(picture_size([2560, 1440]), [2160, 1440]);
-        assert_eq!(picture_size([1440, 900]), [1350, 900]);
-        // No coarser than the distance field allows, no finer than a grain.
-        assert_eq!(picture_size([600, 400]), [720, 480]);
+        assert_eq!(picture_size([3440, 1300]), [1950, 1300]);
+        // No coarser than the reference, no finer than a grain.
+        assert_eq!(picture_size([720, 480]), [1440, 960]);
+        assert_eq!(picture_size([1440, 900]), [1440, 960]);
         assert_eq!(picture_size([6000, 4000]), [2727, 1818]);
     }
 
