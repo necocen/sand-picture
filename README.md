@@ -54,6 +54,7 @@ in one compute pass.
 | `src/lib.rs`, `src/view.rs` | The library: the model and the views |
 | `src/model.rs`, `src/model/` | The model: its buffers, its kernels and their WGSL (one folder a module), an update as a list of steps |
 | `assets/` | The product's scene: a deposit the model laid itself, and its bubbles |
+| `src/model/APHROS_LICENSE.txt` | The licence of Aphros (ETH Zurich, MIT), from which `interface/interface.wgsl` takes its interface normals and plane areas |
 | `tools/run.rs` | The model without a window (`--example run`) |
 | `src/bin/sand_picture.rs`, `src/bin/sand_picture/` | The window: keys, the control panel, the frame |
 | `index.html`, `Trunk.toml` | The web build |
