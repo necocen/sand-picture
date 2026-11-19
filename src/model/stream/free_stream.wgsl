@@ -8,11 +8,11 @@ fn open_segment(p:vec2<i32>,a:u32)->f32{
     if a==0u{
         if p.y<=0||p.y>=i32(cfg.fy)||p.x<0||p.x>=i32(cfg.fx){return 0.;}
         let f=2u*(u32(p.y-1)*cfg.fx+u32(p.x))+1u;
-        return scratch[BED_PASSAGE_ROW*cfg.fx*cfg.fy+f].x;
+        return geometry[BED_PASSAGE_ROW*cfg.fx*cfg.fy+f].x;
     }
     if p.x<=0||p.x>=i32(cfg.fx)||p.y<0||p.y>=i32(cfg.fy){return 0.;}
     let f=2u*(u32(p.y)*cfg.fx+u32(p.x-1));
-    return scratch[BED_PASSAGE_ROW*cfg.fx*cfg.fy+f].x;
+    return geometry[BED_PASSAGE_ROW*cfg.fx*cfg.fy+f].x;
 }
 fn body_boundary(p:vec2<i32>)->bool{
     return open_segment(p,0u)<=0.||open_segment(p-vec2<i32>(1,0),0u)<=0.

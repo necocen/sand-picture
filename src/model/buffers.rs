@@ -162,17 +162,22 @@ impl Buffers {
         }
     }
 
-    /// The eight buffers a checkpoint compares, by name.
-    pub fn named(&self) -> [(&'static str, &wgpu::Buffer); 8] {
+    /// The picture's state between updates, by name: a model given these
+    /// buffers' contents goes on as the model that wrote them (a turn in
+    /// progress is the model's own, not the buffers'). Every other buffer
+    /// is a constant of the model or is written by an update before the
+    /// update reads it. Two runs agree bit for bit in all of the state but
+    /// the labels, whose records are numbered in the order the GPU's
+    /// threads reach them.
+    pub fn state(&self) -> [(&'static str, &wgpu::Buffer); 7] {
         [
             ("cells", &self.cells),
             ("geometry", &self.geometry),
             ("faces", &self.faces),
             ("stream", &self.stream.solution),
-            ("transport", &self.transport),
             ("terrain", &self.terrain),
-            ("members", &self.members),
-            ("schedule", &self.schedule),
+            ("strata", &self.strata),
+            ("labels", &self.labels),
         ]
     }
 

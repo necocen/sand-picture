@@ -9,9 +9,10 @@
 //! named. `--reset` returns the model to the scene at rest after the named
 //! updates (before a turn named for the same update), as the app's reset
 //! does. `--steps` is the number of the last update. `--dump` writes the
-//! eight compared buffers, the strata and the labels after the listed updates
-//! into `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the
-//! terrain every EVERY updates. `--views` adds the three views' pictures to
+//! picture's state (the cells, the geometry rows, the faces, the flow, the
+//! bed's columns, the strata and the labels) after the listed updates into
+//! `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the bed's
+//! columns every EVERY updates. `--views` adds the three views' pictures to
 //! each dump, as raw RGBA and as PNG (`image` is Photoreal, the name
 //! v2.20's baseline gives it); `--frames` draws a Photoreal picture after
 //! every update, as v2.20's window did. `--size WxH` is the pictures' size in
@@ -19,9 +20,9 @@
 //! draws N Photoreal pictures of the last state and tells what one costs.
 //! Run outside a sandbox: it needs the GPU.
 //!
-//! Two runs agree bit for bit in the eight buffers and the strata. In the
-//! labels they agree only in the films' counts and the cells' words: the
-//! bubbles' records are numbered in the order the GPU's threads reach them.
+//! Two runs agree bit for bit in the state but for the labels, where they
+//! agree only in the films' counts and the cells' words: the bubbles'
+//! records are numbered in the order the GPU's threads reach them.
 mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
@@ -47,17 +48,11 @@ fn write_pictures(gpu: &GpuContext, pictures: &Pictures, folder: &Path) {
     }
 }
 
-/// What a full dump holds and a loaded run starts from: the eight compared
-/// buffers, the strata and the labels.
-fn saved(model: &Model) -> Vec<(&'static str, &wgpu::Buffer)> {
-    let buffers = model.buffers();
-    let extra = [("strata", &buffers.strata), ("labels", &buffers.labels)];
-    buffers.named().into_iter().chain(extra).collect()
-}
-
+/// Writes the picture's state into a dump's folder, or of it only the cells
+/// and the bed's columns.
 fn write(gpu: &GpuContext, model: &Model, folder: &Path, light: bool) {
     std::fs::create_dir_all(folder).unwrap();
-    for (name, buffer) in saved(model) {
+    for (name, buffer) in model.buffers().state() {
         if light && !["cells", "terrain"].contains(&name) {
             continue;
         }
@@ -66,9 +61,10 @@ fn write(gpu: &GpuContext, model: &Model, folder: &Path, light: bool) {
 }
 
 /// Writes a dump into a model just built: the state after an update. The
-/// model's working buffers keep what its preparation of the scene left.
+/// model's other buffers keep what its preparation of the scene left, and
+/// the next update writes them before it reads them.
 fn load(gpu: &GpuContext, model: &Model, folder: &Path) {
-    for (name, buffer) in saved(model) {
+    for (name, buffer) in model.buffers().state() {
         let bytes = std::fs::read(folder.join(format!("{name}.bin")))
             .unwrap_or_else(|error| panic!("{name}.bin of {}: {error}", folder.display()));
         assert_eq!(bytes.len() as u64, buffer.size(), "{name} size differs");

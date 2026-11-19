@@ -6,15 +6,17 @@
 //! The picture rests, is turned over at once and runs to 5 s, with
 //! checkpoints at 0, 1 and 5 s (updates 0, 125 and 625); it is then turned
 //! over again and checked a second later; then it is reset, and the same
-//! three checkpoints must come out as before; and pictures of another size
-//! must be the same whether the views were made at that size or brought to
-//! it, as a window that is resized brings them. `--full` runs on from there
-//! to 15, 30 and 60 s. A checkpoint is the SHA-256 of the eight compared
-//! buffers, of the strata and of the three views' pictures; the labels are
-//! left out (their records are numbered in the order the GPU's threads reach
-//! them). `--record FOLDER` also writes what was found, with the pictures as
-//! PNG, as a candidate for a new baseline. Run outside a sandbox: it needs
-//! the GPU.
+//! three checkpoints must come out as before; then it is reset once more and
+//! given the state it had one update before the turn mirrored the grid, and
+//! must reach 5 s as before: the state alone carries the picture on. And
+//! pictures of another size must be the same whether the views were made at
+//! that size or brought to it, as a window that is resized brings them.
+//! `--full` runs on from there to 15, 30 and 60 s. A checkpoint is the
+//! SHA-256 of the buffers of the picture's state and of the three views'
+//! pictures; of the state the labels are left out (their records are
+//! numbered in the order the GPU's threads reach them). `--record FOLDER`
+//! also writes what was found, with the pictures as PNG, as a candidate for
+//! a new baseline. Run outside a sandbox: it needs the GPU.
 mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
@@ -55,19 +57,31 @@ fn checkpoint(
         }
         fields.insert(picture_name(mode).to_owned(), hash(&pixels));
     }
-    let buffers = model.buffers();
-    for (field, buffer) in buffers
-        .named()
-        .into_iter()
-        .chain([("strata", &buffers.strata)])
-    {
-        fields.insert(field.to_owned(), hash(&read(gpu, buffer)));
+    for (field, buffer) in model.buffers().state() {
+        if field != "labels" {
+            fields.insert(field.to_owned(), hash(&read(gpu, buffer)));
+        }
     }
     fields
 }
 
-/// Runs the model's updates up to update `to`.
-fn advance(gpu: &GpuContext, model: &mut Model, update: &mut u64, to: u64) {
+/// Tells which of `fields` differ from `before`, and how many.
+fn differences(what: &str, fields: &Fields, before: &Fields) -> usize {
+    let differing: Vec<&str> = fields
+        .iter()
+        .filter(|(field, hash)| before.get(*field) != Some(*hash))
+        .map(|(field, _)| field.as_str())
+        .collect();
+    if !differing.is_empty() {
+        println!("{what}: DIFFERS in {}", differing.join(", "));
+    }
+    differing.len()
+}
+
+/// Runs the model's updates up to update `to`, and says which update
+/// mirrored the grid, if one did.
+fn advance(gpu: &GpuContext, model: &mut Model, update: &mut u64, to: u64) -> Option<u64> {
+    let mut mirrored = None;
     while *update < to {
         let mirror = model.advance_turn(&gpu.queue);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -80,11 +94,15 @@ fn advance(gpu: &GpuContext, model: &mut Model, update: &mut u64, to: u64) {
         }
         gpu.queue.submit([encoder.finish()]);
         *update += 1;
+        if mirror {
+            mirrored = Some(*update);
+        }
         if update.is_multiple_of(8) {
             wait(gpu);
         }
     }
     wait(gpu);
+    mirrored
 }
 
 /// The baseline: `checkpoint<TAB>field<TAB>hash` a line, `#` for comments.
@@ -128,32 +146,56 @@ fn main() {
     model.start_turn();
     let mut update = 0;
     let mut first = Vec::new();
+    let mut mirror = None;
     for to in [0, 125, 625] {
-        advance(&gpu, &mut model, &mut update, to);
+        mirror = mirror.or(advance(&gpu, &mut model, &mut update, to));
         let fields = checkpoint(&gpu, &model, &pictures, record.as_deref(), &format!("{to}"));
         first.push(fields.clone());
         note(format!("{to}"), fields);
     }
+    let mirror = mirror.expect("a turn mirrors the grid");
     // The person turns the picture over again.
     model.start_turn();
     advance(&gpu, &mut model, &mut update, 750);
     let name = "turned 750";
     let fields = checkpoint(&gpu, &model, &pictures, record.as_deref(), name);
     note(name.to_owned(), fields);
-    // A reset: the same three checkpoints as from the start.
+    // A reset: the same three checkpoints as from the start. On the way the
+    // state is kept as it is one update before the grid is mirrored.
     model.reset(&gpu.device, &gpu.queue);
     model.start_turn();
     update = 0;
+    let mut kept = Vec::new();
     for (to, before) in [0, 125, 625].into_iter().zip(&first) {
+        if kept.is_empty() && to >= mirror {
+            advance(&gpu, &mut model, &mut update, mirror - 1);
+            kept = model
+                .buffers()
+                .state()
+                .map(|(_, buffer)| read(&gpu, buffer))
+                .to_vec();
+        }
         advance(&gpu, &mut model, &mut update, to);
         let fields = checkpoint(&gpu, &model, &pictures, None, "after a reset");
-        for (field, hash) in &fields {
-            if before[field] != *hash {
-                println!("after a reset, update {to}: {field} DIFFERS from the first run");
-                failures += 1;
-            }
-        }
+        failures += differences(&format!("after a reset, update {to}"), &fields, before);
     }
+    // The state alone carries the picture on. The model is reset, so that
+    // its other buffers hold what another time left, and given the kept
+    // state; its turn, which is not in the buffers, is brought to the same
+    // point by advancing a new one without running updates. Its next update
+    // mirrors the grid, and at 5 s it must be where the first run was.
+    model.reset(&gpu.device, &gpu.queue);
+    for ((_, buffer), bytes) in model.buffers().state().into_iter().zip(&kept) {
+        gpu.queue.write_buffer(buffer, 0, bytes);
+    }
+    model.start_turn();
+    for _ in 1..mirror {
+        model.advance_turn(&gpu.queue);
+    }
+    update = mirror - 1;
+    advance(&gpu, &mut model, &mut update, 625);
+    let fields = checkpoint(&gpu, &model, &pictures, None, "from the kept state");
+    failures += differences("from the kept state, update 625", &fields, &first[2]);
     // A window that is resized: the views brought to another size draw what
     // views made at that size draw.
     let larger = [2160, 1440];
@@ -168,6 +210,7 @@ fn main() {
         }
     }
     if full {
+        // The run goes on from the state that was kept and given back.
         for to in [1875, 3750, 7500] {
             advance(&gpu, &mut model, &mut update, to);
             let fields = checkpoint(&gpu, &model, &pictures, record.as_deref(), &format!("{to}"));

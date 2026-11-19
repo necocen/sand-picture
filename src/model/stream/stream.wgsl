@@ -24,7 +24,6 @@ struct Face {composition:vec4<f32>,velocity:vec4<f32>,response:vec4<f32>,grain_r
 @group(0) @binding(4) var<storage,read_write> faces:array<Face>;
 @group(0) @binding(5) var<storage,read_write> cells:array<f32>;
 @group(0) @binding(6) var<storage,read_write> geometry:array<vec4<f32>>;
-@group(0) @binding(12) var<storage,read_write> scratch:array<vec4<f32>>;
 // Per finest vertex i: [i] = the tension's tensor (xx, xy, yy) times
 // cfg.capillary, with w = 1 where the bed fixes psi, else minus the vertex's
 // interpolation weight; then nine entries a vertex, its gradient_basis.

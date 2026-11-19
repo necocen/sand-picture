@@ -5,7 +5,8 @@
 //! `geometry` is what an update leaves for the next beside the cells: it is
 //! part of the picture's state. `scratch` is what one update's kernels write
 //! before they read it: nothing in it lasts into the next update, so it is
-//! neither saved nor compared.
+//! neither saved nor compared. (The preparation of the first update runs no
+//! slab stage and reads the slab's rows as the zeros a new buffer holds.)
 //!
 //! A use's first row follows from the uses before it, so no two share a row.
 //! The shaders call that row `NAME_ROW`.
@@ -29,6 +30,12 @@ pub const GEOMETRY: &[Use] = &[
     ("SOLVE_STATE", 1),
     // The traction the plates hold, sliding or not, and the creep.
     ("HOLD", 1),
+    // The bed's share of a cell and its surface; per face, the free area
+    // beside the bed. An update writes them before it reads them, but the
+    // interface rebuilt when a turn mirrors the grid reads the ones the
+    // update before left.
+    ("BED_OCCUPANCY", 1),
+    ("BED_PASSAGE", 2),
 ];
 
 pub const SCRATCH: &[Use] = &[
@@ -42,10 +49,6 @@ pub const SCRATCH: &[Use] = &[
     // brings in through each face (plug.wgsl).
     ("PLUG", 1),
     ("PLUG_INFLOW", 1),
-    // The bed's share of a cell and its surface; per face, the free area
-    // beside the bed.
-    ("BED_OCCUPANCY", 1),
-    ("BED_PASSAGE", 2),
     // The pressure sweeps: a cell's local problem, its material and whether
     // it is solved, the stored pressure with its scale and the sweeps'
     // iterate, the trial shear stress; per face, the coupling of the two
