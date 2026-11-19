@@ -33,7 +33,13 @@ const CELLS_WGSL: &str = include_str!("view/cells.wgsl");
 /// in the tank's shape that fits, but no coarser than REFERENCE_SIZE and no
 /// finer than the sand itself - a pixel is at least a fine grain wide. A
 /// window outside that range shows the picture scaled.
+///
+/// Built with the feature `fixed-picture`, every window gets the reference
+/// picture, scaled to it: v2.20's way.
 pub fn picture_size(available: [u32; 2]) -> [u32; 2] {
+    if cfg!(feature = "fixed-picture") {
+        return REFERENCE_SIZE;
+    }
     // The tank's shape in whole numbers, as the grid has it.
     let [across, up] = CELLS.map(|cells| cells as u64);
     let finest = (TANK[0] / Grains::default().diameters[0]) as u64;
@@ -158,6 +164,15 @@ mod tests {
     use super::{Mode, SCENE_WGSL, flow_source, photoreal, picture_size, simple_source};
     use crate::wgsl;
 
+    #[cfg(feature = "fixed-picture")]
+    #[test]
+    fn every_window_gets_the_reference_picture() {
+        for window in [[720, 480], [1440, 960], [2560, 1440], [6000, 4000]] {
+            assert_eq!(picture_size(window), super::REFERENCE_SIZE);
+        }
+    }
+
+    #[cfg(not(feature = "fixed-picture"))]
     #[test]
     fn a_picture_has_the_windows_pixels_within_what_the_views_can_draw() {
         // The window's own pixels, in the tank's shape.

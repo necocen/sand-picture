@@ -36,6 +36,9 @@ cool, under 0.3 once it is warm).
 The picture is drawn at the window's own pixels when the window is larger
 than 1440 x 960 pixels, up to a pixel of one grain of the fine sand
 (2727 x 1818); a smaller window shows the 1440 x 960 picture scaled down.
+Built with `--features fixed-picture` (`cargo run --release --features
+fixed-picture`, `trunk build --features fixed-picture`), every window shows
+the 1440 x 960 picture scaled to it, as version 2.20 did.
 
 The window opens at once and shows its progress while the model is built: its
 materials' table takes a second or two on the CPU, and the first start after

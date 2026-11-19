@@ -12,8 +12,9 @@
   （docs/design.md「段取り 1 の結果」）。
 - 段取りの 2（アプリ）は済み：窓が模型を動かし、三つのビュー、一つのパネル、組み立て中の画面、作り直さないリセットが
   ある。Web 版も動く。この repo 自身の回帰の基準がある（docs/design.md「段取り 2 の結果」、tests/README.md）。
-- 段取りの 3（絵を窓の画素数で描く）は実装済みで、採否はユーザーの判断待ち（2026-11-19）：1440×960 より大きい窓で
-  絵がくっきりし、それ以下の窓は変わらない（docs/design.md「段取り 3 の結果」）。
+- 段取りの 3（絵を窓の画素数で描く）は済み（2026-11-19 にユーザーが採用）：1440×960 より大きい窓で絵がくっきりし、
+  それ以下の窓は変わらない。feature `fixed-picture` を付けてビルドすると v2.20 と同じ「常に 1440×960 の絵」になる
+  （docs/design.md「段取り 3 の結果」）。
 - 4 以降（バッファの分割、リアルの調整）は、ユーザーが進めると言ってから始める。5 は見た目が変わるので、同じ時刻の
   変更前後の絵を並べて、ユーザーに判断を求める。
 
@@ -45,7 +46,8 @@
   `{"op":"run_until_completed","target_tick":N,"dt":0.008}`、持っている絵そのものは `POST /captures` の
   `{"target":"picture","format":"raw"}`。
 - `mise run check` / `mise run check-full`：回帰（GPU を使う。sandbox の外で）。
-- `mise run verify`：fmt・clippy・テスト（GPU は使わない。テストは WGSL の全プログラムを naga に通す）。
+- `mise run verify`：fmt・clippy・テスト（GPU は使わない。テストは WGSL の全プログラムを naga に通す。
+  feature `fixed-picture` を付けた側も確かめる）。
 - `cargo run --release --example run -- OUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..]`：
   画面なしで模型を走らせ、指定した更新のあとのバッファを `OUT/step-NNNNN/` に書く（GPU を使う）。`--steps 0` で
   1 更新の段階と step の数だけを出す。

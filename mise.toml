@@ -7,7 +7,9 @@ description = "fmt・clippy・テスト（GPU は使わない）"
 run = [
     "cargo fmt --check",
     "cargo clippy --all-targets -- -D warnings",
+    "cargo clippy --all-targets --features fixed-picture -- -D warnings",
     "cargo test",
+    "cargo test --features fixed-picture every_window",
 ]
 
 [tasks.check]

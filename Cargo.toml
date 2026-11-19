@@ -41,6 +41,11 @@ name = "check"
 path = "tools/check.rs"
 test = false
 
+[features]
+# 絵を窓の画素数で描かず、どの窓でも 1440×960 の絵を窓に合わせて拡大・縮小する（v2.20 と同じ見え方）。
+# `cargo run --release --features fixed-picture`
+fixed-picture = []
+
 [lints.rust]
 unsafe_code = "forbid"
 
