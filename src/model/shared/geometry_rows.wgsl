@@ -1,0 +1,35 @@
+// The gas identities a cell can hold.
+const GAS_SLOTS:u32=9u;
+// The rows of `geometry`, in units of the cell count cfg.n, one vec4 per
+// entry and one entry per cell unless the row says otherwise. Row 0 is each
+// cell's gas plane (contacts.wgsl). Rows 19 to 36 are the transport's gas
+// fluxes while it runs; from the interface update to the next transport the
+// same rows hold the contact fits and the pressure sweeps' local problems.
+// Rows 41 and 42 hold the first projection's face velocities until the
+// transport groups its cells.
+const LAYER_ROW:u32=1u;               // GAS_SLOTS rows: each identity's gas volume and label
+const SHAPE_ROW:u32=10u;              // GAS_SLOTS rows: each identity's interface plane
+const FLUX_ROW:u32=19u;               // 2 GAS_SLOTS rows: the gas flux through each face, by identity
+const CONTACT_ROW:u32=19u;            // 2 rows: the contact fits of a cell
+const CONTACT_AUDIT_ROW:u32=21u;      // 2 rows: the fits' residuals
+const PRESSURE_PROBLEM_ROW:u32=24u;   // the pressure sweeps' local problem
+const PRESSURE_MATERIAL_ROW:u32=25u;  // its material and whether it is solved
+const PRESSURE_ITERATE_ROW:u32=26u;   // the stored pressure, its scale and the sweeps' iterate
+const PRESSURE_TRIAL_ROW:u32=27u;     // the trial shear stress
+const PRESSURE_COUPLING_ROW:u32=28u;  // 2 rows, per face: the coupling of the two cells' pressures
+const BED_OCCUPANCY_ROW:u32=37u;      // the bed's share of a cell and its surface
+const BED_PASSAGE_ROW:u32=38u;        // 2 rows, per face: the free area beside the bed
+const GROUP_REQUEST_ROW:u32=40u;      // what a cell asks of a transport group
+const FACE_PREDICTION_ROW:u32=41u;    // 2 rows, per face: the first projection's velocity
+const GROUP_PARENT_ROW:u32=41u;       // the group's union-find parent
+const GROUP_MAP_ROW:u32=42u;          // a cell's group: owner, size, free inventory
+const GROUP_PAYLOAD_ROW:u32=43u;      // 4 rows: the group's contents
+const PLUG_INFLOW_ROW:u32=47u;        // the grains the transport brings in through each face (plug.wgsl)
+const GROUP_LABEL_ROW:u32=48u;        // GAS_SLOTS rows: the group's gas by identity
+const SOLVE_APERTURE_ROW:u32=57u;     // the four faces' apertures at the last stress solve
+const SOLVE_STATE_ROW:u32=58u;        // the pressure and the wet volume at the last stress solve
+const HOLD_ROW:u32=59u;               // the traction the plates hold, sliding or not, and the creep
+const TEETH_ROW:u32=60u;              // per column: the slab's undersides (teeth.wgsl)
+const BODY_ROW:u32=61u;               // a packed body's last layer and where its faces shed (teeth.wgsl)
+const PLUG_ROW:u32=62u;               // a body's grains before the transport (plug.wgsl)
+const COLUMN_ROW:u32=63u;             // the column sliding through a slot between bubbles (teeth.wgsl)

@@ -16,9 +16,18 @@ wgpu = "=30.0.1"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3", features = ["agent"] }
 
+[dev-dependencies]
+pollster = "1.0"
+faer = { version = "0.24.4", default-features = false, features = ["std", "linalg"] }
+
 [[bin]]
 name = "sand-picture"
 path = "src/bin/sand_picture.rs"
+test = false
+
+[[example]]
+name = "run"
+path = "tools/run.rs"
 test = false
 
 [lints.rust]
