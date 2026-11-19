@@ -11,8 +11,9 @@ program. [docs/design.md](docs/design.md) (in Japanese) holds the design, the
 order of the work and each stage's results; the earlier repository stays the
 reference for the physics.
 
-The model is ported and gives v2.20's results bit for bit. The window does not
-show it yet: the app is the next stage.
+The model gives v2.20's results bit for bit, and the window runs it: the
+product's scene, a deposit the model laid itself, rests and is turned over as
+the app starts.
 
 ## Run
 
@@ -24,8 +25,17 @@ trunk serve              # the web build at http://127.0.0.1:8080 (a browser wit
 Rust's version is fixed by `rust-toolchain.toml`; `mise.toml` fixes trunk and
 names the tasks (`mise run verify`, `mise run web`).
 
-Keys: **V** cycles the views (Simple, Photoreal, Flow), **H** hides or shows
-the control panel, **P** moves the panel between the window's top and bottom.
+Keys: **F** turns the picture over (it is shaken for 3 s, then tipped over in
+2 s), **Space** stops and runs its time, **R** resets it, **V** cycles the
+views (Simple, Photoreal, Flow), **H** hides or shows the control panel, **P**
+moves the panel between the window's top and bottom. The panel has the same
+controls, the picture's own time and its speed (seconds of the picture per
+second: on an M1 Max about 0.5 for the first seconds, 0.35 while the machine is
+cool, under 0.3 once it is warm).
+
+The window opens at once and shows its progress while the model is built: its
+materials' table takes a second or two on the CPU, and the first start after
+an update also compiles the kernels.
 
 With `SP_AGENT=1` the native app serves mikage's HTTP port on
 `127.0.0.1:3939`, through which tools read the window's picture and state
@@ -47,15 +57,27 @@ in one compute pass.
 
 `cargo test` needs no GPU; it also runs every shader program through naga.
 
+## Regression
+
+```sh
+cargo run --release --example check             # 0, 1 and 5 s, a second turn, a reset
+cargo run --release --example check -- --full   # on to 60 s
+```
+
+compare the model's buffers and the views' pixels with the hashes in
+`tests/baseline/hashes.txt`, bit for bit ([tests/README.md](tests/README.md)).
+
 ## Layout
 
 | Path | Holds |
 |---|---|
-| `src/lib.rs`, `src/view.rs` | The library: the model and the views |
+| `src/lib.rs` | The library: the model, the views, and WGSL as it is compiled (`wgsl.rs`) |
+| `src/view.rs`, `src/view/` | The three views and their WGSL |
 | `src/model.rs`, `src/model/` | The model: its buffers, its kernels and their WGSL (one folder a module), an update as a list of steps |
 | `assets/` | The product's scene: a deposit the model laid itself, and its bubbles |
 | `src/model/APHROS_LICENSE.txt` | The licence of Aphros (ETH Zurich, MIT), from which `interface/interface.wgsl` takes its interface normals and plane areas |
-| `tools/run.rs` | The model without a window (`--example run`) |
-| `src/bin/sand_picture.rs`, `src/bin/sand_picture/` | The window: keys, the control panel, the frame |
+| `tools/run.rs`, `tools/check.rs` | The model without a window (`--example run`) and the regression check (`--example check`) |
+| `tests/` | The regression guide and its baseline of hashes |
+| `src/bin/sand_picture.rs`, `src/bin/sand_picture/` | The window: the build with its progress, the updates, keys, the control panel, the kept picture |
 | `index.html`, `Trunk.toml` | The web build |
 | `records/` | Experiment records and their output: git-ignored, never committed |

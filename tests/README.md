@@ -48,7 +48,7 @@ PNG (`records/` is ignored by git). Look at the pictures, at 1, 5, 15, 30 and
 then. Pictures are not kept in the repository.
 
 The baseline holds for one environment: the hashes here were recorded on an
-Apple M1 Max with macOS 27.2, Rust 1.95.0 and wgpu and naga 30.0.1. Before any
+Apple M1 Max with macOS 27.2.1, Rust 1.95.0 and wgpu and naga 30.0.1. Before any
 of these is raised, record a candidate in the new environment first, with the
 code unchanged.
 
