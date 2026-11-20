@@ -17,6 +17,8 @@ enum Side {
 pub enum Command {
     /// Turn the picture over.
     Turn,
+    /// Shake the picture left and right for a moment.
+    Shake,
     /// Stop the picture's time, or let it run again.
     Pause,
     /// Back to the scene at rest, turned over at once.
@@ -86,11 +88,18 @@ impl Panel {
             .show(root.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     if ui
-                        .button("Turn over")
-                        .on_hover_text("Shake the picture and turn it over (F)")
+                        .button("Turn")
+                        .on_hover_text("Turn the picture over (F)")
                         .clicked()
                     {
                         command = Some(Command::Turn);
+                    }
+                    if ui
+                        .button("Shake")
+                        .on_hover_text("Shake the picture left and right for a moment (S)")
+                        .clicked()
+                    {
+                        command = Some(Command::Shake);
                     }
                     let pause = if readout.paused { "Play" } else { "Pause" };
                     if ui
@@ -159,7 +168,9 @@ impl Panel {
                         CELLS[0],
                         CELLS[1]
                     ));
-                    ui.monospace("keys     F turn  Space pause  R reset  V view  H panel  P side");
+                    ui.monospace(
+                        "keys     F turn  S shake  Space pause  R reset  V view  H panel  P side",
+                    );
                 }
             });
         command

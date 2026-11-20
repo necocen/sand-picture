@@ -46,10 +46,10 @@ const STANDARD_GRAVITY: f32 = 9.80665;
 /// Seconds a person takes to turn the picture over, tipping it front to back
 /// about its horizontal axis as on a pivot stand.
 const TURN_SECONDS: f32 = 2.;
-/// Before turning it the person shakes the picture left and right for a
-/// moment, which gathers the sand on the floor and breaks the air into small
-/// bubbles (the makers' instructions): seconds of shaking, its frequency (Hz)
-/// and the tank's displacement amplitude (m), a hand's motion.
+/// A person can shake the picture left and right for a moment, which slides
+/// the top of the sand on the floor toward the level (some makers advise it
+/// before a turn; no turn does it by itself): seconds of shaking, its
+/// frequency (Hz) and the tank's displacement amplitude (m), a hand's motion.
 const SHAKE_SECONDS: f32 = 3.;
 const SHAKE_FREQUENCY: f32 = 3.;
 const SHAKE_DISPLACEMENT: f32 = 0.02;
@@ -68,13 +68,16 @@ pub struct Model {
     prepare: Vec<usize>,
     /// The kernels that mirror the grid when a turn passes the flat.
     invert: Vec<usize>,
-    turn: Option<Turn>,
+    /// What the person's hands are doing to the picture, if anything.
+    motion: Option<Motion>,
 }
-/// A turn of the picture in progress: the seconds since it began, and whether
-/// the grid has been mirrored (when the picture lay flat).
-struct Turn {
-    elapsed: f32,
-    mirrored: bool,
+/// A motion of the hands in progress, with the seconds since it began.
+enum Motion {
+    /// The picture is shaken left and right.
+    Shake { elapsed: f32 },
+    /// The picture is turned over; `mirrored` once the grid has been mirrored
+    /// (when the picture lay flat).
+    Turn { elapsed: f32, mirrored: bool },
 }
 
 /// A model being built, piece by piece: its materials' table takes seconds
@@ -156,7 +159,7 @@ impl Building {
             steps: assembly.steps,
             prepare: assembly.prepare,
             invert: assembly.invert,
-            turn: None,
+            motion: None,
         };
         model.prepare(device, queue);
         Build::Finished(model)
@@ -268,7 +271,8 @@ impl Model {
     /// Back to the picture at rest in the scene the model was built from, as
     /// if built anew: no pipeline is made again. Call it between updates.
     pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.turn = None;
+        self.motion = None;
+        self.write_gravity(queue, STANDARD_GRAVITY, 0.);
         self.buffers.restore(device, queue, &self.scene);
         self.prepare(device, queue);
     }
@@ -285,50 +289,76 @@ impl Model {
         &self.steps
     }
 
-    /// Begin turning the picture over; a turn in progress goes on unchanged.
+    /// Begin turning the picture over. A turn in progress goes on unchanged;
+    /// hands that were shaking the picture stop shaking it.
     pub fn start_turn(&mut self) {
-        if self.turn.is_none() {
-            self.turn = Some(Turn {
+        if !matches!(self.motion, Some(Motion::Turn { .. })) {
+            self.motion = Some(Motion::Turn {
                 elapsed: 0.,
                 mirrored: false,
             });
         }
     }
 
-    /// Advance a turn by one update, before that update is encoded: writes the
-    /// update's apparent gravity and returns whether the grid must be mirrored
-    /// first. The picture is first shaken left and right: the tank moves as
-    /// d sin(2 pi f t), and in its frame the sand feels the lateral gravity
-    /// -a(t) = d (2 pi f)^2 sin(2 pi f t). Then it tips front to back through the
-    /// angle theta = pi (1 - cos(pi t / T)) / 2: gravity in the glass is
-    /// g cos(theta), zero when the picture lies flat, where the grid is mirrored
-    /// so that it points down the rows again; the model sees g |cos(theta)|.
-    pub fn advance_turn(&mut self, queue: &wgpu::Queue) -> bool {
+    /// Begin shaking the picture left and right, unless the hands are at a
+    /// shake or a turn already.
+    pub fn start_shake(&mut self) {
+        if self.motion.is_none() {
+            self.motion = Some(Motion::Shake { elapsed: 0. });
+        }
+    }
+
+    /// Advance the hands' motion by one update, before that update is
+    /// encoded: writes the update's apparent gravity and returns whether the
+    /// grid must be mirrored first.
+    ///
+    /// Shaken, the tank moves as d sin(2 pi f t), and in its frame the sand
+    /// feels the lateral gravity -a(t) = d (2 pi f)^2 sin(2 pi f t).
+    ///
+    /// Turned over, the picture tips front to back through the angle
+    /// theta = pi (1 - cos(pi t / T)) / 2: gravity in the glass is
+    /// g cos(theta), zero when the picture lies flat, where the grid is
+    /// mirrored so that it points down the rows again; the model sees
+    /// g |cos(theta)|.
+    pub fn advance_motion(&mut self, queue: &wgpu::Queue) -> bool {
         use std::f32::consts::PI;
-        let Some(turn) = self.turn.as_mut() else {
-            return false;
-        };
-        turn.elapsed += DT;
         let mut lateral = 0.;
         let mut gravity = STANDARD_GRAVITY;
         let mut mirror = false;
-        if turn.elapsed < SHAKE_SECONDS {
-            let omega = 2. * PI * SHAKE_FREQUENCY;
-            lateral = SHAKE_DISPLACEMENT * omega * omega * (omega * turn.elapsed).sin();
-        } else {
-            let t = ((turn.elapsed - SHAKE_SECONDS) / TURN_SECONDS).min(1.);
-            let theta = 0.5 * PI * (1. - (PI * t).cos());
-            mirror = !turn.mirrored && theta >= 0.5 * PI;
-            turn.mirrored |= mirror;
-            if t >= 1. {
-                self.turn = None;
-            } else {
-                gravity = STANDARD_GRAVITY * theta.cos().abs();
+        let ended = match self.motion.as_mut() {
+            None => return false,
+            Some(Motion::Shake { elapsed }) => {
+                *elapsed += DT;
+                if *elapsed < SHAKE_SECONDS {
+                    let omega = 2. * PI * SHAKE_FREQUENCY;
+                    lateral = SHAKE_DISPLACEMENT * omega * omega * (omega * *elapsed).sin();
+                }
+                *elapsed >= SHAKE_SECONDS
             }
+            Some(Motion::Turn { elapsed, mirrored }) => {
+                *elapsed += DT;
+                let t = (*elapsed / TURN_SECONDS).min(1.);
+                let theta = 0.5 * PI * (1. - (PI * t).cos());
+                mirror = !*mirrored && theta >= 0.5 * PI;
+                *mirrored |= mirror;
+                if t < 1. {
+                    gravity = STANDARD_GRAVITY * theta.cos().abs();
+                }
+                t >= 1.
+            }
+        };
+        if ended {
+            self.motion = None;
         }
+        self.write_gravity(queue, gravity, lateral);
+        mirror
+    }
+
+    /// Writes an update's apparent gravity: along the rows (the shaders'
+    /// cfg.gravity) and along x (cfg.lateral).
+    fn write_gravity(&self, queue: &wgpu::Queue, gravity: f32, lateral: f32) {
         queue.write_buffer(&self.buffers.config, 24, &gravity.to_le_bytes());
         queue.write_buffer(&self.buffers.config, 32, &lateral.to_le_bytes());
-        mirror
     }
 
     /// Turn the current material configuration without advancing physical time.

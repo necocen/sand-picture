@@ -133,6 +133,11 @@ impl SandPicture {
                     product.turn();
                 }
             }
+            Command::Shake => {
+                if let State::Running(product) = &mut self.state {
+                    product.shake();
+                }
+            }
             Command::Reset => {
                 if let State::Running(product) = &mut self.state {
                     product.reset();
@@ -158,6 +163,7 @@ impl App for SandPicture {
     fn on_input(&mut self, ctx: &mut WindowInputContext<'_, ()>) {
         for (key, command) in [
             (KeyCode::KeyF, Command::Turn),
+            (KeyCode::KeyS, Command::Shake),
             (KeyCode::Space, Command::Pause),
             (KeyCode::KeyR, Command::Reset),
         ] {
@@ -273,8 +279,8 @@ impl App for SandPicture {
         })
     }
 
-    /// `{"action": "turn" | "pause" | "reset" | "view" | "panel"}`; a view is
-    /// named by `"value"`, and `panel` hides or shows the panel.
+    /// `{"action": "turn" | "shake" | "pause" | "reset" | "view" | "panel"}`; a
+    /// view is named by `"value"`, and `panel` hides or shows the panel.
     #[cfg(not(target_family = "wasm"))]
     fn on_agent_command(
         &mut self,
@@ -283,6 +289,7 @@ impl App for SandPicture {
         let action = payload.get("action").and_then(serde_json::Value::as_str);
         match action.ok_or("an action is needed")? {
             "turn" => self.command(Command::Turn),
+            "shake" => self.command(Command::Shake),
             "pause" => self.command(Command::Pause),
             "reset" => self.command(Command::Reset),
             "panel" => self.panel.toggle(),

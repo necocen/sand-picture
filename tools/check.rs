@@ -4,13 +4,16 @@
 //! `cargo run --release --example check [-- --full] [--record FOLDER]`
 //!
 //! The picture rests, is turned over at once and runs to 5 s, with
-//! checkpoints at 0, 1 and 5 s (updates 0, 125 and 625); it is then turned
-//! over again and checked a second later; then it is reset, and the same
-//! three checkpoints must come out as before; then it is reset once more and
-//! given the state it had one update before the turn mirrored the grid, and
-//! must reach 5 s as before: the state alone carries the picture on. And
-//! pictures of another size must be the same whether the views were made at
-//! that size or brought to it, as a window that is resized brings them.
+//! checkpoints at 0, 1 and 5 s (updates 0, 125 and 625: at rest, as the turn
+//! mirrors the grid, and three seconds after the turn); it is then turned
+//! over again and checked a second later, as the grid is mirrored with the
+//! sand up; then it is reset and, at rest, shaken, and checked a second into
+//! the shake; then it is reset, and the first three checkpoints must come
+//! out as before; then it is reset once more and given the state it had one
+//! update before the turn mirrored the grid, and must reach 5 s as before:
+//! the state alone carries the picture on. And pictures of another size must
+//! be the same whether the views were made at that size or brought to it, as
+//! a window that is resized brings them.
 //! `--full` runs on from there to 15, 30 and 60 s. A checkpoint is the
 //! SHA-256 of the buffers of the picture's state and of the three views'
 //! pictures; of the labels only the parts two runs agree in are taken (the
@@ -93,7 +96,7 @@ fn differences(what: &str, fields: &Fields, before: &Fields) -> usize {
 fn advance(gpu: &GpuContext, model: &mut Model, update: &mut u64, to: u64) -> Option<u64> {
     let mut mirrored = None;
     while *update < to {
-        let mirror = model.advance_turn(&gpu.queue);
+        let mirror = model.advance_motion(&gpu.queue);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -170,6 +173,14 @@ fn main() {
     let name = "turned 750";
     let fields = checkpoint(&gpu, &model, &pictures, record.as_deref(), name);
     note(name.to_owned(), fields);
+    // The person shakes the picture as it rests.
+    model.reset(&gpu.device, &gpu.queue);
+    model.start_shake();
+    let mut shaken = 0;
+    advance(&gpu, &mut model, &mut shaken, 125);
+    let name = "shaken 125";
+    let fields = checkpoint(&gpu, &model, &pictures, record.as_deref(), name);
+    note(name.to_owned(), fields);
     // A reset: the same three checkpoints as from the start. On the way the
     // state is kept as it is one update before the grid is mirrored.
     model.reset(&gpu.device, &gpu.queue);
@@ -200,7 +211,7 @@ fn main() {
     }
     model.start_turn();
     for _ in 1..mirror {
-        model.advance_turn(&gpu.queue);
+        model.advance_motion(&gpu.queue);
     }
     update = mirror - 1;
     advance(&gpu, &mut model, &mut update, 625);

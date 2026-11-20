@@ -1,14 +1,15 @@
 //! Runs the model without a window and writes its buffers after chosen
 //! updates:
-//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N]`
+//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N]`
 //!
 //! The run starts from the product's scene at rest, and as in the app the
 //! picture is turned over at once (`--turn 0`); `--turn` names instead the
-//! updates after which a turn starts. `--load FOLDER,STEP` starts from a
-//! dump's folder as the state after update STEP, with no turn unless one is
-//! named. `--reset` returns the model to the scene at rest after the named
-//! updates (before a turn named for the same update), as the app's reset
-//! does. `--steps` is the number of the last update. `--dump` writes the
+//! updates after which a turn starts, and `--shake` those after which the
+//! picture is shaken for a moment (a shake asked for during a shake or a turn
+//! is not made, as in the app). `--load FOLDER,STEP` starts from a dump's
+//! folder as the state after update STEP, with no turn unless one is named.
+//! `--reset` returns the model to the scene at rest after the named updates
+//! (before a turn named for the same update), as the app's reset does. `--steps` is the number of the last update. `--dump` writes the
 //! picture's state (the cells, the geometry rows, the faces, the flow, the
 //! bed's columns, the strata and the labels) after the listed updates into
 //! `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the bed's
@@ -97,13 +98,14 @@ fn numbers(text: &str, option: &str) -> Vec<u64> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let output = PathBuf::from(args.next().expect(
-        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N]",
+        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N]",
     ));
     let mut steps = 0_u64;
     let mut dump: Vec<u64> = Vec::new();
     let mut light = None;
     let mut loaded: Option<(PathBuf, u64)> = None;
     let mut turns: Option<Vec<u64>> = None;
+    let mut shakes: Vec<u64> = Vec::new();
     let mut resets: Vec<u64> = Vec::new();
     let mut views = false;
     let mut frames = false;
@@ -116,6 +118,7 @@ fn main() {
             "--dump" => dump = numbers(&value(), "--dump"),
             "--light" => light = Some(value().parse::<u64>().expect("--light EVERY")),
             "--turn" => turns = Some(numbers(&value(), "--turn")),
+            "--shake" => shakes = numbers(&value(), "--shake"),
             "--reset" => resets = numbers(&value(), "--reset"),
             "--views" => views = true,
             "--frames" => frames = true,
@@ -173,7 +176,10 @@ fn main() {
         if turns.contains(&(step - 1)) {
             model.start_turn();
         }
-        let mirror = model.advance_turn(&gpu.queue);
+        if shakes.contains(&(step - 1)) {
+            model.start_shake();
+        }
+        let mirror = model.advance_motion(&gpu.queue);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());

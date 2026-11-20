@@ -10,8 +10,9 @@ What a run does, in the picture's own time (an update is 8 ms):
 
 | Step | Checkpoints |
 |---|---|
-| The picture rests, is turned over at once and runs | 0 s, 1 s (the shake), 5 s (the turn ends): updates 0, 125, 625 |
-| It is turned over again | 6 s: `turned 750` |
+| The picture rests, is turned over at once and runs | 0 s, 1 s (the turn mirrors the grid), 5 s: updates 0, 125, 625 |
+| It is turned over again | 6 s, as the grid is mirrored with the sand up: `turned 750` |
+| It is reset and shaken as it rests | a second into the shake: `shaken 125` |
 | It is reset, as with the app's Reset | 0, 1 and 5 s again: they must equal the first three |
 | It is reset again and given the state it had one update before the turn mirrored the grid | 5 s: it must equal the first run's |
 | `--full` (`mise run check-full`) runs on from that state | 15, 30 and 60 s: updates 1875, 3750, 7500 |
@@ -67,12 +68,14 @@ that v2.20's baseline also had (eight buffers, Photoreal and Simple at the six
 times) were equal to it. Since 2026-11-20 the `geometry` buffer holds only the
 rows that last between updates, in a new order, and the transport's fluxes,
 its groups' members and its schedule are no longer compared, and Photoreal
-and the Flow view were recorded anew with their new looks: of today's
-entries, `cells`, `faces`, `stream`, `terrain` and Simple at the six times
-(30) are v2.20's own hashes, and each change of the baseline since was
-checked to leave every other entry as it was.
+and the Flow view were recorded anew with their new looks; each change of the
+baseline was checked to leave every other entry as it was.
 
-The model differs from v2.20 in one rule since 2026-11-20 (the speed that
-frees the white's powder, `docs/design.md`). Every entry stayed as it was:
-the rule changes a turn made while sand is still up, and the check has none
-that reaches the moment the picture lies flat with sand up.
+The model differs from v2.20 in two things since 2026-11-20
+(`docs/design.md`). The speed that frees the white's powder left every entry
+as it was. A turn without a shake before it changed every entry from the
+first turn on: what is left of v2.20's own hashes is `cells`, `faces`,
+`stream`, `terrain` and Simple of the picture at rest (`0`) and a second into
+a shake (`shaken 125`, which is v2.20's `125`: all ten fields were the same).
+The second turn's checkpoint, `turned 750`, is the update that mirrors the
+grid with the sand up, where the powder's rule differs from v2.20's.

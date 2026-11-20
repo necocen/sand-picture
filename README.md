@@ -11,9 +11,10 @@ program. [docs/design.md](docs/design.md) (in Japanese) holds the design, the
 order of the work and each stage's results; the earlier repository stays the
 reference for the physics.
 
-The model gives v2.20's results bit for bit, and the window runs it: the
-product's scene, a deposit the model laid itself, rests and is turned over as
-the app starts.
+The model is v2.20's but for two things ([docs/design.md](docs/design.md)
+lists them: a turn is not preceded by a shake, and the rule that frees the
+white's powder), and the window runs it: the product's scene, a deposit the
+model laid itself, rests and is turned over as the app starts.
 
 ## Run
 
@@ -25,8 +26,8 @@ trunk serve              # the web build at http://127.0.0.1:8080 (a browser wit
 Rust's version is fixed by `rust-toolchain.toml`; `mise.toml` fixes trunk and
 names the tasks (`mise run verify`, `mise run web`).
 
-Keys: **F** turns the picture over (it is shaken for 3 s, then tipped over in
-2 s), **Space** stops and runs its time, **R** resets it, **V** cycles the
+Keys: **F** turns the picture over (tipped front to back in 2 s), **S** shakes
+it left and right for 3 s, **Space** stops and runs its time, **R** resets it, **V** cycles the
 views (Simple, Photoreal, Flow), **H** hides or shows the control panel, **P**
 moves the panel between the window's top and bottom. The panel has the same
 controls, the picture's own time and its speed (seconds of the picture per
@@ -59,7 +60,8 @@ and writes the picture's state (seven buffers: with them a model goes on as
 the one that wrote them) before the first and after the last update into
 `OUT/step-NNNNN/`. `--light EVERY` writes the cells and the bed's columns
 every EVERY updates, `--load FOLDER,STEP` starts from such a dump, `--turn
-A,B,..` turns the picture over after the named updates, and `--steps 0` only
+A,B,..` turns the picture over and `--shake A,B,..` shakes it after the named
+updates, and `--steps 0` only
 prints an update's stages. An update is 8 ms of the picture and 608 dispatches
 in one compute pass.
 
@@ -68,7 +70,7 @@ in one compute pass.
 ## Regression
 
 ```sh
-cargo run --release --example check             # 0, 1 and 5 s, a second turn, a reset
+cargo run --release --example check             # 0, 1 and 5 s, a second turn, a shake, a reset
 cargo run --release --example check -- --full   # on to 60 s
 ```
 

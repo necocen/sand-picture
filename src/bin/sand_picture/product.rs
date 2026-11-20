@@ -28,6 +28,7 @@ pub struct Product {
     play: (Instant, u64),
     reset_pending: bool,
     turn_pending: bool,
+    shake_pending: bool,
 }
 impl Product {
     /// The picture rests with its sand on the floor; the person turns it over
@@ -45,13 +46,20 @@ impl Product {
             play: (Instant::now(), 0),
             reset_pending: false,
             turn_pending: false,
+            shake_pending: false,
         }
     }
 
-    /// The person turns the picture over: it is shaken, then tipped, during
-    /// the next updates. A turn under way goes on unchanged.
+    /// The person turns the picture over: it is tipped during the next
+    /// updates. A turn under way goes on unchanged.
     pub fn turn(&mut self) {
         self.turn_pending = true;
+    }
+
+    /// The person shakes the picture left and right for a moment, unless
+    /// the hands are at a shake or a turn already.
+    pub fn shake(&mut self) {
+        self.shake_pending = true;
     }
 
     /// Back to the scene at rest, turned over at once.
@@ -70,10 +78,14 @@ impl Product {
             self.completed = 0;
             self.in_flight.clear();
             self.turn_pending = false;
+            self.shake_pending = false;
             self.play_begins();
         }
         if std::mem::take(&mut self.turn_pending) {
             self.model.start_turn();
+        }
+        if std::mem::take(&mut self.shake_pending) {
+            self.model.start_shake();
         }
         reset
     }
@@ -81,7 +93,7 @@ impl Product {
     /// One update, in the tick's encoder.
     pub fn tick(&mut self, ctx: &mut TickContext<'_>) {
         self.apply_pending(ctx.gpu);
-        let mirror = self.model.advance_turn(&ctx.gpu.queue);
+        let mirror = self.model.advance_motion(&ctx.gpu.queue);
         {
             let mut pass = ctx.encoder.begin_compute_pass(&Default::default());
             if mirror {
