@@ -158,32 +158,60 @@ fn grains_at(p: vec2<f32>, cover: f32, black: f32, velocity: vec2<f32>) -> vec2<
 fn sand_color(black: f32) -> vec3<f32> {
     return mix(vec3<f32>(.50, .74, .98), vec3<f32>(.03, .05, .09), black);
 }
-// The share of a view through the gap that grains cover. The grains of the
-// volumes `grains` (of the wet volume) are spheres of the diameters d strewn
-// through the gap b: a sight line across it meets none of n grains a volume
-// with exp(-n b pi d^2 / 4) = exp(-1.5 b volume / d). (The light a grain
-// takes from a beam is twice that, by diffraction: that is how far one sees
-// through the sand, not how many grains one sees.)
-fn cover(grains: vec2<f32>, diameters: vec2<f32>) -> f32 {
-    return 1. - exp(-1.5 * cfg.gap * dot(max(grains, vec2<f32>(0.)), 1. / diameters));
+// The depth of grains a sight line crosses in the gap, in the grains' own
+// mean free paths. The grains of a volume (of the wet volume) are spheres of
+// the diameter d: n = volume / (pi d^3 / 6) of them a volume, each pi d^2 / 4
+// across, so a line across the gap b meets n b pi d^2 / 4 = 1.5 b volume / d
+// on average, and none with exp(-depth). (The light a grain takes from a
+// beam is twice that, by diffraction: that is how far one sees through the
+// sand, not how many grains one sees.)
+fn depth(volume: f32, diameter: f32) -> f32 {
+    return 1.5 * cfg.gap * max(volume, 0.) / diameter;
+}
+// The share of the light on a white grain that the grain turns back. The
+// white is silica and glass: grains that let the light through and bend it
+// little in water. By the ray optics of a sphere of quartz or glass (index
+// 1.52 to 1.55 against the water's 1.333) the light a grain scatters keeps
+// the mean cosine g = 0.9 of its direction; (1 - g) / 2 is what a grain
+// turns of a stream of light going in into the stream coming out.
+const TURNED_BACK: f32 = .05;
+// How white the white sand of the depth `grains` is, as a share of the
+// bed's white. Sand is white where the light meets many grains: a layer
+// that absorbs nothing, before a dark backing, sends back k t / (1 + k t)
+// of the light on it (k = TURNED_BACK, t its depth). The sand's colour is
+// the bed's, a gap full of packed white, and thinner sand has its share of
+// it: a sixth of the bed's white for each grain a sight line meets, where
+// the sand is thin. So what falls is about as white, summed over the
+// picture, as the heap it makes.
+fn glow(grains: f32) -> f32 {
+    let bed = depth(BED_PACKING, cfg.diameters.x);
+    return min(grains * (1. + TURNED_BACK * bed) / (bed * (1. + TURNED_BACK * grains)), 1.);
 }
 // The wet part of the picture at a point. Three things lie over the
 // backdrop, the later hiding the earlier: the sand that falls or lies thin,
-// whose grains show at a site with the chance that their cross-sections
-// cover it; the bodies of sand at rest, to where they fill half; and the
-// bed, from its record. A pixel shows one pattern of grains for the three:
-// where two meet within it, their shares of the pixel weigh the pattern's
-// chances.
+// in single grains; the bodies of sand at rest, to where they fill half; and
+// the bed, from its record. A pixel shows one pattern of grains for the
+// three: where two meet within it, their shares of the pixel weigh the
+// pattern's chances.
 //
-// Only the first's grains are carried. A body's grains stay where the glass
-// shows them: its sand creeps, and where it slides a grain's width in a
-// frame its grains blur into their mean.
+// The bodies and the bed fill the gap, and every site of theirs shows a
+// grain. Thin sand shows a black grain at a site with the chance that a
+// sight line meets one. Its white grains are glassy, and the sand is less
+// white than the grains a sight line meets would cover (glow): the picture
+// shows a white grain at a site with the chance that gives the sand its
+// white, a grain in six where the sand is thin and every grain where it
+// fills the gap. (Every grain at a sixth of the white is the same in the
+// mean, and a haze in which no grain shows.)
+//
+// Only the thin sand's grains are carried. A body's grains stay where the
+// glass shows them: its sand creeps, and where it slides a grain's width in
+// a frame its grains blur into their mean.
 fn wet_at(p: vec2<f32>) -> vec3<f32> {
     let bed = bed_at(p);
     let laid = vec2<f32>(1. - bed.share, bed.share) / cfg.diameters;
     // The chance of a grain at a site, the chance of a black one, the
     // carried sand's velocity weighed by its chance of a grain, the chance
-    // of a grain that slides blurred, and the free powder's cover.
+    // of a grain that slides blurred, and the free powder's white.
     var shown = bed.inside;
     var black = bed.inside * laid.y / max(laid.x + laid.y, 1.e-9);
     var flux = vec2<f32>(0.);
@@ -193,17 +221,19 @@ fn wet_at(p: vec2<f32>) -> vec3<f32> {
         let sand = sand_at(p);
         let pixel = f32(cfg.size.x) / f32(cfg.image_size.x);
         let body = (1. - bed.inside) * clamp(.5 + (sand.packed - .5) / max(sand.steepness * pixel, 1.e-4), 0., 1.);
-        // The grit shows grain by grain. The white's free powder is too
-        // fine for that: it whitens the water behind the grains.
-        let grit = vec2<f32>(sand.other.x * (1. - sand.powder), sand.other.y);
-        let thin = (1. - bed.inside - body) * cover(grit, cfg.diameters);
-        dust = (1. - bed.inside - body)
-            * cover(vec2<f32>(sand.other.x * sand.powder, 0.), vec2<f32>(cfg.powder_diameter));
-        let sections = grit / cfg.diameters;
+        let open = 1. - bed.inside - body;
+        // The grit's depths, white and black, and the chance that a sight
+        // line meets a grain of it. The white's free powder is too fine to
+        // show grain by grain: it whitens the water behind the grains.
+        let grit = vec2<f32>(depth(sand.other.x * (1. - sand.powder), cfg.diameters.x), depth(sand.other.y, cfg.diameters.y));
+        let met = (1. - exp(-grit.x - grit.y)) / max(grit.x + grit.y, 1.e-9);
+        let dark = open * met * grit.y;
+        let thin = dark + open * min(glow(grit.x), met * grit.x);
         shown += body + thin;
-        black += body * sand.black + thin * sections.y / max(sections.x + sections.y, 1.e-9);
+        black += body * sand.black + dark;
         flux = thin * sand.drift;
         blurred = body * sand.blur;
+        dust = open * glow(depth(sand.other.x * sand.powder, cfg.powder_diameter));
     }
     var color = mix(backdrop(p), sand_color(0.), dust);
     if shown > 0. {
