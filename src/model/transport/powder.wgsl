@@ -9,19 +9,25 @@
 // in the aggregates the grains come away in, and moves, settles and packs
 // with it (white_speed). Sand in contact (the share in contact, the
 // material table's blend from the freezing packing to the loose one)
-// through which the water runs faster than its white grains settle under
-// the apparent gravity is not settling grain by grain: the water tears the
-// mass and its aggregates apart and frees the powder of the share in
-// contact. The water's speed through the sand is the white's slip against
-// the cell's water, so sand that falls with its own water keeps its
-// powder. The free share only grows, until the powder reaches the deposit
-// at its own speed and is bound again (arrival.wgsl).
+// through which the water runs faster than its white grains settle is not
+// settling grain by grain: the water's drag on a grain exceeds the grain's
+// weight, tears the mass and its aggregates apart and frees the powder of
+// the share in contact. The weight is the whole gravity's on the grain
+// (with the hands' shake): while the picture is tipped over, the part
+// across the gap presses the grains on the lower plate, and when it lies
+// flat they weigh as much as when it stands. (Measured by the gravity along
+// the glass alone, the speed falls to nothing at the flat moment and any
+// motion frees the powder of all sand in contact.) The water's speed
+// through the sand is the white's slip against the cell's water, so sand
+// that falls with its own water keeps its powder. The free share only
+// grows, until the powder reaches the deposit at its own speed and is bound
+// again (arrival.wgsl).
 @compute @workgroup_size(128) fn free_powder(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}
     let c=cells[i];let g=grains(c);let water=max(c.volume.water,0.);let wet=water+g.x+g.y;
     if g.x<=0.||water<=0.||c.powder.free>=c.powder.mobile{return;}
     let slip=c.momentum[1]/g.x-c.momentum[0]/water;
-    let settling=TERMINAL_SPEED.x*length(vec2<f32>(cfg.lateral,cfg.gravity))/STANDARD_GRAVITY;
+    let settling=TERMINAL_SPEED.x*length(vec3<f32>(cfg.lateral,cfg.gravity,plate_gravity()))/STANDARD_GRAVITY;
     if length(slip)<=settling{return;}
     let contact=smoothstep(FREEZING_PACKING,LOOSE_PACKING,(g.x+g.y)/wet);
     cells[i].powder.free=max(c.powder.free,contact*c.powder.mobile);

@@ -66,7 +66,13 @@ The first baseline (2026-11-19) was v2.20 of `../sand-picture`: its 60 entries
 that v2.20's baseline also had (eight buffers, Photoreal and Simple at the six
 times) were equal to it. Since 2026-11-20 the `geometry` buffer holds only the
 rows that last between updates, in a new order, and the transport's fluxes,
-its groups' members and its schedule are no longer compared: of today's
-entries, `cells`, `faces`, `stream`, `terrain`, Photoreal and Simple at the
-six times (36) are v2.20's own hashes, and each change of the baseline since
-was checked to leave every other entry as it was.
+its groups' members and its schedule are no longer compared, and Photoreal
+and the Flow view were recorded anew with their new looks: of today's
+entries, `cells`, `faces`, `stream`, `terrain` and Simple at the six times
+(30) are v2.20's own hashes, and each change of the baseline since was
+checked to leave every other entry as it was.
+
+The model differs from v2.20 in one rule since 2026-11-20 (the speed that
+frees the white's powder, `docs/design.md`). Every entry stayed as it was:
+the rule changes a turn made while sand is still up, and the check has none
+that reaches the moment the picture lies flat with sand up.
