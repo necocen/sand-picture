@@ -37,22 +37,26 @@ fn near(k: Stencil, what: u32) -> bool {
     return (u32(sketch[cell_index(k.cell)].motion.w) & what) != 0u;
 }
 
-// The sand at a point that is not the bed's: the share packed sand at rest
-// fills with the steepness of that share (a cell) and its black share; the
-// other sand's fine and coarse volumes with the free powder's share of the
-// fine; the wet volume; the grains' velocity (m/s).
-struct Sand { packed: f32, steepness: f32, black: f32, veil: vec2<f32>, powder: f32, wet: f32, velocity: vec2<f32> }
+// The sand at a point that is not the bed's: the share a body's sand fills
+// with the steepness of that share (a cell), its black share and its speed
+// (m/s); the other sand's fine and coarse volumes with the free powder's
+// share of the fine and its velocity (m/s); the wet volume.
+struct Sand {
+    packed: f32, steepness: f32, black: f32, speed: f32,
+    veil: vec2<f32>, powder: f32, drift: vec2<f32>,
+    wet: f32,
+}
 fn sand_at(p: vec2<f32>) -> Sand {
     let k = stencil(p);
-    if !near(k, SAND_NEAR) { return Sand(0., 0., 0., vec2<f32>(0.), 0., 1., vec2<f32>(0.)); }
+    if !near(k, SAND_NEAR) { return Sand(0., 0., 0., 0., vec2<f32>(0.), 0., vec2<f32>(0.), 1.); }
     var packed = 0.;
     var gradient = vec2<f32>(0.);
     var black = 0.;
+    var slide = 0.;
     var veil = vec2<f32>(0.);
     var powder = 0.;
     var wet = 0.;
     var flux = vec2<f32>(0.);
-    var grains = 0.;
     for (var j = 0; j < 3; j++) {
         for (var i = 0; i < 3; i++) {
             let s = sketch_at(k, i, j);
@@ -61,15 +65,14 @@ fn sand_at(p: vec2<f32>) -> Sand {
             gradient += vec2<f32>(k.dx[i] * k.wy[j], k.wx[i] * k.dy[j]) * s.sand.x;
             black += w * s.sand.x * s.grains.w;
             veil += w * s.sand.yz;
+            slide += w * s.sand.x * length(s.motion.xy);
             powder += w * s.sand.y * s.motion.z;
             wet += w * (1. - min(s.gas.x, 1.));
-            let amount = w * (REST_PACKING * s.sand.x + s.sand.y + s.sand.z);
-            flux += amount * s.motion.xy;
-            grains += amount;
+            flux += w * (s.sand.y + s.sand.z) * s.motion.xy;
         }
     }
-    return Sand(packed, length(gradient), black / max(packed, 1.e-6), veil, powder / max(veil.x, 1.e-9), wet,
-        flux / max(grains, 1.e-9));
+    return Sand(packed, length(gradient), black / max(packed, 1.e-6), slide / max(packed, 1.e-6),
+        veil, powder / max(veil.x, 1.e-9), flux / max(veil.x + veil.y, 1.e-9), wet);
 }
 
 // The exposure of a frame: one refresh of a 60 Hz display.
@@ -82,32 +85,70 @@ fn site_hash(q: vec2<i32>) -> f32 {
     h = h ^ (h >> 16u);
     return f32(h) / 4294967296.;
 }
-// The most points a side at which a pixel's grains are sampled.
+// The most points a side at which a pixel's grains are sampled, and the
+// most along a grain's path in a frame.
 const GRAIN_SAMPLES: i32 = 8;
-// The share of the pixel at p that black grains cover, where grains of the
-// black share `black` move at `speed` (m/s). Sand against the glass is seen
-// grain by grain: each site a grain across shows one grain, black with the
-// black's share of the grains' cross-sections. A pixel shows the grains
-// under it: it is sampled at points no further apart than a site, as many a
-// side as it is sites across, rounded up (a pixel no wider than a grain
-// shows the grain it lies in). Grains that move more than their size in a
-// frame are smeared into the mean share.
-fn black_cover(p: vec2<f32>, black: f32, speed: f32) -> f32 {
+const PATH_SAMPLES: i32 = 4;
+// The seconds a pattern of falling grains is carried with them before it is
+// laid anew: long enough for a grain to be seen to fall, short enough for
+// the grains' velocity to have stayed what it is now. A longer carry would
+// multiply every flicker of the velocity into a jump of the pattern.
+const CARRY: f32 = .5;
+// The time (s) of the state the picture shows: the bed's record keeps it
+// (bed/strata.wgsl), from the start or the last turn.
+fn clock() -> f32 { return strata[0].y; }
+// The grains a pixel shows at p, as (the share of the pixel they cover, the
+// black's share of them), where a grain shows at a site with the probability
+// `cover` and is black with the probability `black`, and the grains move at
+// `velocity` (m/s).
+//
+// Sand against the glass is seen grain by grain: each site a grain across
+// shows one grain or the water behind. A pixel shows the grains under it: it
+// is sampled at points no further apart than a site, as many a side as it is
+// sites across, rounded up (a pixel no wider than a grain shows the grain it
+// lies in).
+//
+// Grains that move are seen to move: the sites are carried with the grains'
+// velocity. A carried pattern shears with the flow, so two patterns half a
+// period apart take turns, each fading in after it is laid anew and out
+// before the next: every point of a pixel shows one of the two, the first
+// for the share of the points that is its turn's weight. In a frame's
+// exposure a grain is smeared along its path, and only along it: across
+// their path the grains of a falling stream still show one by one.
+fn grains_at(p: vec2<f32>, cover: f32, black: f32, velocity: vec2<f32>) -> vec2<f32> {
     let site = cfg.diameters.x / cfg.cell_width;
     let pixel = vec2<f32>(cfg.size) / vec2<f32>(cfg.image_size);
     let side = clamp(i32(ceil(pixel.x / site)), 1, GRAIN_SAMPLES);
-    var grains = 0.;
-    for (var k = 0; k < side * side; k++) {
-        let o = ((vec2<f32>(f32(k % side), f32(k / side)) + .5) / f32(side) - .5) * pixel;
-        grains += select(0., 1., site_hash(vec2<i32>(floor((p + o) / site))) < black);
+    let drift = velocity / cfg.cell_width;
+    let speed = length(drift);
+    let along = clamp(i32(ceil(speed * EXPOSURE / site)), 1, PATH_SAMPLES);
+    let points = along * side * side;
+    // The first pattern's turn and weight; the second is half a period on.
+    // Grains carried under a quarter of a site in a period keep the first.
+    let turn = fract(clock() / CARRY);
+    let first = select(1., 1. - abs(2. * turn - 1.), speed * CARRY > .25 * site);
+    // The points that show the first pattern differ from pixel to pixel
+    // (interleaved gradient noise), so that no two pixels change together.
+    let dither = fract(52.9829189 * fract(dot(floor((p + .5) / pixel), vec2<f32>(.06711056, .00583715))));
+    var shown = 0.;
+    var dark = 0.;
+    for (var k = 0; k < points; k++) {
+        let s = k % (side * side);
+        let o = ((vec2<f32>(f32(s % side), f32(s / side)) + .5) / f32(side) - .5) * pixel;
+        let lag = select(fract(turn + .5), turn, fract(dither + (f32(k) + .5) / f32(points)) < first) * CARRY
+            + EXPOSURE * ((f32(k / (side * side)) + .5) / f32(along) - .5);
+        let q = vec2<i32>(floor((p + o - drift * lag) / site));
+        var grain = 1.;
+        if cover < 1. { grain = select(0., 1., site_hash(q + vec2<i32>(7919, 104729)) < cover); }
+        shown += grain;
+        dark += grain * select(0., 1., site_hash(q) < black);
     }
-    grains /= f32(side * side);
-    return mix(grains, black, clamp(speed * EXPOSURE / cfg.diameters.x, 0., 1.));
+    return vec2<f32>(shown / f32(points), dark / max(shown, 1.e-6));
 }
 // The white sand and the black (chromite) in the colours a real picture
-// shows under blue light.
-fn grains_color(p: vec2<f32>, black: f32, speed: f32) -> vec3<f32> {
-    return mix(vec3<f32>(.50, .74, .98), vec3<f32>(.03, .05, .09), black_cover(p, black, speed));
+// shows under blue light, for grains of which the share `black` is black.
+fn sand_color(black: f32) -> vec3<f32> {
+    return mix(vec3<f32>(.50, .74, .98), vec3<f32>(.03, .05, .09), black);
 }
 // The cross-sections (per volume, 1/m) of fine and coarse volumes of which
 // the fine has the free powder's share `powder`: the powder, a fifth of the
@@ -119,29 +160,44 @@ fn sections(grains: vec2<f32>, powder: f32) -> vec2<f32> {
 // The wet part of the picture at a point: its colour, and how fast its
 // grains dim a ray through the water there (the optical depth a metre).
 struct Wet { color: vec3<f32>, turbidity: f32 }
-// Over the backdrop the sand that moves or lies thin, as a veil whose depth
-// follows its grains' cross-sections across the gap; over it the bodies of
-// sand at rest, to where they fill half; over all the bed, from its record.
+// Three things lie over the backdrop, the later hiding the earlier: the sand
+// that falls or lies thin, a veil whose grains show with the probability
+// that follows their cross-sections across the gap; the bodies of sand at
+// rest, to where they fill half; and the bed, from its record. A pixel shows
+// one pattern of grains for the three: where two meet within it, their
+// shares of the pixel weigh the pattern's chances.
+//
+// Only the veil's grains are carried. A body's grains stay where the glass
+// shows them: its sand creeps, and where it slides a grain's width in a
+// frame its grains blur into their mean.
 fn wet_at(p: vec2<f32>) -> Wet {
     let bed = bed_at(p);
-    var color = backdrop(p);
+    let laid = sections(vec2<f32>(1. - bed.share, bed.share), 0.);
+    // The chance of a grain at a site, the chance of a black one, the
+    // veil's velocity weighed by its chance of a grain, and the chance of a
+    // grain that slides blurred.
+    var shown = bed.inside;
+    var black = bed.inside * laid.y / max(laid.x + laid.y, 1.e-9);
+    var flux = vec2<f32>(0.);
+    var blurred = 0.;
     var grains = 0.;
     if bed.inside < 1. {
         let sand = sand_at(p);
-        let speed = length(sand.velocity);
+        let pixel = f32(cfg.size.x) / f32(cfg.image_size.x);
+        let body = (1. - bed.inside) * clamp(.5 + (sand.packed - .5) / max(sand.steepness * pixel, 1.e-4), 0., 1.);
         let veil = sections(sand.veil, sand.powder);
         let depth = 3. * cfg.gap * (veil.x + veil.y) / max(sand.wet, .02);
-        if depth > 0. {
-            color = mix(color, grains_color(p, veil.y / (veil.x + veil.y), speed), 1. - exp(-depth));
-        }
-        let pixel = f32(cfg.size.x) / f32(cfg.image_size.x);
-        let cover = clamp(.5 + (sand.packed - .5) / max(sand.steepness * pixel, 1.e-4), 0., 1.);
-        if cover > 0. { color = mix(color, grains_color(p, sand.black, speed), cover); }
-        grains = sand.veil.x + sand.veil.y + REST_PACKING * cover;
+        let thin = (1. - bed.inside - body) * (1. - exp(-depth));
+        shown += body + thin;
+        black += body * sand.black + thin * veil.y / max(veil.x + veil.y, 1.e-9);
+        flux = thin * sand.drift;
+        blurred = body * clamp(sand.speed * EXPOSURE / cfg.diameters.x, 0., 1.);
+        grains = sand.veil.x + sand.veil.y + REST_PACKING * body;
     }
-    if bed.inside > 0. {
-        let laid = sections(vec2<f32>(1. - bed.share, bed.share), 0.);
-        color = mix(color, grains_color(p, laid.y / (laid.x + laid.y), 0.), bed.inside);
+    var color = backdrop(p);
+    if shown > 0. {
+        let seen = grains_at(p, shown, black / shown, flux / shown);
+        color = mix(color, sand_color(mix(seen.y, black / shown, blurred / shown)), seen.x);
     }
     return Wet(color, 3. * mix(grains, BED_PACKING, bed.inside) / cfg.diameters.x);
 }
@@ -262,10 +318,10 @@ fn bubble_color(p: vec2<f32>, bubble: Bubble) -> vec3<f32> {
 }
 fn scene_color(p: vec2<f32>, pixel_width: f32, bubble: Bubble) -> vec3<f32> {
     let coverage = 1. - smoothstep(-.5 * pixel_width, .5 * pixel_width, bubble.distance);
-    if coverage <= 0. { return wet_at(p).color; }
-    let air = bubble_color(p, bubble);
-    if coverage >= 1. { return air; }
-    return mix(wet_at(p).color, air, coverage);
+    var color = vec3<f32>(0.);
+    if coverage < 1. { color = wet_at(p).color; }
+    if coverage > 0. { color = mix(color, bubble_color(p, bubble), coverage); }
+    return color;
 }
 @fragment fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let scale = vec2<f32>(cfg.size) / vec2<f32>(cfg.image_size);
@@ -273,20 +329,18 @@ fn scene_color(p: vec2<f32>, pixel_width: f32, bubble: Bubble) -> vec3<f32> {
     let bubble = bubble_at(p);
     var color = vec3<f32>(0.);
     let radius = .5 * cfg.gap / cfg.cell_width;
-    if bubble.distance > -.5 * radius - scale.x && bubble.distance < scale.x {
-        // Integrate the outline and the narrow band of total reflection
-        // inside it, the outer quarter of the meniscus, over the pixel. The
-        // locally planar distance has the same interpolated contour/normal.
-        // Further in, the meniscus changes slowly across a pixel.
-        /*loop: sixteen copies of the whole picture's shading*/for (var y = 0u; y < 4u; y++) {
-            /*loop: sixteen copies of the whole picture's shading*/for (var x = 0u; x < 4u; x++) {
-                let offset = ((vec2<f32>(f32(x), f32(y)) + .5) * .25 - .5) * scale;
-                let sample = Bubble(bubble.distance + dot(bubble.normal, offset), bubble.normal);
-                color += .0625 * scene_color(p + offset, .25 * scale.x, sample);
-            }
+    // The outline and the narrow band of total reflection inside it, the
+    // outer quarter of the meniscus, are integrated over the pixel at four
+    // points a side; the locally planar distance has the same interpolated
+    // contour and normal. Elsewhere the picture changes slowly across a
+    // pixel, and its middle stands for it.
+    let side = select(1u, 4u, bubble.distance > -.5 * radius - scale.x && bubble.distance < scale.x);
+    /*loop: copies of the whole picture's shading*/for (var y = 0u; y < side; y++) {
+        /*loop: copies of the whole picture's shading*/for (var x = 0u; x < side; x++) {
+            let offset = ((vec2<f32>(f32(x), f32(y)) + .5) / f32(side) - .5) * scale;
+            let sample = Bubble(bubble.distance + dot(bubble.normal, offset), bubble.normal);
+            color += scene_color(p + offset, scale.x / f32(side), sample) / f32(side * side);
         }
-    } else {
-        color = scene_color(p, scale.x, bubble);
     }
     // The front pane sees the same finite studio lights as the bubble rims.
     let glass = fresnel(1., 1. / 1.52);
