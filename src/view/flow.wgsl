@@ -1,11 +1,14 @@
 // Flow view: the cell-mean velocity of all that moves (the sum of the phase
 // momenta α u of water, both grain kinds and gas over the sum of their
 // volumes) as an optical-flow colour wheel. The hue is the direction (right
-// red, up chartreuse, left cyan, down violet); the brightness grows with the
-// speed on a logarithmic scale from FLOW_FLOOR to FLOW_FULL. Sand and gas add
-// a dark silhouette where nothing moves. Display only: no physics reads it.
-const FLOW_FLOOR: f32 = 1e-5;   // 0.01 mm/s, the slowest motion that shows
-const FLOW_FULL: f32 = 1e-2;    // 10 mm/s, a falling stream at full brightness
+// red, up chartreuse, left cyan, down violet); the brightness is the speed.
+// Seen brightness goes as the square root of the speed, up to FLOW_FULL: a
+// stream at 16 mm/s is four times as bright as the water rising between the
+// streams at 1 mm/s, and twice as bright as a plume at 4 mm/s. (A scale by
+// the logarithm, which also showed the slab's creep, made everything from
+// 1 mm/s on nearly as bright as a stream.) Sand and gas add a dark
+// silhouette where nothing moves. Display only: no physics reads it.
+const FLOW_FULL: f32 = 2.5e-2;  // 25 mm/s, the fastest streams at full brightness
 const SAND_SHADE: f32 = 0.05;   // linear grey of still sand
 const GAS_SHADE: f32 = 0.02;    // linear grey of still gas
 
@@ -45,7 +48,7 @@ fn hue_colour(h: f32) -> vec3<f32> {
     if volume > 0.01 {
         let velocity = momentum / volume;
         let speed = length(velocity);
-        let level = clamp(log2(1. + speed / FLOW_FLOOR) / log2(1. + FLOW_FULL / FLOW_FLOOR), 0., 1.);
+        let level = sqrt(clamp(speed / FLOW_FULL, 0., 1.));
         let hue = fract(atan2(velocity.y, velocity.x) / 6.2831853);
         // The wheel is drawn in display space; the target encodes from
         // linear.
