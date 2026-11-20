@@ -7,10 +7,11 @@
 // cells' values, which has no corner at a cell's edge and no feature finer
 // than a cell. A cell is about a gap wide, and neither a bubble's meniscus
 // nor a body of sand between the plates shows a finer in-plane feature. A
-// field's half level is the outline of what fills the cells: where a
-// straight surface cuts a cell, the level lies within a tenth of a cell of
-// it.
-struct Sketch { gas: vec4<f32>, grains: vec4<f32>, motion: vec4<f32>, sand: vec4<f32> }
+// field's half level is the outline of what fills the cells, a body of sand
+// or a bubble alone: where a straight surface cuts a cell, the level lies
+// within a tenth of a cell of it. Bubbles that touch part the gas between
+// them (bubble_at).
+struct Sketch { gas: vec4<f32>, sand: vec4<f32>, carry: vec4<f32> }
 @group(0) @binding(2) var<storage, read> sketch: array<Sketch>;
 
 // The weights of the 3x3 cells around a point, and their derivatives.
@@ -28,51 +29,58 @@ fn sketch_at(k: Stencil, i: i32, j: i32) -> Sketch {
     return sketch[cell_index(k.cell + vec2<i32>(i - 1, j - 1))];
 }
 
-// The packing of sand at rest, the deposit's (material.rs).
-const REST_PACKING: f32 = .585;
 // What a cell's sketch says of the cells around it (sketch.wgsl).
 const GAS_NEAR: u32 = 1u;
 const SAND_NEAR: u32 = 2u;
 fn near(k: Stencil, what: u32) -> bool {
-    return (u32(sketch[cell_index(k.cell)].motion.w) & what) != 0u;
+    return ((u32(sketch[cell_index(k.cell)].gas.w) >> 8u) & what) != 0u;
 }
 
-// The sand at a point that is not the bed's: the share a body's sand fills
-// with the steepness of that share (a cell), its black share and its speed
-// (m/s); the other sand's fine and coarse volumes with the free powder's
-// share of the fine and its velocity (m/s); the wet volume.
+// The sand at a point that is not the bed's: the share of the wet part that
+// a body's sand fills, with that share's steepness (a cell), the black's
+// share of the body's sand and how far its grains blur; the other sand's
+// fine and coarse volumes, of the wet part, with the free powder's share of
+// the fine and the velocity (m/s).
 struct Sand {
-    packed: f32, steepness: f32, black: f32, speed: f32,
-    veil: vec2<f32>, powder: f32, drift: vec2<f32>,
-    wet: f32,
+    packed: f32, steepness: f32, black: f32, blur: f32,
+    other: vec2<f32>, powder: f32, drift: vec2<f32>,
 }
 fn sand_at(p: vec2<f32>) -> Sand {
     let k = stencil(p);
-    if !near(k, SAND_NEAR) { return Sand(0., 0., 0., 0., vec2<f32>(0.), 0., vec2<f32>(0.), 1.); }
-    var packed = 0.;
-    var gradient = vec2<f32>(0.);
+    if !near(k, SAND_NEAR) { return Sand(0., 0., 0., 0., vec2<f32>(0.), 0., vec2<f32>(0.)); }
+    var share = 0.;
+    var share_slope = vec2<f32>(0.);
+    var gas = 0.;
+    var gas_slope = vec2<f32>(0.);
     var black = 0.;
-    var slide = 0.;
-    var veil = vec2<f32>(0.);
+    var slid = 0.;
+    var other = vec2<f32>(0.);
     var powder = 0.;
-    var wet = 0.;
     var flux = vec2<f32>(0.);
     for (var j = 0; j < 3; j++) {
         for (var i = 0; i < 3; i++) {
             let s = sketch_at(k, i, j);
             let w = k.wx[i] * k.wy[j];
-            packed += w * s.sand.x;
-            gradient += vec2<f32>(k.dx[i] * k.wy[j], k.wx[i] * k.dy[j]) * s.sand.x;
-            black += w * s.sand.x * s.grains.w;
-            veil += w * s.sand.yz;
-            slide += w * s.sand.x * length(s.motion.xy);
-            powder += w * s.sand.y * s.motion.z;
-            wet += w * (1. - min(s.gas.x, 1.));
-            flux += w * (s.sand.y + s.sand.z) * s.motion.xy;
+            let d = vec2<f32>(k.dx[i] * k.wy[j], k.wx[i] * k.dy[j]);
+            share += w * s.sand.x;
+            share_slope += d * s.sand.x;
+            gas += w * min(s.gas.x, 1.);
+            gas_slope += d * min(s.gas.x, 1.);
+            black += w * s.sand.x * s.sand.y;
+            slid += w * s.sand.x * s.carry.w;
+            other += w * s.sand.zw;
+            powder += w * s.sand.z * s.carry.z;
+            flux += w * (s.sand.z + s.sand.w) * s.carry.xy;
         }
     }
-    return Sand(packed, length(gradient), black / max(packed, 1.e-6), slide / max(packed, 1.e-6),
-        veil, powder / max(veil.x, 1.e-9), flux / max(veil.x + veil.y, 1.e-9), wet);
+    // The sand lies in the wet part of the cells. Where gas takes a part of
+    // them, a body that fills the rest ends at the bubble's outline, not
+    // short of it.
+    let wet = max(1. - gas, .05);
+    let packed = share / wet;
+    return Sand(packed, length(share_slope + packed * gas_slope) / wet,
+        black / max(share, 1.e-6), slid / max(share, 1.e-6),
+        other / wet, powder / max(other.x, 1.e-9), flux / max(other.x + other.y, 1.e-9));
 }
 
 // The exposure of a frame: one refresh of a 60 Hz display.
@@ -150,67 +158,88 @@ fn grains_at(p: vec2<f32>, cover: f32, black: f32, velocity: vec2<f32>) -> vec2<
 fn sand_color(black: f32) -> vec3<f32> {
     return mix(vec3<f32>(.50, .74, .98), vec3<f32>(.03, .05, .09), black);
 }
-// The cross-sections (per volume, 1/m) of fine and coarse volumes of which
-// the fine has the free powder's share `powder`: the powder, a fifth of the
-// grains' size, whitens the water five times more than as much white.
-fn sections(grains: vec2<f32>, powder: f32) -> vec2<f32> {
-    return max(grains, vec2<f32>(0.))
-        * vec2<f32>((1. - powder) / cfg.diameters.x + powder / cfg.powder_diameter, 1. / cfg.diameters.y);
+// The share of a view through the gap that grains cover. The grains of the
+// volumes `grains` (of the wet volume) are spheres of the diameters d strewn
+// through the gap b: a sight line across it meets none of n grains a volume
+// with exp(-n b pi d^2 / 4) = exp(-1.5 b volume / d). (The light a grain
+// takes from a beam is twice that, by diffraction: that is how far one sees
+// through the sand, not how many grains one sees.)
+fn cover(grains: vec2<f32>, diameters: vec2<f32>) -> f32 {
+    return 1. - exp(-1.5 * cfg.gap * dot(max(grains, vec2<f32>(0.)), 1. / diameters));
 }
-// The wet part of the picture at a point: its colour, and how fast its
-// grains dim a ray through the water there (the optical depth a metre).
-struct Wet { color: vec3<f32>, turbidity: f32 }
-// Three things lie over the backdrop, the later hiding the earlier: the sand
-// that falls or lies thin, a veil whose grains show with the probability
-// that follows their cross-sections across the gap; the bodies of sand at
-// rest, to where they fill half; and the bed, from its record. A pixel shows
-// one pattern of grains for the three: where two meet within it, their
-// shares of the pixel weigh the pattern's chances.
+// The wet part of the picture at a point. Three things lie over the
+// backdrop, the later hiding the earlier: the sand that falls or lies thin,
+// whose grains show at a site with the chance that their cross-sections
+// cover it; the bodies of sand at rest, to where they fill half; and the
+// bed, from its record. A pixel shows one pattern of grains for the three:
+// where two meet within it, their shares of the pixel weigh the pattern's
+// chances.
 //
-// Only the veil's grains are carried. A body's grains stay where the glass
+// Only the first's grains are carried. A body's grains stay where the glass
 // shows them: its sand creeps, and where it slides a grain's width in a
 // frame its grains blur into their mean.
-fn wet_at(p: vec2<f32>) -> Wet {
+fn wet_at(p: vec2<f32>) -> vec3<f32> {
     let bed = bed_at(p);
-    let laid = sections(vec2<f32>(1. - bed.share, bed.share), 0.);
+    let laid = vec2<f32>(1. - bed.share, bed.share) / cfg.diameters;
     // The chance of a grain at a site, the chance of a black one, the
-    // veil's velocity weighed by its chance of a grain, and the chance of a
-    // grain that slides blurred.
+    // carried sand's velocity weighed by its chance of a grain, the chance
+    // of a grain that slides blurred, and the free powder's cover.
     var shown = bed.inside;
     var black = bed.inside * laid.y / max(laid.x + laid.y, 1.e-9);
     var flux = vec2<f32>(0.);
     var blurred = 0.;
-    var grains = 0.;
+    var dust = 0.;
     if bed.inside < 1. {
         let sand = sand_at(p);
         let pixel = f32(cfg.size.x) / f32(cfg.image_size.x);
         let body = (1. - bed.inside) * clamp(.5 + (sand.packed - .5) / max(sand.steepness * pixel, 1.e-4), 0., 1.);
-        let veil = sections(sand.veil, sand.powder);
-        let depth = 3. * cfg.gap * (veil.x + veil.y) / max(sand.wet, .02);
-        let thin = (1. - bed.inside - body) * (1. - exp(-depth));
+        // The grit shows grain by grain. The white's free powder is too
+        // fine for that: it whitens the water behind the grains.
+        let grit = vec2<f32>(sand.other.x * (1. - sand.powder), sand.other.y);
+        let thin = (1. - bed.inside - body) * cover(grit, cfg.diameters);
+        dust = (1. - bed.inside - body)
+            * cover(vec2<f32>(sand.other.x * sand.powder, 0.), vec2<f32>(cfg.powder_diameter));
+        let sections = grit / cfg.diameters;
         shown += body + thin;
-        black += body * sand.black + thin * veil.y / max(veil.x + veil.y, 1.e-9);
+        black += body * sand.black + thin * sections.y / max(sections.x + sections.y, 1.e-9);
         flux = thin * sand.drift;
-        blurred = body * clamp(sand.speed * EXPOSURE / cfg.diameters.x, 0., 1.);
-        grains = sand.veil.x + sand.veil.y + REST_PACKING * body;
+        blurred = body * sand.blur;
     }
-    var color = backdrop(p);
+    var color = mix(backdrop(p), sand_color(0.), dust);
     if shown > 0. {
         let seen = grains_at(p, shown, black / shown, flux / shown);
         color = mix(color, sand_color(mix(seen.y, black / shown, blurred / shown)), seen.x);
     }
-    return Wet(color, 3. * mix(grains, BED_PACKING, bed.inside) / cfg.diameters.x);
+    return color;
 }
 
 // A bubble at a point: the distance (cells) to its outline, negative inside,
 // and the outline's outward normal.
 struct Bubble { distance: f32, normal: vec2<f32> }
-// The gas is the sum of the cells' gas as a smooth field, its half level the
-// outline of all the gas. Inside, the identities part it into bubbles: each
-// identity's gas is a smooth field of its own, the largest at a point is the
-// point's bubble, and where the two largest are equal a film stands between
-// two bubbles. The identities' traces in a cell, which the sketch leaves
-// out, part nothing.
+// The furthest a bubble's outline lies outside the half level of all the
+// gas (cells): where a sharp outline's gas is a third, the least level at
+// which a bubble ends.
+const SWELL: f32 = .25;
+// Each identity's gas is a smooth field. A bubble alone is drawn to the half
+// level of the gas. Among others, a point's bubble is the largest identity
+// there, and where its outline lies follows from its lead over the second,
+// the difference of the two over their sum:
+//
+// - With no lead the two hold as much: there the film runs, and both end.
+// - Toward a film the outline keeps to fuller cells, at the film itself to
+//   cells full of gas. So where a film meets the outline of the gas, each
+//   bubble turns into the film on a round, and between the two rounds the
+//   water or the sand shows, as between three bubbles: the foam's Plateau
+//   borders. Surface tension gives the bubbles of a raft these round
+//   shoulders (a border under a raft a few millimetres deep is about a
+//   millimetre wide, the capillary length squared over the depth); the
+//   cells' gas alone would draw a band cut by straight films.
+// - Between its films the outline swells past the half level by as much as
+//   the rounds take: the level's mean over the lead is the half, so the
+//   bubbles of the picture have the gas of the model.
+//
+// The traces of further identities that the transport leaves in a cell are
+// no bubbles and part nothing.
 fn bubble_at(p: vec2<f32>) -> Bubble {
     let k = stencil(p);
     if !near(k, GAS_NEAR) { return Bubble(4., vec2<f32>(0., 1.)); }
@@ -227,7 +256,7 @@ fn bubble_at(p: vec2<f32>) -> Bubble {
                 total += w * gas.x;
                 gradient += d * gas.x;
                 let a = u32(gas.w) % 16u;
-                let b = u32(gas.w) / 16u;
+                let b = (u32(gas.w) / 16u) % 16u;
                 value[a] += w * gas.y;
                 slope[a] += d * gas.y;
                 value[b] += w * gas.z;
@@ -235,8 +264,6 @@ fn bubble_at(p: vec2<f32>) -> Bubble {
             }
         }
     }
-    let steepness = max(length(gradient), 1.e-3);
-    var bubble = Bubble(clamp((.5 - total) / steepness, -4., 4.), -gradient / steepness);
     var first = 0u;
     var second = 1u;
     if value[1] > value[0] {
@@ -251,16 +278,22 @@ fn bubble_at(p: vec2<f32>) -> Bubble {
             second = l;
         }
     }
-    // A film shows where two identities hold the gas between them: where the
-    // second is a trace, or many share the gas, no film is resolved, and its
-    // meniscus is kept a gap away.
-    let resolved = smoothstep(.5, .8, (value[first] + value[second]) / total)
-        * smoothstep(.1, .25, value[second] / total);
-    let apart = slope[first] - slope[second];
-    let steep = max(length(apart), 1.e-3);
-    let film = (value[second] - value[first]) / steep - (1. - resolved) * cfg.gap / cfg.cell_width;
-    if film > bubble.distance { bubble = Bubble(film, -apart / steep); }
-    return bubble;
+    // The lead w and the level of the gas at which the bubble ends,
+    // 1/2 + (1 - w)(1 - 3 w) / 2: 1 at the film, 1/2 with no other near,
+    // and 1/2 in the mean.
+    let pair = max(value[first] + value[second], 1.e-6);
+    let lead = (value[first] - value[second]) / pair;
+    let lead_slope = 2. * (value[second] * slope[first] - value[first] * slope[second]) / (pair * pair);
+    let level = 1. - 2. * lead + 1.5 * lead * lead;
+    let inward = gradient - (3. * lead - 2.) * lead_slope;
+    let steepness = max(length(inward), 1.e-3);
+    var bubble = Bubble((level - total) / steepness, -inward / steepness);
+    // An outline swells no further than SWELL past the half level of all
+    // the gas: gas spread thinner than a bubble's edge shows no bubble.
+    let rise = max(length(gradient), 1.e-3);
+    let reach = (.5 - total) / rise - SWELL;
+    if reach > bubble.distance { bubble = Bubble(reach, -gradient / rise); }
+    return Bubble(clamp(bubble.distance, -4., 4.), bubble.normal);
 }
 
 fn bubble_color(p: vec2<f32>, bubble: Bubble) -> vec3<f32> {
@@ -298,17 +331,14 @@ fn bubble_color(p: vec2<f32>, bubble: Bubble) -> vec3<f32> {
         reflectance = 1. - (1. - f) * (1. - back_f) / (1. - f * back_f);
         transmission = environment(p + ray.xy * travel, exit_ray);
     }
-    // A reflected ray sees the grains around it in the same shallow water
-    // slab: those half-way along its path to the plate dim it and show.
+    // The rim reflects the studio's light all the way round. (Grains that
+    // stand against a meniscus would show in its reflection in place of the
+    // light, and a bubble under white sand would lose its outline there.
+    // The picture keeps the outline: it is what shows a bubble.)
     let surface_z = radius * normal.z;
     let plate_z = select(-radius, radius, reflection.z >= 0.);
     let path = abs(plate_z - surface_z) / max(.05, abs(reflection.z));
-    var reflected = environment(p + reflection.xy * path, reflection);
-    // Where little is reflected the grains change less than can be seen.
-    if path > 0. && reflectance > .25 {
-        let around = wet_at(p + .5 * reflection.xy * path);
-        reflected = mix(reflected, around.color, 1. - exp(-path * cfg.cell_width * around.turbidity));
-    }
+    let reflected = environment(p + reflection.xy * path, reflection);
     return mix(transmission, reflected, reflectance);
 }
 
@@ -319,7 +349,7 @@ fn bubble_color(p: vec2<f32>, bubble: Bubble) -> vec3<f32> {
 fn scene_color(p: vec2<f32>, pixel_width: f32, bubble: Bubble) -> vec3<f32> {
     let coverage = 1. - smoothstep(-.5 * pixel_width, .5 * pixel_width, bubble.distance);
     var color = vec3<f32>(0.);
-    if coverage < 1. { color = wet_at(p).color; }
+    if coverage < 1. { color = wet_at(p); }
     if coverage > 0. { color = mix(color, bubble_color(p, bubble), coverage); }
     return color;
 }

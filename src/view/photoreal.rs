@@ -32,8 +32,9 @@ pub fn source() -> String {
     .concat()
 }
 
-/// The bytes of a cell's sketch (four vec4, sketch.wgsl).
-const SKETCH_BYTES: u64 = 64;
+/// The bytes of a cell's facts and of its sketch (three vec4 each,
+/// sketch.wgsl).
+const SKETCH_BYTES: u64 = 48;
 
 /// A whole buffer at a binding.
 fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -44,8 +45,9 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 }
 
 pub struct Photoreal {
-    /// The kernels that sketch the state, in their order: a cell's own part,
-    /// then what it takes from the cells around it. Each with its bindings.
+    /// The kernels that sketch the state, in their order: each cell's own
+    /// facts, then what the picture draws of it, which looks at the cells
+    /// around it. Each with its bindings.
     sketch: [(wgpu::ComputePipeline, wgpu::BindGroup); 2],
     /// The kernels' groups across and up the grid.
     groups: [u32; 2],
@@ -54,12 +56,16 @@ pub struct Photoreal {
 impl Photoreal {
     pub fn new(device: &wgpu::Device, config: &wgpu::Buffer, buffers: &Buffers) -> Self {
         let (nx, ny) = (buffers.nx, buffers.ny);
-        let cells = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("the picture's sketch of the state"),
-            size: u64::from(nx * ny) * SKETCH_BYTES,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let buffer = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: u64::from(nx * ny) * SKETCH_BYTES,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            })
+        };
+        let facts = buffer("the cells' own facts");
+        let cells = buffer("the picture's sketch of the state");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sketch"),
             source: wgpu::ShaderSource::Wgsl(wgsl::compiled(sketch_source()).into()),
@@ -82,16 +88,19 @@ impl Photoreal {
         };
         let sketch = [
             kernel(
-                "sketch_cells",
+                "survey_cells",
                 &[
                     entry(0, config),
                     entry(1, &buffers.cells),
                     entry(2, &buffers.geometry),
-                    entry(3, &cells),
+                    entry(3, &facts),
                     entry(5, &buffers.terrain),
                 ],
             ),
-            kernel("sketch_bodies", &[entry(0, config), entry(3, &cells)]),
+            kernel(
+                "sketch_cells",
+                &[entry(0, config), entry(3, &facts), entry(4, &cells)],
+            ),
         ];
         let picture = Picture::new(
             device,
