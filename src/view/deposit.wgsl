@@ -3,7 +3,7 @@
 // packed sand whose coarse share comes from the slices laid down there.
 // Between two columns each layer is a past surface of the bed, interpolated
 // like the present one, so layers that slope across columns stay continuous
-// and follow the old slopes. Above the surface only mobile material shows.
+// and follow the old slopes.
 @group(0) @binding(4) var<storage, read> strata: array<vec2<f32>>;
 @group(0) @binding(5) var<storage, read> terrain: array<vec4<f32>>;
 // The record's layout and the deposit's packing, as bed/strata.wgsl and
@@ -56,25 +56,20 @@ fn surface_at(x: u32, k: u32, time: f32) -> vec2<f32> {
     if b.y > a.y { f = clamp((time - a.y) / (b.y - a.y), 0., 1.); }
     return vec2<f32>((f32(k) + .5 + f) / f32(STRATA_RES), mix(a.x, b.x, f));
 }
-// The material that is not part of a floor-connected column. A bed outside
-// the column (right after a flip, before the next update releases it) is
-// drawn with the mobile material.
-fn mobile_composition(p: vec2<i32>) -> vec4<f32> {
-    let q = clamp(p, vec2<i32>(0), vec2<i32>(cfg.size) - 1);
-    let c = cells[cell_index(q)];
-    let column = terrain[u32(q.x)];
-    var bed = vec4<f32>(0.);
-    if column.x <= 0. || f32(q.y) > column.y { bed = vec4<f32>(c.bed.w, c.bed.x, c.bed.y, 0.); }
-    return vec4<f32>(c.volume.water, c.volume.fine, c.volume.coarse, c.volume.gas) + bed;
-}
-fn sample_mobile(p: vec2<f32>) -> vec4<f32> {
+// The coarse share of the sand at p as the cells hold it, for a bed whose
+// record has no slice there.
+fn cell_share(p: vec2<f32>) -> f32 {
     let q = vec2<i32>(floor(p));
     let t = fract(p);
-    return mix(mix(mobile_composition(q), mobile_composition(q + vec2<i32>(1, 0)), t.x),
-        mix(mobile_composition(q + vec2<i32>(0, 1)), mobile_composition(q + vec2<i32>(1)), t.x), t.y);
+    let c = mix(mix(composition(q), composition(q + vec2<i32>(1, 0)), t.x),
+        mix(composition(q + vec2<i32>(0, 1)), composition(q + vec2<i32>(1)), t.x), t.y);
+    return c.z / max(1.e-6, c.y + c.z);
 }
-// Display composition at p (cell coordinates, cell centres at integers).
-fn display_composition(p: vec2<f32>) -> vec4<f32> {
+// The floor-connected bed at p (cell coordinates, cell centres at integers):
+// how much of the pixel lies under its surface, and the coarse share of the
+// sand laid down there.
+struct Bed { inside: f32, share: f32 }
+fn bed_at(p: vec2<f32>) -> Bed {
     let x0 = clamp(i32(floor(p.x)), 0, i32(cfg.size.x) - 1);
     let x1 = min(x0 + 1, i32(cfg.size.x) - 1);
     let w = clamp(p.x - f32(x0), 0., 1.);
@@ -82,10 +77,10 @@ fn display_composition(p: vec2<f32>) -> vec4<f32> {
     let surface = mix(terrain[u32(x0)].x, terrain[u32(x1)].x, w);
     let pixel = f32(cfg.size.x) / f32(cfg.image_size.x);
     let inside = 1. - smoothstep(-.5 * pixel, .5 * pixel, height - surface);
-    if inside <= 0. { return sample_mobile(p); }
+    if inside <= 0. { return Bed(0., 0.); }
     let in0 = height < strata[strata_base(u32(x0))].x;
     let in1 = height < strata[strata_base(u32(x1))].x;
-    if !in0 && !in1 { return sample_composition(p); }
+    if !in0 && !in1 { return Bed(inside, cell_share(p)); }
     // The layer through this point is the past surface, interpolated between
     // the two columns, that passes through it: the time T at which
     // mix(H0(T), H1(T), w) = height. It lies between the times at which each
@@ -101,9 +96,7 @@ fn display_composition(p: vec2<f32>) -> vec4<f32> {
     // Its slices' shares are interpolated between the columns instead.
     let k = min(u32(height * f32(STRATA_RES)), cfg.size.y * STRATA_RES - 1u);
     if in0 && in1 && record(a, k).y == record(b, k).y {
-        let share = mix(slice_at(a, height).x, slice_at(b, height).x, w);
-        let bed = vec4<f32>(1. - BED_PACKING, BED_PACKING * (1. - share), BED_PACKING * share, 0.);
-        return mix(sample_mobile(p), bed, inside);
+        return Bed(inside, mix(slice_at(a, height).x, slice_at(b, height).x, w));
     }
     let now = strata[strata_base(a)].y;
     let t0 = select(now, slice_at(a, height).y, in0);
@@ -127,7 +120,5 @@ fn display_composition(p: vec2<f32>) -> vec4<f32> {
         if n0 <= next { k0 += 1u; }
         if n1 <= next { k1 += 1u; }
     }
-    let share = mix(surface_at(a, k0, time).y, surface_at(b, k1, time).y, w);
-    let bed = vec4<f32>(1. - BED_PACKING, BED_PACKING * (1. - share), BED_PACKING * share, 0.);
-    return mix(sample_mobile(p), bed, inside);
+    return Bed(inside, mix(surface_at(a, k0, time).y, surface_at(b, k1, time).y, w));
 }

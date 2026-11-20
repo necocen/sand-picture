@@ -7,6 +7,11 @@ fn rectangle(p: vec2<f32>, half_size: vec2<f32>, softness: f32) -> f32 {
     let edge = smoothstep(half_size - softness, half_size + softness, abs(p));
     return (1. - edge.x) * (1. - edge.y);
 }
+// How far behind the tank the backing stands (m). A meniscus turns a ray by
+// tens of degrees: with the dark card this far back, a ray turned by thirty
+// degrees or more passes its edge and sees the bright surround, and a
+// bubble's rim, half a gap wide, shows as a line as wide.
+const BACKING_DISTANCE: f32 = .3;
 fn backing(q: vec2<f32>) -> vec3<f32> {
     // Grazing rays see the bright diffuser around the finite dark backing.
     // The bubble centres still transmit the same quiet background as the
@@ -20,7 +25,7 @@ fn backdrop(p: vec2<f32>) -> vec3<f32> {
 fn environment(p: vec2<f32>, ray: vec3<f32>) -> vec3<f32> {
     let q = world_position(p);
     if ray.z < -.001 {
-        return backing(q + ray.xy * (.08 / -ray.z));
+        return backing(q + ray.xy * (BACKING_DISTANCE / -ray.z));
     }
     var light = mix(vec3<f32>(.018, .025, .032), vec3<f32>(.13, .16, .19), .5 + .5 * ray.y);
     if ray.z > .001 {

@@ -190,12 +190,7 @@ mod tests {
         wgsl::assert_valid("simple", &simple_source());
         wgsl::assert_valid("flow", &flow_source());
         wgsl::assert_valid("photoreal", &photoreal::source());
-        for (name, source) in [
-            ("distance field", photoreal::GEOMETRY_WGSL),
-            ("near layers", photoreal::LAYERS_WGSL),
-        ] {
-            wgsl::assert_valid(name, &photoreal::kernel_source(source));
-        }
+        wgsl::assert_valid("sketch", &photoreal::sketch_source());
     }
 
     #[test]

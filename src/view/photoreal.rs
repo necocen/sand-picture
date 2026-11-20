@@ -1,25 +1,27 @@
-//! The Photoreal view: before each picture a compute pass rebuilds the
-//! distance field of the gas outlines where gas is near (geometry.wgsl) and
-//! marks the layers near each cell (layers.wgsl); then the picture is drawn
-//! (photoreal.wgsl).
+//! The Photoreal view: before each picture a compute pass sketches the
+//! state, cell by cell, as what the picture draws there (sketch.wgsl); then
+//! the picture is drawn from the sketch as smooth fields (photoreal.wgsl).
 use super::picture::Picture;
 use super::{CELLS_WGSL, SCENE_WGSL};
-use crate::model::{Buffers, GAS_SLOTS, row_constants};
+use crate::model::{Buffers, row_constants};
 use crate::wgsl;
-use wgpu::util::DeviceExt;
 
-pub const GEOMETRY_WGSL: &str = include_str!("geometry.wgsl");
-pub const LAYERS_WGSL: &str = include_str!("layers.wgsl");
-
-/// The shader of kernels that run before the picture: they address the
+/// The shader of the kernel that sketches the state. It addresses the
 /// model's gas by the model's own constants.
-pub fn kernel_source(kernels: &str) -> String {
-    [&row_constants(), SCENE_WGSL, kernels].concat()
+pub fn sketch_source() -> String {
+    [
+        &row_constants(),
+        SCENE_WGSL,
+        CELLS_WGSL,
+        include_str!("sketch.wgsl"),
+    ]
+    .concat()
 }
 
 /// The picture's shader.
 pub fn source() -> String {
     [
+        &row_constants(),
         SCENE_WGSL,
         include_str!("optics.wgsl"),
         include_str!("studio.wgsl"),
@@ -30,164 +32,81 @@ pub fn source() -> String {
     .concat()
 }
 
+/// The bytes of a cell's sketch (four vec4, sketch.wgsl).
+const SKETCH_BYTES: u64 = 64;
+
+/// A whole buffer at a binding.
+fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.as_entire_binding(),
+    }
+}
+
 pub struct Photoreal {
-    /// The kernels before the picture, in their order, each with the layers
-    /// it is dispatched over: the identities each cell shows, those shown
-    /// within four cells of it, the distance field, the layers a cell's
-    /// outline samples.
-    kernels: [(wgpu::ComputePipeline, wgpu::BindGroup, u32); 4],
+    /// The kernels that sketch the state, in their order: a cell's own part,
+    /// then what it takes from the cells around it. Each with its bindings.
+    sketch: [(wgpu::ComputePipeline, wgpu::BindGroup); 2],
+    /// The kernels' groups across and up the grid.
     groups: [u32; 2],
     picture: Picture,
 }
 impl Photoreal {
     pub fn new(device: &wgpu::Device, config: &wgpu::Buffer, buffers: &Buffers) -> Self {
         let (nx, ny) = (buffers.nx, buffers.ny);
-        let distances = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("distance field of the gas outlines"),
-                size: wgpu::Extent3d {
-                    width: nx,
-                    height: ny,
-                    depth_or_array_layers: GAS_SLOTS as u32,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
-        let module = |label, source: &str| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(wgsl::compiled(kernel_source(source)).into()),
-            })
-        };
-        let geometry = module("distance field", GEOMETRY_WGSL);
-        let near_layers = module("gas layers near each cell", LAYERS_WGSL);
-        let words = |label, word: u32| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: &word.to_le_bytes().repeat((nx * ny) as usize),
-                usage: wgpu::BufferUsages::STORAGE,
-            })
-        };
-        let shown = words("gas identities each cell shows", 0);
-        // Every identity counts as near at a picture before the first: the
-        // first picture writes the whole field.
-        let near = words("gas identities shown near each cell", (1 << GAS_SLOTS) - 1);
-        let layers = words("gas layers near each cell", 0);
-        let kernel = |module, entry, depth, entries: &[(u32, wgpu::BindingResource<'_>)]| {
+        let cells = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("the picture's sketch of the state"),
+            size: u64::from(nx * ny) * SKETCH_BYTES,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("sketch"),
+            source: wgpu::ShaderSource::Wgsl(wgsl::compiled(sketch_source()).into()),
+        });
+        let kernel = |name, entries: &[wgpu::BindGroupEntry<'_>]| {
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
+                label: Some(name),
                 layout: None,
-                module,
-                entry_point: Some(entry),
+                module: &module,
+                entry_point: Some(name),
                 compilation_options: Default::default(),
                 cache: None,
             });
             let bindings = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(entry),
+                label: Some(name),
                 layout: &pipeline.get_bind_group_layout(0),
-                entries: &entries
-                    .iter()
-                    .map(|(binding, resource)| wgpu::BindGroupEntry {
-                        binding: *binding,
-                        resource: resource.clone(),
-                    })
-                    .collect::<Vec<_>>(),
+                entries,
             });
-            (pipeline, bindings, depth)
+            (pipeline, bindings)
         };
-        let field = || wgpu::BindingResource::TextureView(&distances);
-        let kernels = [
+        let sketch = [
             kernel(
-                &geometry,
-                "mark_shown",
-                1,
+                "sketch_cells",
                 &[
-                    (0, config.as_entire_binding()),
-                    (2, buffers.geometry.as_entire_binding()),
-                    (4, shown.as_entire_binding()),
-                    (5, near.as_entire_binding()),
+                    entry(0, config),
+                    entry(1, &buffers.cells),
+                    entry(2, &buffers.geometry),
+                    entry(3, &cells),
+                    entry(5, &buffers.terrain),
                 ],
             ),
-            kernel(
-                &geometry,
-                "mark_near",
-                1,
-                &[
-                    (0, config.as_entire_binding()),
-                    (4, shown.as_entire_binding()),
-                    (5, near.as_entire_binding()),
-                ],
-            ),
-            kernel(
-                &geometry,
-                "prepare_geometry",
-                GAS_SLOTS as u32,
-                &[
-                    (0, config.as_entire_binding()),
-                    (2, buffers.geometry.as_entire_binding()),
-                    (3, field()),
-                    (5, near.as_entire_binding()),
-                ],
-            ),
-            kernel(
-                &near_layers,
-                "mark_layers",
-                1,
-                &[
-                    (0, config.as_entire_binding()),
-                    (1, field()),
-                    (2, layers.as_entire_binding()),
-                ],
-            ),
+            kernel("sketch_bodies", &[entry(0, config), entry(3, &cells)]),
         ];
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("distance interpolation"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         let picture = Picture::new(
             device,
             "photoreal",
             source(),
             &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: config.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buffers.cells.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: field(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: buffers.strata.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: buffers.terrain.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: layers.as_entire_binding(),
-                },
+                entry(0, config),
+                entry(1, &buffers.cells),
+                entry(2, &cells),
+                entry(4, &buffers.strata),
+                entry(5, &buffers.terrain),
             ],
         );
         Self {
-            kernels,
+            sketch,
             groups: [nx.div_ceil(8), ny.div_ceil(8)],
             picture,
         }
@@ -196,13 +115,13 @@ impl Photoreal {
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, image: &wgpu::TextureView) {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("distance field and near layers"),
+                label: Some("sketch"),
                 timestamp_writes: None,
             });
-            for (pipeline, bindings, depth) in &self.kernels {
+            for (pipeline, bindings) in &self.sketch {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bindings, &[]);
-                pass.dispatch_workgroups(self.groups[0], self.groups[1], *depth);
+                pass.dispatch_workgroups(self.groups[0], self.groups[1], 1);
             }
         }
         self.picture.encode(encoder, image);

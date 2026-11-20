@@ -11,15 +11,3 @@ fn composition(p: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(c.volume.water + c.bed.w, c.volume.fine + c.bed.x,
         c.volume.coarse + c.bed.y, c.volume.gas);
 }
-// The share of a cell's white grains, free and in the deposit, that shows as
-// the white's powder: its free powder, dispersed as single grains. Powder
-// bound to its grit, in the free grains or in the deposit, lies in the
-// grit's aggregates and scatters with them as white grains of the grit's
-// size: it adds no cross-section of its own and does not veil the black
-// grains.
-fn powder_share(p: vec2<i32>) -> f32 {
-    let c = cells[cell_index(p)];
-    let white = max(c.volume.fine, 0.) + max(c.bed.x, 0.);
-    if white <= 0. { return 0.; }
-    return clamp(max(c.powder.free, 0.) / white, 0., 1.);
-}
