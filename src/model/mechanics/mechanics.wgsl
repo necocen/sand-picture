@@ -161,6 +161,11 @@ const VOID_SPREAD:f32=.26*PLATE_GAP;
 // The plates cannot hold a layer whose support flows away. A layer on a
 // bubble's inside is held by the bubble, whatever a joint beside it drains;
 // a throat only shares the bubbles' rims and does undermine the body above.
+// A link of the plug descent follows its voids in the measure of its supply
+// (SET_IN_ROW, the last walk's): the walk brings its sand down by that share
+// of what is asked of it, and a layer that slid faster would be stretched
+// with nothing to fill it, lose its dilatancy suction (friction_limit) and
+// loosen. Sand that is no link stands on nothing packed: the carry moves it.
 fn void_speed(i:u32)->f32{
     let p=point(i);if p.y==0{return 0.;}
     let own=grains(cells[i]);let solid=own.x+own.y;if solid<=0.{return 0.;}
@@ -171,7 +176,9 @@ fn void_speed(i:u32)->f32{
         let down=max(-grain_speed(c).y,0.)*min((g.x+g.y)/solid,1.);
         speed+=select(k,1.-2.*k,dx==0)*down;
     }
-    return speed;
+    let set_in=geometry[SET_IN_ROW*cfg.n+i];
+    if set_in.z>0.{return speed*set_in.y;}
+    return 0.;
 }
 fn traction(i:u32)->Traction{
     let c=cells[i];let state=geometry[HOLD_ROW*cfg.n+i];

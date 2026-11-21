@@ -206,10 +206,13 @@ fn breaching_speed(i:u32)->f32{
     return breaching_rate(g,white_powder(c),min(solid/wet,CLOSE_PACKING));
 }
 // The pore pressure deficit (Pa) of cell i's skeleton dilating at the rate
-// `theta` (1/s): it draws water in through its own pores, and over the
-// cell's half thickness on each side the inflow theta h/2 needs the head
-// gradient theta h/(2K), a deficit rho g theta h^2/(4K), with K the volume
-// mean of the species' Kozeny-Carman conductivities at the cell's packing.
+// `theta` (1/s): it draws water in through its own pores. A cell of a sealed
+// body has water on one side: the inflow theta h enters through that face
+// under the head gradient theta h/K and crosses the cell, a deficit
+// rho g theta h^2/K, with K the volume mean of the species' Kozeny-Carman
+// conductivities at the cell's packing. This is the breaching law's own
+// picture (the water enters through the face that sheds), so a layer
+// dilates in place no faster than its face would breach.
 // The deficit is effective stress: it holds the skeleton (friction, yield)
 // and pushes nothing, and it keeps a dense face from unravelling at the
 // settling speed. Below FREEZING_PACKING no grain is caged: no suction.
@@ -223,5 +226,5 @@ fn dilatancy_suction(i:u32,theta:f32)->f32{
         conductivity+=weight*packing_speeds(white_powder(c))[phase]*(1./delta)*pow(1.-min(phi,CLOSE_PACKING),3.)/(10.*phi*phi);
     }
     // rho_w g / K is mu / k whatever the gravity: both at the standard one.
-    return RHO.x*STANDARD_GRAVITY*theta*cfg.h*cfg.h/(4.*max(conductivity,1e-9));
+    return RHO.x*STANDARD_GRAVITY*theta*cfg.h*cfg.h/max(conductivity,1e-9);
 }

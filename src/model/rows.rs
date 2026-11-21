@@ -36,6 +36,10 @@ pub const GEOMETRY: &[Use] = &[
     // update before left.
     ("BED_OCCUPANCY", 1),
     ("BED_PASSAGE", 2),
+    // The plug descent's set-in (plug.wgsl): how far the sand of a cell has
+    // given way to a draw from below (1 when it flows with it), and from the
+    // last walk the cell's supply and whether it was a link.
+    ("SET_IN", 1),
 ];
 
 pub const SCRATCH: &[Use] = &[
