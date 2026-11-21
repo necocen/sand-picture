@@ -53,30 +53,20 @@ fn plug_flows(i:u32)->bool{
     let c=cells[i];let g=grains(c);let solid=g.x+g.y;
     return solid<=DILATED_PACKING*(max(c.volume.water,0.)+solid)||geometry[SET_IN_ROW*cfg.n+i].x>=1.;
 }
-// The grains (cells an update) that the dilation of a packed link frees: its
-// packing falls to the critical one at Van Rhee's rate for a roof (the
-// breaching of a face that looks down), which frees its margin over that
-// packing as the front crosses the cell. At the critical packing or looser
-// the link gives what it holds.
-fn plug_yield(c:Cell)->f32{
-    let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
-    if solid<=0.||wet<=0.{return 0.;}
-    if solid<=DILATED_PACKING*wet{return solid;}
-    let phi=min(solid/wet,CLOSE_PACKING);
-    let rate=breaching_rate(g,white_powder(c),phi)*inclination_factor(-1.,grain_friction(g))*max(phi-CRITICAL_PACKING,.01);
-    return rate*wet*cfg.dt/cfg.h;
-}
-// A packed link that is drawn on for `want` gives way a little more: the
-// front that dilates it crosses the cell at Van Rhee's rate for a roof, and
-// no faster than the draw takes up what the dilation frees (plug_yield). A
-// column H high so follows a steady draw after H over that rate, and a draw
-// that moves on before then leaves the column standing as it was.
+// A packed link that is drawn on for `want` gives way a little more. The
+// front that dilates it to the critical packing crosses its cell at Van
+// Rhee's rate for a roof (the breaching of a face that looks down: water
+// enters no faster), and no faster than the draw takes up the grains that
+// the dilation frees, the cell's margin over the critical packing (with the
+// breaching law's floor). A column H high so follows a steady draw after H
+// over that rate, and a draw that moves on before then leaves the column
+// standing as it was.
 fn plug_set_in(i:u32,c:Cell,want:f32){
-    let g=grains(c);let solid=g.x+g.y;let water=max(c.volume.water,0.);
-    let phi=min(solid/(water+solid),CLOSE_PACKING);
-    let rate=breaching_rate(g,white_powder(c),phi)*inclination_factor(-1.,grain_friction(g));
-    let measure=min(want/max(plug_yield(c),1e-12),1.);
-    geometry[SET_IN_ROW*cfg.n+i].x=min(geometry[SET_IN_ROW*cfg.n+i].x+measure*rate*cfg.dt/cfg.h,1.);
+    let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
+    let phi=min(solid/wet,CLOSE_PACKING);
+    let front=breaching_rate(g,white_powder(c),phi)*inclination_factor(-1.,grain_friction(g))*cfg.dt/cfg.h;
+    let freed=max(phi-CRITICAL_PACKING,.01)*wet;
+    geometry[SET_IN_ROW*cfg.n+i].x=min(geometry[SET_IN_ROW*cfg.n+i].x+min(want/freed,front),1.);
 }
 // scratch[PLUG_ROW n + i] = (fine, coarse, link, wet) before the carry:
 // the cell's free grains, whether it is a link, and its wet part. Clears
@@ -207,6 +197,7 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
     let nx=i32(cfg.nx);let c=cells[i];var out=PlugStep();
     if plug_deposit(c){return out;}
     let g=grains(c);let solid=g.x+g.y;let water=max(c.volume.water,0.);var given=0.;var want=0.;
+    let flows=plug_flows(i);
     if y>0&&solid>0.{
         var want_left=0.;var want_right=0.;
         if x>0{want_left=k*asked.x;}
@@ -219,7 +210,7 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
         // spread is a velocity (u = -K dv/dx, zero where the columns descend
         // alike), not an exchange of grains. (A neighbour that has not given
         // way has no supply and nets nothing.)
-        let flows=plug_flows(i);let supply=geometry[SET_IN_ROW*cfg.n+i].y;
+        let supply=geometry[SET_IN_ROW*cfg.n+i].y;
         if flows&&supply>0.{
             if x>0{
                 let j=at(vec2<i32>(x-1,y));
@@ -273,7 +264,7 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
         // not given way takes the draw on itself, and only one that nothing
         // draws on asks for what it lacks.
         if linked{
-            if plug_flows(i){ask=max(want+restore-solid,0.);}
+            if flows{ask=max(want+restore-solid,0.);}
             else if want>0.{ask=0.;}
             else{ask=max(restore-solid,0.);}
         }
