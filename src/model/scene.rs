@@ -161,16 +161,19 @@ fn stored_scene() -> Vec<[f32; 3]> {
 /// fraction.
 ///
 /// The air is the bubbles the last drainage left under the frame's top: about
-/// eighty of 3 to 30 mm2 in a band 7 mm deep, 798 mm2 in all, the area of 23
-/// round bubbles of 3.33 mm radius. The turn puts them on the floor under the
-/// water, and they rise to the slab's underside spread over its width as the
-/// raft's bubbles: the model decides how many there are, how large and where
-/// (labels.wgsl). The amount of air is the input, as the maker's instructions
-/// put it: more air drains slower. Pressed into the slab's underside the air
-/// is a puddle two capillary lengths thick, 2 sqrt(sigma / (rho g)) =
-/// 3.4-3.8 mm, so a row of bubbles closes the tank's width near 1010 mm2 of
-/// air; held bubbles creep only up their support, so a raft of less air keeps
-/// the gaps it formed with, its joints. The air starts as these bubbles, not
+/// a hundred of 1 to 20 mm2, 650 mm2 in all. The turn puts them on the floor
+/// under the water, and they rise to the slab's underside spread over its
+/// width as the raft's bubbles: the model decides how many there are, how
+/// large and where (labels.wgsl). The amount of air is the input, as the
+/// maker's instructions put it: more air drains slower. Pressed into the
+/// slab's underside the air is a puddle two capillary lengths thick,
+/// 2 sqrt(sigma / (rho g)) = 3.4-3.8 mm, so a row of bubbles closes the
+/// tank's width near 1010 mm2 of air; held bubbles creep only up their
+/// support, so a raft of less air keeps the gaps it formed with, its joints.
+/// The sand leaves through those joints once the hanging mounds are eaten
+/// level (plug.wgsl), so the amount sets a life's length: with a fifth more
+/// the raft closes most of them and the picture all but stops, with less the
+/// life shortens steadily. The air starts as these bubbles, not
 /// as one layer: a layer reaches the underside within a second as a few large
 /// bubbles that gather in its recesses and leave the hanging mounds bare, and
 /// a bare underside sheds as a curtain.
@@ -230,7 +233,7 @@ mod tests {
     #[test]
     fn the_stored_bubbles_keep_their_gas() {
         let stored: f64 = stored_air().iter().flatten().map(|&v| f64::from(v)).sum();
-        assert!(stored > 600., "{stored} cells of air");
+        assert!(stored > 500., "{stored} cells of air");
         let scene = Scene::product();
         let mut total = 0_f64;
         for (c, layers) in scene.cells.iter().zip(&scene.gas_layers) {
