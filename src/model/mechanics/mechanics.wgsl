@@ -97,9 +97,12 @@ const LATERAL_STRESS_RATIO:f32=.455;
 // Janssen's rho' phi g b/(2 mu K) as the friction above carries the rest
 // (51 Pa at BED_PACKING, half the sand's volume being black). It is there
 // whether or not a bubble presses from below: the law's contact pressure is
-// the raft's push and goes when the bubble leaves.
+// the raft's push and goes when the bubble leaves. A body's last layer is
+// held as its body is: it is the same packing over a part of its cell
+// (dense_volume), and without the plates' hold a layer hanging under its
+// body would fall as loose sand as soon as its face had breached a little.
 fn overburden_stress(i:u32)->f32{
-    let p=point(i);let c=cells[i];let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
+    let p=point(i);let c=cells[i];let g=grains(c);let solid=g.x+g.y;let wet=dense_volume(i);
     if wet<=0.||solid<CRITICAL_PACKING*wet{return 0.;}
     let saturation=dot(g,RHO.yz-vec2<f32>(RHO.x))*cfg.gravity*PLATE_GAP/(2.*KINETIC_FRICTION*LATERAL_STRESS_RATIO);
     var weight=0.;
