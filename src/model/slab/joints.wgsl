@@ -274,6 +274,23 @@ fn slot_span(p:vec2<i32>)->f32{
 // least the jamming width across, in the cell or straddling it and an open
 // neighbour (slot_span). A narrower cell is the bubbles' film or foam.
 fn open_passage(p:vec2<i32>)->bool{return slot_span(p)*cfg.h>=JAMMING_WIDTH*GRAIN_DIAMETER.y;}
+// The most grains (cells per substep) that go down through the horizontal
+// face `f` into a slot between bubbles: unbounded (1e9) for any other face.
+// The slot is sealed by the raft on both sides, so the grains that go down
+// change places with the water that comes up through the same few
+// millimetres, a counterflow the plates leave no room to sort side by side:
+// they cross at Kynch's batch flux between the packings above and below
+// (godunov_flux), a suspension at its peak and sand in contact at a third
+// of it. What a hollow sheds beyond that stays in it and buries its faces.
+fn slot_supply(f:u32,interval:f32)->f32{
+    if f%2u!=1u{return 1e9;}
+    let i=f/2u;let q=point(i)+axis(1u);if !valid(q)||!between_bubbles(point(i)){return 1e9;}
+    let above=cells[at(q)];let g=grains(above);let solid=g.x+g.y;let wet=max(above.volume.water,0.)+solid;
+    if solid<=0.||wet<=0.{return 1e9;}
+    let below=cells[i];let gb=grains(below);let wb=max(below.volume.water,0.)+gb.x+gb.y;
+    let packing=min(solid/wet,CLOSE_PACKING);var under=0.;if wb>0.{under=min((gb.x+gb.y)/wb,CLOSE_PACKING);}
+    return godunov_flux(g,white_powder(above),packing,under)*faces[f].coarse_momentum.z*interval;
+}
 // The grains (cells per substep, downward) that cross the horizontal face
 // `f` of a joint's chain, or -1 where `f` is no such face. The sand crosses
 // the chain's faces at this allowance and at no other rate, nothing where
