@@ -463,10 +463,14 @@ fn label_area(i:u32,l:u32)->f32{
     return f32(atomicLoad(&labels[label_field(k,2u)]))/LABEL_AREA_UNIT;
 }
 
-// Open water: no deposit and less than a grain layer of gas and of sand.
+// Open water: no deposit, less than a grain layer of gas, and grains that
+// do not touch. What holds a bubble is a packing in contact (label_supported);
+// a suspension presses on nothing, and a bubble displaces it as it does
+// water: where the sand over a bubble's end is gouged away, the end rises
+// into the hollow through the grains that are still falling.
 fn label_open(c:Cell)->bool{
     if max(c.bed.x,0.)+max(c.bed.y,0.)>0.||c.volume.gas*cfg.h>=GRAIN_LAYER{return false;}
-    let g=grains(c);return (g.x+g.y)*cfg.h<GRAIN_LAYER;
+    return !pores_only(c);
 }
 // Whether cell i's gas of slot l has come out from under what holds its
 // bubble: above the bubble's gas in this column lies open water, at least a
