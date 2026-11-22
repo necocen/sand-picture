@@ -44,8 +44,7 @@ fn main() {
         // defaults: eight submissions, a frame presented as soon as it is
         // drawn). A GPU whose queue runs empty between updates is clocked
         // lower and the picture runs slower; and frames held to one in
-        // flight wait behind the whole queue (docs/design.md, the window's
-        // speed).
+        // flight wait behind the whole queue.
         simulation_policy: SimulationPolicy::fixed(Duration::from_secs_f64(f64::from(DT))),
         ..RunConfig::with_defaults(())
     };

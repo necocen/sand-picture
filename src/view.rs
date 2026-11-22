@@ -15,9 +15,7 @@ use wgpu::util::DeviceExt;
 /// It is also the coarsest picture a window gets. Photoreal integrates a
 /// bubble's rim over a pixel as if the outline were straight across it,
 /// which holds for a pixel of about a fifth of the plates' gap, as here; at
-/// half this size the bubbles of the raft come out grey. And a coarser
-/// picture would save little: most of a picture's cost is the distance
-/// field, which does not depend on its size.
+/// half this size the bubbles of the raft come out grey.
 pub const REFERENCE_SIZE: [u32; 2] = [1440, 960];
 /// The format of the image the views draw into.
 pub const IMAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;

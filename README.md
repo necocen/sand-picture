@@ -5,10 +5,10 @@ a thin tank. Turned over, the sand rests on a raft of bubbles, drains through
 its gaps as thin streams for about a quarter of an hour, and builds a striped
 landscape below.
 
-The model's rules and their reasons are in the comments of its kernels
-(`src/model`). [docs/design.md](docs/design.md) (in Japanese) holds the
-program's design, a map of the model, what is open in it and what was tried
-and rejected.
+[docs/design.md](docs/design.md) (in Japanese) tells how the picture is
+modelled and computed, what is approximated and what is a convention of the
+drawing. The rules themselves, with their reasons and sources, are in the
+comments of the kernels (`src/model`, `src/view`).
 
 The window runs the product's scene: a deposit the model laid itself rests
 and is turned over as the app starts.

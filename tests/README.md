@@ -69,17 +69,3 @@ The baseline holds for one environment: the hashes here were recorded on an
 Apple M1 Max with macOS 27.2.1, Rust 1.95.0 and wgpu and naga 30.0.1. Before any
 of these is raised, record a candidate in the new environment first, with the
 code unchanged.
-
-The first baseline (2026-11-19) was the output of the implementation this
-program was rewritten from: the 60 entries the two baselines shared (eight
-buffers, Photoreal and Simple at the six times) were equal. Every baseline
-since was recorded after a change that was meant to change it, and the
-entries the change should leave alone were checked to be as before
-(`docs/design.md` tells what each change is): the `geometry` buffer keeping
-only the rows that last between updates, and the new looks of Photoreal and
-Flow (2026-11-20); a turn without a shake before it, which changed every
-entry from the first turn on (2026-11-20); packed sand that gives way before
-it descends, with a scene of its own, which changed every entry (2026-11-22).
-The second turn's checkpoint, `turned 750`, is the update that mirrors the
-grid with the sand up: there the rule that frees the white's powder is at
-work.
