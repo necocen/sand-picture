@@ -72,17 +72,18 @@ fn corner_slots(c:u32)->u32 {
     return slots;
 }
 // The tension's tensor at the vertex of the four cells c, which hold gas in
-// the slots `present`. The identities add in the order of their first
+// the slots `present`; `inside` is 0 for a cell beyond the tank's wall, which
+// counts as water. The identities add in the order of their first
 // appearance over the four cells (raster order, slots ascending): the order
 // is part of the sum's bits.
-fn vertex_tensor(c:vec4<u32>,present:vec4<u32>)->vec3<f32> {
+fn vertex_tensor(c:vec4<u32>,present:vec4<u32>,inside:vec4<f32>)->vec3<f32> {
     var value=vec3<f32>(0.);var seen=0u;
     /*loop: slower written out*/for(var corner=0u;corner<4u;corner++){
         var fresh=present[corner]&~seen;seen|=present[corner];
         loop{
             if fresh==0u{break;}
             let l=countTrailingZeros(fresh);fresh&=fresh-1u;
-            let q=vec4<f32>(corner_gas(c.x,l),corner_gas(c.y,l),corner_gas(c.z,l),corner_gas(c.w,l));
+            let q=inside*vec4<f32>(corner_gas(c.x,l),corner_gas(c.y,l),corner_gas(c.z,l),corner_gas(c.w,l));
             // Opposite cells' differences are paired before the mean: an
             // axis-aligned plane keeps an exactly zero tangential gradient.
             let g=.5*vec2<f32>((q.y-q.x)+(q.w-q.z),(q.z-q.x)+(q.w-q.y));
@@ -93,13 +94,26 @@ fn vertex_tensor(c:vec4<u32>,present:vec4<u32>)->vec3<f32> {
 }
 @compute @workgroup_size(POINT_THREADS) fn interface_tensor(@builtin(global_invocation_id) id:vec3<u32>) {
     let i=id.x;if i>=cfg.nx*cfg.ny{return;}let p=vec2<i32>(i32(i%cfg.nx),i32(i/cfg.nx));var value=vec3<f32>(0.);
-    let c=vec4<u32>(at(p+vec2<i32>(-1,-1),cfg.fx),at(p+vec2<i32>(0,-1),cfg.fx),
-        at(p+vec2<i32>(-1,0),cfg.fx),at(p+vec2<i32>(0,0),cfg.fx));
+    // The vertex's four cells. The soap solution wets the frame: a film of
+    // water lies between a bubble and a wall, and no line of contact holds
+    // the bubble's surface there. So on the tank's rim the cells beyond the
+    // wall count as water, which closes the surface of a bubble at a wall
+    // along the wall. With the tensor at interior vertices only, the surface
+    // would end on the wall at a right angle, held at its two ends by the
+    // tension 2 sigma: enough to keep a bubble of less than
+    // 2 sigma / (rho g), 7 mm2, on the floor against its buoyancy.
+    let last=vec2<i32>(i32(cfg.fx)-1,i32(cfg.fy)-1);
+    let low=clamp(p-vec2<i32>(1),vec2<i32>(0),last);let high=clamp(p,vec2<i32>(0),last);
+    let c=vec4<u32>(at(low,cfg.fx),at(vec2<i32>(high.x,low.y),cfg.fx),
+        at(vec2<i32>(low.x,high.y),cfg.fx),at(high,cfg.fx));
+    let left=p.x>0;let right=p.x<=last.x;let down=p.y>0;let up=p.y<=last.y;
+    let inside=vec4<f32>(select(0.,1.,left&&down),select(0.,1.,right&&down),select(0.,1.,left&&up),select(0.,1.,right&&up));
     var present=vec4<u32>(0u);
-    if !outside_boundary(p){
-        present=vec4<u32>(corner_slots(c.x),corner_slots(c.y),corner_slots(c.z),corner_slots(c.w));
-        value=vertex_tensor(c,present);
-    }
+    if inside.x>0.{present.x=corner_slots(c.x);}
+    if inside.y>0.{present.y=corner_slots(c.y);}
+    if inside.z>0.{present.z=corner_slots(c.z);}
+    if inside.w>0.{present.w=corner_slots(c.w);}
+    value=vertex_tensor(c,present,inside);
     // Inside a bubble an isotropic term penalises the velocity gradient: the
     // viscosity GAS_VISCOSITY acting implicitly, weighted by the least gas
     // fraction of the vertex's four cells and not only where all four are

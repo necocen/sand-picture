@@ -32,6 +32,15 @@ fn gradient_basis(p:vec2<i32>,d:vec2<i32>)->vec4<f32>{
     let yx=segment_basis(p,q,0u)-segment_basis(p-x,q,0u);
     let yy=.25*(segment_basis(p+y,q,0u)+segment_basis(p+y-x,q,0u)
         -segment_basis(p-y,q,0u)-segment_basis(p-y-x,q,0u));
+    // On the tank's rim psi continues oddly across the wall (a free-slip
+    // wall): the flux along the wall is even across it and the flux through
+    // it odd. The faces beyond the wall, which the sums above leave out,
+    // then repeat the inside ones in the two stretchings and cancel them in
+    // the two shears.
+    var mirrors=1.;
+    if p.x==0||p.x+1==i32(cfg.nx){mirrors*=2.;}
+    if p.y==0||p.y+1==i32(cfg.ny){mirrors*=2.;}
+    if mirrors>1.{return vec4<f32>(mirrors*xx,0.,0.,mirrors*yy);}
     return vec4<f32>(xx,xy,yx,yy);
 }
 fn gradient_index(p:vec2<i32>,d:vec2<i32>)->u32{
