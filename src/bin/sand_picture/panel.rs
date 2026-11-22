@@ -1,4 +1,5 @@
-//! The control panel: one egui window at an edge of the picture, which hides.
+//! The control panel: one egui window at an edge of the picture, which hides
+//! and comes back at a click on the picture.
 use mikage::egui;
 use sand_picture::view::Mode;
 
@@ -92,7 +93,12 @@ impl Panel {
         readout: &Readout,
     ) -> Option<Command> {
         if !self.visible {
-            return None;
+            // A click or a tap on the picture brings the hidden panel back:
+            // a phone has no key to ask for it.
+            if !root.ctx().input(|input| input.pointer.primary_clicked()) {
+                return None;
+            }
+            self.visible = true;
         }
         let (anchor, offset, other) = match self.side {
             Side::Top => (egui::Align2::CENTER_TOP, [0.0, 8.0], "To bottom"),
@@ -166,7 +172,7 @@ impl Panel {
                     }
                     if ui
                         .button("Hide")
-                        .on_hover_text("Hide the panel; H shows it again")
+                        .on_hover_text("Hide the panel; a click on the picture or H shows it again")
                         .clicked()
                     {
                         self.visible = false;

@@ -25,8 +25,9 @@ names the tasks (`mise run verify`, `mise run web`).
 
 Keys: **F** turns the picture over (tipped front to back in 2 s), **S** shakes
 it left and right for 3 s, **Space** stops and runs its time, **R** resets it, **V** cycles the
-views (Simple, Photoreal, Flow), **H** hides or shows the control panel, **P**
-moves the panel between the window's top and bottom. The panel has the same
+views (Simple, Photoreal, Flow), **H** hides or shows the control panel (a
+click or a tap on the picture also shows a hidden panel), **P** moves the
+panel between the window's top and bottom. The panel has the same
 controls, the picture's own time and its speed (seconds of the picture per
 second: on an M1 Max about 0.5 for the first seconds, 0.35 while the machine is
 cool, under 0.3 once it is warm).

@@ -98,7 +98,8 @@
 
 ## コマンド
 
-- `cargo run --release`：アプリ（F 裏返す / S 揺する / Space 停止 / R リセット / V ビュー / H パネルを隠す・出す / P パネルの上下）。
+- `cargo run --release`：アプリ（F 裏返す / S 揺する / Space 停止 / R リセット / V ビュー / H パネルを隠す・出す / P パネルの上下。
+  隠したパネルは、絵のクリックやタップでも出る）。
 - `SP_AGENT=1 cargo run --release`：操作口（HTTP、127.0.0.1:3939）つき。`GET /status` の `app` に状態（組み立て中か、
   絵の時刻、速さ）、`GET /screenshot` で窓の絵、`POST /command` の `{"op":"app.command","payload":{"action":…}}` で
   `turn`・`shake`・`pause`・`reset`・`view`（`"value":"Flow"` など）・`panel`・`details`（パネルの Details の開閉）。
