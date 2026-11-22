@@ -2,8 +2,14 @@
 // films do not rupture (Karnakov et al. 2022, doi:10.1126/sciadv.abm0590)
 // unless stacked (labels.wgsl): the planes' intercepts and areas, the gas
 // rows and normals, and the entries of the stages that end each update.
-// The MYC normal and threshold-one parallelization are transcribed from
-// Aphros b60ce3da52c19935fa24c778f62f02141eaf7f80; see APHROS_LICENSE.txt.
+//
+// Not this repository's own: the MYC normal (label_normal) and the
+// threshold-one parallelization, with the plane's intercept and area
+// fraction (intercept, rectangle_fraction), are transcribed from Aphros,
+// https://github.com/cselab/aphros at commit
+// b60ce3da52c19935fa24c778f62f02141eaf7f80, Copyright (c) 2021 ETH Zurich,
+// under the MIT licence. Its notice, ../APHROS_LICENSE.txt, goes wherever
+// these routines go.
 
 // The intercept at which n . x <= alpha covers `fraction` of the unit cell.
 fn intercept(n:vec2<f32>,fraction:f32)->f32 {

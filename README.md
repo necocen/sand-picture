@@ -91,3 +91,13 @@ compare the picture's state and the views' pixels with the hashes in
 | `src/bin/sand_picture.rs`, `src/bin/sand_picture/` | The window: the build with its progress, the updates, keys, the control panel, the kept picture |
 | `index.html`, `Trunk.toml` | The web build |
 | `records/` | Experiment records and their output: git-ignored, never committed |
+
+## Licence
+
+MIT ([LICENSE](LICENSE)).
+
+One part is not this repository's own. `src/model/interface/interface.wgsl` holds routines transcribed from
+[Aphros](https://github.com/cselab/aphros) (Copyright (c) 2021 ETH Zurich, MIT): the interface normals and the
+plane areas, named in the file's head. Their notice is `src/model/APHROS_LICENSE.txt`; it goes wherever those
+routines go. A Web build carries it, with the notices of the crates it links, as `licenses.txt`
+(`tools/notices.py`, run by trunk after a build).

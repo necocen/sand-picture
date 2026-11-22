@@ -1,5 +1,5 @@
-"""The notices of other people's work in the Web build: python3 tools/notices.py > licenses.txt
-The crates linked into the wasm (cargo tree: the normal dependencies for wasm32-unknown-unknown) and the routines of
+"""The licence of the Web build and the notices of other people's work in it: python3 tools/notices.py > licenses.txt
+This repository's own licence first, then the crates linked into the wasm (cargo tree: the normal dependencies for wasm32-unknown-unknown) and the routines of
 Aphros in the interface shader, each licence text once, with the crates that carry it. The licences ask that their
 notices go with every copy, and a public Web build is one. Trunk runs this after a build (Trunk.toml)."""
 import collections, json, pathlib, re, subprocess, sys
@@ -26,7 +26,8 @@ for package in sorted(metadata['packages'], key=lambda p: (p['name'], p['version
         text = file.read_text(errors='replace').replace('\r\n', '\n').strip()
         texts[text].append(label)
 out = sys.stdout
-out.write('Sand Picture: notices of the work of others that this build carries\n\n')
+out.write('Sand Picture\n\n' + (root / 'LICENSE').read_text().strip() + '\n\n')
+out.write('=' * 78 + '\nThe work of others that this build carries, each under its own licence:\n\n')
 out.write('=' * 78 + '\nAphros (ETH Zurich): routines of the interface shader are transcribed from it.\n\n')
 out.write((root / 'src/model/APHROS_LICENSE.txt').read_text().strip() + '\n\n')
 for text, crates in sorted(texts.items(), key=lambda item: (-len(item[1]), item[1][0])):
