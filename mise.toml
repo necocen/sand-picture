@@ -27,3 +27,9 @@ run = "cargo run --release --example check -- --full"
 [tasks.web]
 description = "Web 向けにビルドして http://127.0.0.1:8080 で配る"
 run = "trunk serve"
+
+[tasks.deploy]
+description = "Web 向けにビルドして、Cloudflare Workers（https://suna.necocen.info）に置く。wrangler にログイン済みであること"
+# wrangler の利用統計は送らない。
+env = { WRANGLER_SEND_METRICS = "false" }
+run = ["trunk build", "npx --yes wrangler@4.166.0 deploy"]

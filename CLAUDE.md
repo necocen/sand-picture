@@ -90,4 +90,7 @@
   1 更新の段階と step の数だけを出す。`--time-stages N` を付けると、続けて N 更新を段階ごとの pass に分けて流し、
   段階ごとの GPU の時間（pass の両端の時刻）を出す。速さは、流れの育った保存状態から測る
   （`--load 状態,STEP --steps STEP+500 --time-stages 500`）。
-- `trunk build` / `mise run web`：Web 向けのビルドと、http://127.0.0.1:8080 での配信。
+- `trunk build` / `mise run web`：Web 向けのビルドと、http://127.0.0.1:8080 での配信。ビルドは `dist/licenses.txt`
+  （使っている crate と Aphros の著作権表示。`tools/notices.py`）も作る。
+- `mise run deploy`：Web 向けにビルドして Cloudflare Workers に置く（https://suna.necocen.info 。設定は `wrangler.toml`、
+  配るのは `dist/` の静的ファイルだけ）。外へ出す操作なので、ユーザーに頼まれたときだけ行う。

@@ -2,8 +2,9 @@
 target/
 **/*.rs.bk
 
-# Web 向けのビルドの生成物（trunk build）
+# Web 向けのビルドの生成物（trunk build）と、wrangler の作業フォルダ
 dist/
+.wrangler/
 
 # 実験の記録（走行、計測、検討のメモ）と、その生成物。repo には入れない
 records/

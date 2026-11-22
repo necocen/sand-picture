@@ -8,3 +8,10 @@ cargo_profile = "web"
 addresses = ["127.0.0.1"]
 port = 8080
 open = false
+
+# 配るものには、他の人の仕事の著作権表示を添える（crate のライセンスと、界面のシェーダーの Aphros）。
+# ビルドのたびに作り直して、出力のフォルダへ置く。
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "python3 tools/notices.py > \"$TRUNK_STAGING_DIR/licenses.txt\""]

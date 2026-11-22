@@ -220,6 +220,13 @@ V-cycle の 66：`anchor_predict, anchor_apply`、階層 3 つを下りながら
   中で動く作りはいまと同じ。
 - 段取りの 0 で空のアプリが Chrome で動くこと、2 で模型が動くことを確かめた（結果は「段取り 2 の結果」）。
 - ループの書き下しは Web では入れない（測って、得が無かった）。
+- 公開（2026-11-22、ユーザーの求め）：Cloudflare Workers の静的ファイルとして https://suna.necocen.info に置く
+  （`wrangler.toml`、`mise run deploy`）。Worker のコードは無く、配るのは `dist/` の四つ（index.html、js、wasm、
+  licenses.txt）。workers.dev と版ごとのプレビューの URL は出さない。wasm は 4.4 MB（転送は brotli で 2.0 MB）。
+- 公開するビルドには、他の人の仕事の著作権表示を添える（`dist/licenses.txt`。`tools/notices.py` が trunk のビルドの
+  あとに作る）：wasm に入る crate のライセンス文（MIT、Apache-2.0、Zlib、Unicode-3.0、BSD ほか。egui の既定の
+  フォントの OFL と Ubuntu Font Licence を含む）と、界面のシェーダーに写した Aphros（ETH Zurich、MIT）。パッケージに
+  ライセンス文が入っていない crate（egui、wgpu など）は、宣言されたライセンスと repo の URL を挙げる。
 
 ## 5. 検証
 
