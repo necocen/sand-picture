@@ -5,11 +5,13 @@ use sand_picture::model::Model;
 use sand_picture::view::{IMAGE_FORMAT, Mode, Views};
 use std::path::Path;
 
-/// The GPU as the app asks for it: WebGPU's default limits.
+/// The GPU as the app asks for it: WebGPU's default limits. The tools also
+/// take the GPU's timestamps where it has them (`run --time-stages`).
 pub fn headless() -> GpuContext {
     pollster::block_on(GpuContext::headless(GpuDescriptor {
         requirements: GpuRequirements {
             required_limits: Some(wgpu::Limits::default()),
+            optional_features: wgpu::Features::TIMESTAMP_QUERY,
             ..Default::default()
         },
         ..Default::default()

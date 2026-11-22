@@ -1,6 +1,6 @@
 //! Runs the model without a window and writes its buffers after chosen
 //! updates:
-//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N]`
+//! `cargo run --release --example run -- OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N] [--time-stages N]`
 //!
 //! The run starts from the product's scene at rest, and as in the app the
 //! picture is turned over at once (`--turn 0`); `--turn` names instead the
@@ -19,6 +19,10 @@
 //! every update, as v2.20's window did. `--size WxH` is the pictures' size in
 //! pixels (the regression's 1440x960 unless given), and `--time-pictures N`
 //! draws N Photoreal pictures of the last state and tells what one costs.
+//! `--time-stages N` runs N more updates after the last, each stage in a pass
+//! of its own, and tells what each stage costs by the GPU's timestamps at the
+//! two ends of its pass (an Apple GPU writes none inside a pass); the passes'
+//! own cost, about 10 us each, is in the numbers.
 //! Run outside a sandbox: it needs the GPU.
 //!
 //! Two runs agree bit for bit in the state but for the labels, where they
@@ -28,7 +32,7 @@ mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
-use sand_picture::model::{DT, Model, Scene};
+use sand_picture::model::{DT, Model, Scene, Stage};
 use sand_picture::view::{Mode, REFERENCE_SIZE};
 use std::path::{Path, PathBuf};
 
@@ -73,18 +77,91 @@ fn load(gpu: &GpuContext, model: &Model, folder: &Path) {
     }
 }
 
-/// The update's stages in order, each with its number of steps.
-fn composition(model: &Model) -> String {
-    let mut stages = Vec::new();
-    for step in model.steps() {
+/// The update's stages in order, each with the range of its steps.
+fn stages(model: &Model) -> Vec<(Stage, std::ops::Range<usize>)> {
+    let mut stages: Vec<(Stage, std::ops::Range<usize>)> = Vec::new();
+    for (index, step) in model.steps().iter().enumerate() {
         match stages.last_mut() {
-            Some((stage, count)) if *stage == step.stage => *count += 1,
-            _ => stages.push((step.stage, 1)),
+            Some((stage, range)) if *stage == step.stage => range.end = index + 1,
+            _ => stages.push((step.stage, index..index + 1)),
         }
     }
     stages
+}
+
+/// Runs `count` updates with a pass to each stage and returns each stage's
+/// mean time on the GPU (ms an update), by the timestamps at the two ends of
+/// its pass. The timestamps of a batch of updates are read back together, so
+/// that no readback falls between two updates of a batch.
+fn time_stages(gpu: &GpuContext, model: &mut Model, count: u64) -> Vec<f64> {
+    assert!(
+        gpu.device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY),
+        "this GPU gives no timestamps"
+    );
+    let stages = stages(model);
+    let marks = 2 * stages.len() as u32;
+    let batch = (wgpu::QUERY_SET_MAX_QUERIES / marks).min(32);
+    let set = gpu.device.create_query_set(&wgpu::QuerySetDescriptor {
+        label: Some("stage timestamps"),
+        ty: wgpu::QueryType::Timestamp,
+        count: marks * batch,
+    });
+    let resolved = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("stage timestamps"),
+        size: 8 * u64::from(marks * batch),
+        usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let period = f64::from(gpu.queue.get_timestamp_period());
+    let mut sums = vec![0_f64; stages.len()];
+    let mut done = 0;
+    while done < count {
+        let updates = u64::from(batch).min(count - done) as u32;
+        for update in 0..updates {
+            let mirror = model.advance_motion(&gpu.queue);
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            if mirror {
+                model.invert(&mut encoder.begin_compute_pass(&Default::default()));
+            }
+            for (index, (_, range)) in stages.iter().enumerate() {
+                let first = update * marks + 2 * index as u32;
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                        query_set: &set,
+                        beginning_of_pass_write_index: Some(first),
+                        end_of_pass_write_index: Some(first + 1),
+                    }),
+                });
+                model.encode_steps(&mut pass, range.clone());
+            }
+            gpu.queue.submit([encoder.finish()]);
+        }
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        encoder.resolve_query_set(&set, 0..updates * marks, &resolved, 0);
+        gpu.queue.submit([encoder.finish()]);
+        let ticks: Vec<u64> = read(gpu, &resolved)
+            .chunks_exact(8)
+            .map(|word| u64::from_le_bytes(word.try_into().unwrap()))
+            .collect();
+        for update in 0..updates as usize {
+            for (index, sum) in sums.iter_mut().enumerate() {
+                let first = update * marks as usize + 2 * index;
+                *sum += ticks[first + 1].saturating_sub(ticks[first]) as f64 * period * 1e-6;
+            }
+        }
+        done += u64::from(updates);
+    }
+    sums.iter().map(|sum| sum / count as f64).collect()
+}
+
+/// The update's stages in order, each with its number of steps.
+fn composition(model: &Model) -> String {
+    stages(model)
         .iter()
-        .map(|(stage, count)| format!("{} {count}", stage.label()))
+        .map(|(stage, range)| format!("{} {}", stage.label(), range.len()))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -98,7 +175,7 @@ fn numbers(text: &str, option: &str) -> Vec<u64> {
 fn main() {
     let mut args = std::env::args().skip(1);
     let output = PathBuf::from(args.next().expect(
-        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N]",
+        "OUTPUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..] [--reset A,B,..] [--views] [--frames] [--size WxH] [--time-pictures N] [--time-stages N]",
     ));
     let mut steps = 0_u64;
     let mut dump: Vec<u64> = Vec::new();
@@ -111,6 +188,7 @@ fn main() {
     let mut frames = false;
     let mut size = REFERENCE_SIZE;
     let mut timed_pictures = 0_u32;
+    let mut timed_stages = 0_u64;
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_else(|| panic!("{arg} needs a value"));
         match arg.as_str() {
@@ -128,6 +206,7 @@ fn main() {
                 size = [width, height].map(|v| v.parse().expect("--size WxH"));
             }
             "--time-pictures" => timed_pictures = value().parse().expect("--time-pictures N"),
+            "--time-stages" => timed_stages = value().parse().expect("--time-stages N"),
             "--load" => {
                 let value = value();
                 let (folder, step) = value.rsplit_once(',').expect("--load FOLDER,STEP");
@@ -230,4 +309,19 @@ fn main() {
         run as f64 * f64::from(DT),
         1e3 * seconds / run.max(1) as f64
     );
+    if timed_stages > 0 {
+        let times = time_stages(&gpu, &mut model, timed_stages);
+        let total: f64 = times.iter().sum();
+        println!(
+            "{timed_stages} more updates, a pass to each stage: {total:.2} ms an update on the GPU"
+        );
+        for ((stage, range), time) in stages(&model).iter().zip(&times) {
+            println!(
+                "  {:<20} {:>4} steps {time:>7.3} ms {:>5.1} %",
+                stage.label(),
+                range.len(),
+                100. * time / total
+            );
+        }
+    }
 }

@@ -86,5 +86,7 @@
   feature `fixed-picture` を付けた側も確かめる）。
 - `cargo run --release --example run -- OUT --steps N [--dump A,B,..] [--light EVERY] [--load FOLDER,STEP] [--turn A,B,..] [--shake A,B,..]`：
   画面なしで模型を走らせ、指定した更新のあとの状態（7 本）を `OUT/step-NNNNN/` に書く（GPU を使う）。`--steps 0` で
-  1 更新の段階と step の数だけを出す。
+  1 更新の段階と step の数だけを出す。`--time-stages N` を付けると、続けて N 更新を段階ごとの pass に分けて流し、
+  段階ごとの GPU の時間（pass の両端の時刻）を出す。速さは、流れの育った保存状態から測る
+  （`--load 状態,STEP --steps STEP+500 --time-stages 500`）。
 - `trunk build` / `mise run web`：Web 向けのビルドと、http://127.0.0.1:8080 での配信。

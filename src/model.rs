@@ -279,7 +279,14 @@ impl Model {
 
     /// One complete 8 ms update: every step, in order, in the caller's pass.
     pub fn encode(&self, pass: &mut wgpu::ComputePass<'_>) {
-        for step in &self.steps {
+        self.encode_steps(pass, 0..self.steps.len());
+    }
+
+    /// The steps `range` of an update, in order, in the caller's pass: a tool
+    /// that times the stages gives each a pass of its own. Only all the
+    /// steps, in order, form an update.
+    pub fn encode_steps(&self, pass: &mut wgpu::ComputePass<'_>, range: std::ops::Range<usize>) {
+        for step in &self.steps[range] {
             self.kernels[step.kernel].record(pass);
         }
     }
