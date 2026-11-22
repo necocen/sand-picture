@@ -15,7 +15,7 @@ tests/baseline/**/*.png
 
 # 手元のタスク管理とツール
 .dots/
-.claude/settings.local.json
+.claude/
 .playwright-cli/
 *.log
 

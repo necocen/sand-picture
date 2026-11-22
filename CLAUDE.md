@@ -48,7 +48,9 @@
 
 ## 決まりごと
 
-- コミットはこまめに、contextual commit で（`.claude/skills/contextual-commit`）。確かめの付いた一区切りごとに 1 つ。
+- コミットはこまめに、contextual commit で：件名は Conventional Commits、本文に intent・decision・rejected・constraint・
+  learned の行で「なぜ」を残す（スキル `contextual-commit`。`.claude/` は手元の道具の置き場で、repo には入れない）。
+  確かめの付いた一区切りごとに 1 つ。
   あとの変更を前のコミットへ amend で畳み込まない（2026-11-19 ユーザー）。
 - wgpu と naga は 30.0.1 に固定してある（v2.20 と同じ。naga が WGSL を訳す形が変わると結果のビットが変わりうる）。
   Rust も 1.95.0 に固定。どちらも、v2.20 との照合が通ってから、回帰の基準を取り直して上げる。
