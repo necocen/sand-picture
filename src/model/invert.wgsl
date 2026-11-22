@@ -34,6 +34,10 @@ fn rotated(value:Cell)->Cell {
     // have, but the gas has moved: they forget which slots hold gas until the
     // next relabelling says it again.
     labels[LABEL_CELL_WORDS+i]&=(1u<<GAS_SLOTS)-1u;labels[LABEL_CELL_WORDS+j]&=(1u<<GAS_SLOTS)-1u;
+    // The sand that had given way to a draw lies under the water after the
+    // turn, and the sand that hangs now was laid as the bed: none of it has
+    // given way, and the last walk's supply is of the picture before.
+    geometry[SET_IN_ROW*cfg.n+i]=vec4<f32>(0.);geometry[SET_IN_ROW*cfg.n+j]=vec4<f32>(0.);
 }
 @compute @workgroup_size(128) fn invert_stream(@builtin(global_invocation_id) id:vec3<u32>){
     let n=(cfg.nx+1u)*(cfg.ny+1u);let i=id.x;if i>=(n+1u)/2u{return;}

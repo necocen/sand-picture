@@ -1,9 +1,11 @@
 // Breaching: a packed face under water gives way only as fast as water
 // enters the layer behind it, which must dilate before it flows, whether or
 // not the plates hold the body (they hold the body, not the face's grains),
-// and only where the grains it releases fall away. Also the counterflow
-// that carries sand down a slot and the dilatancy suction. No kernel:
-// body_faces, the transport's face fluxes and the mechanics call these.
+// and only where the grains it releases leave it: a side face's must fall
+// away (falls_away), a roof's drop from it into any water (roof_share). Also
+// the counterflow that carries sand down a slot and the dilatancy suction.
+// No kernel: body_faces, the transport's face fluxes and the mechanics call
+// these.
 
 // Water a released grain can fall through: no deposit, no bubble a grain
 // layer thick, and less sand than LOOSE_PACKING of its wet part.
@@ -65,40 +67,65 @@ fn free_face_breach(f:u32,interval:f32)->f32{
 }
 // The grains (cells per substep, downward) that the packed sand in `above`,
 // a full cell or a body's last layer hanging in the top of one, sheds into
-// the open water in `below`: a bare underside, an overhang. Nothing holds a
-// roof's grains: the gap between the plates, 5 to 9 grains, is wider than
-// any arch across it. They leave at the breaching rate for a roof, no
-// faster than the counterflow of water up through them carries
-// (batch_flux_rate), and only where they fall straight to the deposit or
-// the floor: under a bubble the raft holds the roof, a column's faces are
-// joint_mouth's, and a pocket's floor buries its roof.
+// the open water in `below`: a bare underside, an overhang, the roof of a
+// pocket. Nothing holds a roof's grains: the gap between the plates, 5 to 9
+// grains, is wider than any arch across it. They leave at the breaching rate
+// for a roof, no faster than the counterflow of water up through them
+// carries (batch_flux_rate), in the measure roof_share gives; a column's
+// faces are joint_mouth's. A layer in `below` with open water under it hangs
+// there: it is the roof's face, which recedes cell by cell, and sheds in its
+// turn. A layer that rests on sand leaves the water over it under the roof.
 fn roof_breach(below:u32,above:u32,aperture:f32,interval:f32)->f32{
     if column_cell(below)||column_cell(above){return 0.;}
     let c=cells[above];if plug_deposit(c){return 0.;}
     let g=grains(c);let solid=g.x+g.y;let dense=dense_volume(above);
     if solid<=0.||solid<CRITICAL_PACKING*dense{return 0.;}
-    let r=cells[below];
-    if !open_water(r)||scratch[BODY_ROW*cfg.n+below].y>=0.||!falls_through(point(below)){return 0.;}
+    let r=cells[below];if !open_water(r){return 0.;}
+    let under=point(below)-axis(1u);
+    if scratch[BODY_ROW*cfg.n+below].y>=0.&&valid(under)&&open_water(cells[at(under)]){return 0.;}
+    let share=roof_share(point(below),above);if share<=0.{return 0.;}
     let phi=min(solid/dense,CLOSE_PACKING);
     let gr=grains(r);let wr=max(r.volume.water,0.)+gr.x+gr.y;
     let room=max(LOOSE_PACKING*wr-gr.x-gr.y,0.);
     let powder=white_powder(c);
     let supply=min(breaching_rate(g,powder,phi)*inclination_factor(-1.,grain_friction(g))*phi,batch_flux_rate(g,powder));
-    return min(min(supply*aperture*interval,solid),room);
+    return min(min(share*supply*aperture*interval,solid),room);
 }
-// Whether a grain released into the open water at `start` falls straight
-// down through open water to the deposit or the tank's floor.
-fn falls_through(start:vec2<i32>)->bool{
+// The share of its breaching rate at which the roof in cell `roof` sheds
+// into the open water at `start`, by where its grains end, falling straight
+// down through open water. On the deposit or the tank's floor they are gone
+// and the roof recedes: 1. On a bubble the raft carries them and the
+// underside rests on it: 0. On sand the water is a pocket of the upper
+// sand, which keeps its water whatever its roof sheds and is filled only as
+// the sand over the roof follows it down: the roof sheds in the measure of
+// its body's supply (SET_IN_ROW, the share of a draw on it that reaches the
+// top, where the surface can sink), and the walk hands it what it shed.
+// Without supply it stands. A roof that receded there would carry the
+// pocket up through the body as a hole; in real sand that water is in the
+// pores of the dome that has given way over it (its dilation, which the
+// set-in only counts).
+fn roof_share(start:vec2<i32>,roof:u32)->f32{
     var p=start;
     for(var step=0;step<i32(cfg.ny);step++){
         let below=p-axis(1u);
-        if !valid(below){return true;}
+        if !valid(below){return 1.;}
         let cb=cells[at(below)];
-        if plug_deposit(cb){return true;}
-        if !open_water(cb){return false;}
+        if plug_deposit(cb){return 1.;}
+        if !open_water(cb){
+            if cb.volume.gas*cfg.h>=GRAIN_LAYER{return 0.;}
+            return geometry[SET_IN_ROW*cfg.n+roof_body(roof)].y;
+        }
         p=below;
     }
-    return true;
+    return 1.;
+}
+// The cell whose packing the roof in cell i belongs to: the neighbour that a
+// last layer lies against (BODY_ROW), or the cell itself.
+fn roof_body(i:u32)->u32{
+    let entry=scratch[BODY_ROW*cfg.n+i];
+    if entry.y<0.||entry.x>=1.{return i;}
+    let side=u32(entry.y);let step=select(-1,1,side%2u==1u);
+    return at(point(i)+step*axis(side/2u));
 }
 // Kozeny-Carman's hydraulic conductivity (m/s, at the in-plane gravity) of
 // the mixture `g` packed to the solid fraction `phi`, from the species'
@@ -206,10 +233,13 @@ fn breaching_speed(i:u32)->f32{
     return breaching_rate(g,white_powder(c),min(solid/wet,CLOSE_PACKING));
 }
 // The pore pressure deficit (Pa) of cell i's skeleton dilating at the rate
-// `theta` (1/s): it draws water in through its own pores, and over the
-// cell's half thickness on each side the inflow theta h/2 needs the head
-// gradient theta h/(2K), a deficit rho g theta h^2/(4K), with K the volume
-// mean of the species' Kozeny-Carman conductivities at the cell's packing.
+// `theta` (1/s): it draws water in through its own pores. A cell of a sealed
+// body has water on one side: the inflow theta h enters through that face
+// under the head gradient theta h/K and crosses the cell, a deficit
+// rho g theta h^2/K, with K the volume mean of the species' Kozeny-Carman
+// conductivities at the cell's packing. This is the breaching law's own
+// picture (the water enters through the face that sheds), so a layer
+// dilates in place no faster than its face would breach.
 // The deficit is effective stress: it holds the skeleton (friction, yield)
 // and pushes nothing, and it keeps a dense face from unravelling at the
 // settling speed. Below FREEZING_PACKING no grain is caged: no suction.
@@ -223,5 +253,5 @@ fn dilatancy_suction(i:u32,theta:f32)->f32{
         conductivity+=weight*packing_speeds(white_powder(c))[phase]*(1./delta)*pow(1.-min(phi,CLOSE_PACKING),3.)/(10.*phi*phi);
     }
     // rho_w g / K is mu / k whatever the gravity: both at the standard one.
-    return RHO.x*STANDARD_GRAVITY*theta*cfg.h*cfg.h/(4.*max(conductivity,1e-9));
+    return RHO.x*STANDARD_GRAVITY*theta*cfg.h*cfg.h/max(conductivity,1e-9);
 }

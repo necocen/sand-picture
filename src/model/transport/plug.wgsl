@@ -41,6 +41,33 @@ fn plug_link(i:u32)->bool{
     }
     return false;
 }
+// The packing up to which sand counts as at the critical state: a margin of
+// rounding over the critical packing, for cells that settled to it.
+const DILATED_PACKING:f32=1.002*CRITICAL_PACKING;
+// Whether the sand of cell i has given way to a draw from below and flows
+// with it: sand at the critical packing or looser, or packed sand that the
+// draw has dilated (SET_IN_ROW, plug_set_in). Packed sand cannot follow a
+// draw at once: its grains must part first, and they part only as water
+// enters between them.
+fn plug_flows(i:u32)->bool{
+    let c=cells[i];let g=grains(c);let solid=g.x+g.y;
+    return solid<=DILATED_PACKING*(max(c.volume.water,0.)+solid)||geometry[SET_IN_ROW*cfg.n+i].x>=1.;
+}
+// A packed link that is drawn on for `want` gives way a little more. The
+// front that dilates it to the critical packing crosses its cell at Van
+// Rhee's rate for a roof (the breaching of a face that looks down: water
+// enters no faster), and no faster than the draw takes up the grains that
+// the dilation frees, the cell's margin over the critical packing (with the
+// breaching law's floor). A column H high so follows a steady draw after H
+// over that rate, and a draw that moves on before then leaves the column
+// standing as it was.
+fn plug_set_in(i:u32,c:Cell,want:f32){
+    let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
+    let phi=min(solid/wet,CLOSE_PACKING);
+    let front=breaching_rate(g,white_powder(c),phi)*inclination_factor(-1.,grain_friction(g))*cfg.dt/cfg.h;
+    let freed=max(phi-CRITICAL_PACKING,.01)*wet;
+    geometry[SET_IN_ROW*cfg.n+i].x=min(geometry[SET_IN_ROW*cfg.n+i].x+min(want/freed,front),1.);
+}
 // scratch[PLUG_ROW n + i] = (fine, coarse, link, wet) before the carry:
 // the cell's free grains, whether it is a link, and its wet part. Clears
 // PLUG_INFLOW_ROW, where advect_groups sums the grains the carry brings in.
@@ -158,27 +185,53 @@ fn plug_keep(i:u32,c:Cell,g:vec2<f32>,f:f32,co:f32){
 // grains leave with their velocity and powder, and water takes their place
 // with the cell's water momentum unchanged), then sets its ask and its
 // surplus.
+//
+// It gives only if its sand has given way (plug_flows), and then in the
+// measure of its supply (SET_IN_ROW.y, plug_descent): the share of a draw on
+// it that sand which has given way passes on to the top, where the surface
+// can sink. The rest of the draw stays where it was drawn, at the foot,
+// whose face goes on breaching: no void opens inside a packing that cannot
+// fill it, and nothing in it is loosened. A link that has not given way
+// gives nothing and is dilated by the draw (plug_set_in).
 fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep{
     let nx=i32(cfg.nx);let c=cells[i];var out=PlugStep();
     if plug_deposit(c){return out;}
-    let g=grains(c);let solid=g.x+g.y;let water=max(c.volume.water,0.);var given=0.;
+    let g=grains(c);let solid=g.x+g.y;let water=max(c.volume.water,0.);var given=0.;var want=0.;
+    let flows=plug_flows(i);
     if y>0&&solid>0.{
         var want_left=0.;var want_right=0.;
         if x>0{want_left=k*asked.x;}
         if x+1<nx{want_right=k*asked.z;}
         var want_centre=plug_centre_weight(x,k)*asked.y;
         // Two links side by side each owe the cell under the other its
-        // diagonal share: only the difference crosses between their columns.
-        // The voids' sideways spread is a velocity (u = -K dv/dx, zero
-        // where the columns descend alike), not an exchange of grains.
-        if x>0&&scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x-1,y))].z>0.{
-            let crossed=min(want_left,k*asked.y);want_left-=crossed;want_centre+=crossed;
+        // diagonal share, in the measure of their own supply: only the
+        // difference of what they give crosses between their columns, and
+        // each gives the rest to the cell under itself. The voids' sideways
+        // spread is a velocity (u = -K dv/dx, zero where the columns descend
+        // alike), not an exchange of grains. (A neighbour that has not given
+        // way has no supply and nets nothing.)
+        let supply=geometry[SET_IN_ROW*cfg.n+i].y;
+        if flows&&supply>0.{
+            if x>0{
+                let j=at(vec2<i32>(x-1,y));
+                if scratch[PLUG_ROW*cfg.n+j].z>0.{
+                    let crossed=min(supply*want_left,geometry[SET_IN_ROW*cfg.n+j].y*k*asked.y)/supply;
+                    want_left-=crossed;want_centre+=crossed;
+                }
+            }
+            if x+1<nx{
+                let j=at(vec2<i32>(x+1,y));
+                if scratch[PLUG_ROW*cfg.n+j].z>0.{
+                    let crossed=min(supply*want_right,geometry[SET_IN_ROW*cfg.n+j].y*k*asked.y)/supply;
+                    want_right-=crossed;want_centre+=crossed;
+                }
+            }
         }
-        if x+1<nx&&scratch[PLUG_ROW*cfg.n+at(vec2<i32>(x+1,y))].z>0.{
-            let crossed=min(want_right,k*asked.y);want_right-=crossed;want_centre+=crossed;
-        }
-        let want=want_left+want_centre+want_right;
-        given=min(want,solid);
+        want=want_left+want_centre+want_right;
+        // A trace of sand is what rounding left of a difference: it gives
+        // nothing.
+        if flows{given=min(want*supply,solid);if solid<TRACE_VOLUME{given=0.;}}
+        else if want>0.{plug_set_in(i,c,want);}
         if want>0.{let share=given/want;out.left=want_left*share;out.centre=want_centre*share;out.right=want_right*share;}
         if given>0.{
             // The grains given join the cells below (their shares weighted
@@ -205,7 +258,16 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
     if y+1<i32(cfg.ny)&&record.w>0.{
         let linked=scratch[PLUG_ROW*cfg.n+above].z>0.;
         let restore=(record.x+record.y)*min((water+solid)/record.w,1.);
-        if linked{ask=max(given+restore-solid,0.);}
+        // A link that has given way asks for the whole draw on it and for
+        // what the carry took from it: the links over it give that in the
+        // measure of their own supply, which is what it gave. One that has
+        // not given way takes the draw on itself, and only one that nothing
+        // draws on asks for what it lacks.
+        if linked{
+            if flows{ask=max(want+restore-solid,0.);}
+            else if want>0.{ask=0.;}
+            else{ask=max(restore-solid,0.);}
+        }
         // The link hands up what the carry left it beyond that packing. The
         // mechanics slides the body over a joint at the voids' speed
         // (void_speed), the mouth passes only its breaching rate, and a
@@ -253,22 +315,28 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
 // gy pass it, with their fine shares: the grains arrive with their givers'
 // velocities and powder, and the same volume of its water leaves.
 fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
-    var received=0.;var fine=0.;var fine_momentum=vec2<f32>(0.);var coarse_momentum=vec2<f32>(0.);
+    var received=0.;var fine=0.;var coarse=0.;var fine_momentum=vec2<f32>(0.);var coarse_momentum=vec2<f32>(0.);
     var powder=vec2<f32>(0.);
     for(var d=0;d<3;d++){
         let part=parts[d];if part<=0.{continue;}
         let giver=cells[at(vec2<i32>(x+d-1,gy))];let gg=grains(giver);
         let part_fine=part*fines[d];let part_coarse=part-part_fine;
-        received+=part;fine+=part_fine;
-        if gg.x>0.{
+        received+=part;fine+=part_fine;coarse+=part_coarse;
+        // A giver left with a trace of a species gives its part no velocity:
+        // the trace is what rounding left of a difference, its momentum
+        // likewise, and their quotient is no velocity.
+        if gg.x>TRACE_VOLUME{
             fine_momentum+=part_fine*giver.momentum[1]/gg.x;
             let share=white_powder(giver);powder+=part_fine*vec2<f32>(share.total,share.free);
         }
-        if gg.y>0.{coarse_momentum+=part_coarse*giver.momentum[2]/gg.y;}
+        if gg.y>TRACE_VOLUME{coarse_momentum+=part_coarse*giver.momentum[2]/gg.y;}
     }
     if received<=0.{return;}
     let c=cells[r];let g=grains(c);let water=max(c.volume.water,0.);
-    cells[r].volume.fine=g.x+fine;cells[r].volume.coarse=g.y+(received-fine);
+    // The coarse part is the sum of its parts: as the difference of the two
+    // sums a small coarse share is lost to rounding while its momentum
+    // arrives.
+    cells[r].volume.fine=g.x+fine;cells[r].volume.coarse=g.y+coarse;
     cells[r].volume.water=max(water-received,0.);
     cells[r].momentum[0]=plug_scaled(c.momentum[0],water,max(water-received,0.));
     cells[r].momentum[1]=c.momentum[1]+fine_momentum;cells[r].momentum[2]=c.momentum[2]+coarse_momentum;
@@ -286,6 +354,20 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
 // what it is asked up to its grains; with no link above, it keeps its
 // deficit and the surface sinks. A bubble cuts a chain, the deposit ends
 // it, and sand that stands on nothing packed moves by the carry alone.
+//
+// The kinematic model is of sand that flows. Packed sand does not flow
+// until it has dilated, and the tank is closed: a void can rise only
+// through sand that has given way, to a surface that can sink. So the walk
+// has two parts. First, from the ceiling down, each cell's supply: the
+// share of a draw on it that reaches the top through links that have given
+// way (plug_flows), by the weights the walk asks with. Water that lies open
+// to the ceiling takes a column's deficit (1); a bubble, the deposit, a link
+// that has not given way and a pocket of water with sand over it pass
+// nothing on (0): the pocket would need water through the packing around it
+// to grow. Then the walk itself, in which a link gives in the measure of its
+// supply and a packed link that is drawn on gives way at the rate its roof
+// would breach (plug_give). SET_IN_ROW keeps a cell's supply and whether it
+// was a link for the next update's mechanics (void_speed).
 //
 // The cells are walked in raster order, a thread to a cell and `width`
 // cells a turn: a row a turn on a grid no wider than the workgroup, else
@@ -310,6 +392,38 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
     for(var y=t;y<cfg.ny;y+=PLUG_THREADS){plug_linked[y]=atomicLoad(&plug_marks[y]);}
     workgroupBarrier();
     let width=min(cfg.nx,PLUG_THREADS);let cells_walked=cfg.n+cfg.nx;
+    // The supply, a thread to a cell and `width` cells a turn: a cell's turn
+    // needs the three cells above it, which lie a row less a cell back or
+    // more, in an earlier turn.
+    for(var turn=0u;turn*width<cfg.n;turn++){
+        let index=turn*width+t;
+        if t<width&&index<cfg.n{
+            let i=cfg.n-1u-index;let x=i32(i%cfg.nx);let y=i32(i/cfg.nx);
+            let link=scratch[PLUG_ROW*cfg.n+i].z;var supply=0.;
+            if link<=0.{
+                let c=cells[i];
+                if !plug_deposit(c)&&c.volume.gas*cfg.h<GRAIN_LAYER&&!teeth_sandy(c){
+                    supply=1.;
+                    if y+1<ny{
+                        let j=at(vec2<i32>(x,y+1));
+                        if scratch[PLUG_ROW*cfg.n+j].z>0.||geometry[SET_IN_ROW*cfg.n+j].y<1.{supply=0.;}
+                    }
+                }
+            }
+            if link>0.&&plug_flows(i){
+                for(var d=-1;d<=1;d++){
+                    var weight=k;if d==0{weight=plug_centre_weight(x,k);}
+                    let q=vec2<i32>(x+d,y+1);
+                    if q.x<0||q.x>=nx{continue;}
+                    var above=1.;
+                    if q.y<ny{above=geometry[SET_IN_ROW*cfg.n+at(q)].y;}
+                    supply+=weight*above;
+                }
+            }
+            geometry[SET_IN_ROW*cfg.n+i].y=supply;geometry[SET_IN_ROW*cfg.n+i].z=link;
+        }
+        workgroupBarrier();
+    }
     for(var first=0u;first<cells_walked;first+=width){
         // A turn whose rows and the row below them hold no link has nothing
         // to pass on and nothing to give.

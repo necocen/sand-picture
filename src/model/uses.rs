@@ -50,7 +50,7 @@ pub const USES: &[(Program, &str, &[&str])] = &[
     (Program::Model, "limit_layer_flux", &["cfg", "cells", "scratch", "faces", "geometry", "transport", "carry_plan", "members"]),
     (Program::Model, "material_capacity", &["cfg", "cells", "scratch", "faces", "geometry", "transport", "carry_plan", "members"]),
     (Program::Model, "plan_contacts", &["cfg", "geometry", "contact_work"]),
-    (Program::Model, "plug_descent", &["cfg", "cells", "scratch"]),
+    (Program::Model, "plug_descent", &["cfg", "cells", "scratch", "geometry"]),
     (Program::Model, "plug_record", &["cfg", "cells", "scratch"]),
     (Program::Model, "predict", &["cfg", "cells", "scratch", "faces", "geometry", "table"]),
     (Program::Model, "prepare_bed_occupancy", &["cfg", "cells", "geometry"]),

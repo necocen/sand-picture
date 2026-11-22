@@ -94,6 +94,16 @@ fn upwind_label_flux(upwind:bool,amount:f32,inventory:vec4<f32>,label:f32)->f32{
             }
         }
     }
+    // Down into a slot between bubbles the grains cross at the batch flux
+    // at most (slot_supply): the hollow above keeps the rest.
+    if mouth<0.{
+        let supply=slot_supply(f,interval);let down=max(-flux.x,0.)+max(-flux.y,0.);
+        if down>supply{
+            let keep=supply/down;
+            if flux.x<0.{flux.x*=keep;}
+            if flux.y<0.{flux.y*=keep;}
+        }
+    }
     // The free powder lags the white it is part of where the white crosses
     // freely (powder_drift); its lag is part of the white's flux.
     var drift=0.;

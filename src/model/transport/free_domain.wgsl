@@ -87,6 +87,16 @@ fn common_low(f:u32,donor:u32,amount:f32)->vec4<f32>{
             let want=abs(amount)*share.yz;let excess=max(want-supply,vec2<f32>(0.))/abs(amount);
             share=vec4<f32>(share.x+excess.x+excess.y,share.y-excess.x,share.z-excess.y,share.w);
         }
+        // Down into a slot between bubbles the grains cross at the batch
+        // flux at most (slot_supply), and the water takes the rest.
+        if amount<0.&&joint_mouth(f,cfg.dt/(carry_divisions()*cfg.h))<0.{
+            let supply=slot_supply(f,cfg.dt/(carry_divisions()*cfg.h));
+            let want=abs(amount)*(share.y+share.z);
+            if want>supply{
+                let kept=share.yz*(1.-supply/want);
+                share=vec4<f32>(share.x+kept.x+kept.y,share.y-kept.x,share.z-kept.y,share.w);
+            }
+        }
     }
     return amount*share;
 }
