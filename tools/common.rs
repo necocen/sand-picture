@@ -137,8 +137,8 @@ fn image(gpu: &GpuContext, size: [u32; 2]) -> wgpu::Texture {
     })
 }
 
-/// The name a view's picture is kept under: `image` is Photoreal, as in
-/// v2.20's baseline.
+/// The name a view's picture is kept under: `image` is Photoreal, the
+/// baseline's name for it.
 pub fn picture_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Simple => "simple",

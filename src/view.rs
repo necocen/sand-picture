@@ -8,9 +8,9 @@ use photoreal::Photoreal;
 use picture::Picture;
 use wgpu::util::DeviceExt;
 
-/// The size (pixels) of the pictures the regression compares, and of every
-/// picture of v2.20. A picture is optical sampling only, at whatever size:
-/// the simulation stays on its own grid.
+/// The size (pixels) of the pictures the regression compares. A picture is
+/// optical sampling only, at whatever size: the simulation stays on its own
+/// grid.
 ///
 /// It is also the coarsest picture a window gets. Photoreal integrates a
 /// bubble's rim over a pixel as if the outline were straight across it,
@@ -35,7 +35,7 @@ const CELLS_WGSL: &str = include_str!("view/cells.wgsl");
 /// window outside that range shows the picture scaled.
 ///
 /// Built with the feature `fixed-picture`, every window gets the reference
-/// picture, scaled to it: v2.20's way.
+/// picture, scaled to it.
 pub fn picture_size(available: [u32; 2]) -> [u32; 2] {
     if cfg!(feature = "fixed-picture") {
         return REFERENCE_SIZE;

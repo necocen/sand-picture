@@ -5,16 +5,13 @@ a thin tank. Turned over, the sand rests on a raft of bubbles, drains through
 its gaps as thin streams for about a quarter of an hour, and builds a striped
 landscape below.
 
-This repository is a rewrite, from an empty tree, of the model of the earlier
-`sand-picture` repository (its version 2.20): the same computation in a plainer
-program. [docs/design.md](docs/design.md) (in Japanese) holds the design, the
-order of the work and each stage's results; the earlier repository stays the
-reference for the physics.
+The model's rules and their reasons are in the comments of its kernels
+(`src/model`). [docs/design.md](docs/design.md) (in Japanese) holds the
+program's design, a map of the model, what is open in it and what was tried
+and rejected.
 
-The model is v2.20's but for two things ([docs/design.md](docs/design.md)
-lists them: a turn is not preceded by a shake, and the rule that frees the
-white's powder), and the window runs it: the product's scene, a deposit the
-model laid itself, rests and is turned over as the app starts.
+The window runs the product's scene: a deposit the model laid itself rests
+and is turned over as the app starts.
 
 ## Run
 
@@ -39,7 +36,7 @@ than 1440 x 960 pixels, up to a pixel of one grain of the fine sand
 (2727 x 1818); a smaller window shows the 1440 x 960 picture scaled down.
 Built with `--features fixed-picture` (`cargo run --release --features
 fixed-picture`, `trunk build --features fixed-picture`), every window shows
-the 1440 x 960 picture scaled to it, as version 2.20 did.
+the 1440 x 960 picture scaled to it.
 
 The window opens at once and shows its progress while the model is built: its
 materials' table takes a second or two on the CPU, and the first start after

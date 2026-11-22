@@ -14,9 +14,9 @@
 //! bed's columns, the strata and the labels) after the listed updates into
 //! `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the bed's
 //! columns every EVERY updates. `--views` adds the three views' pictures to
-//! each dump, as raw RGBA and as PNG (`image` is Photoreal, the name
-//! v2.20's baseline gives it); `--frames` draws a Photoreal picture after
-//! every update, as v2.20's window did. `--size WxH` is the pictures' size in
+//! each dump, as raw RGBA and as PNG (`image` is Photoreal, the name the
+//! baseline gives it); `--frames` draws a Photoreal picture after every
+//! update, as a window that draws each update does. `--size WxH` is the pictures' size in
 //! pixels (the regression's 1440x960 unless given), and `--time-pictures N`
 //! draws N Photoreal pictures of the last state and tells what one costs.
 //! `--time-stages N` runs N more updates after the last, each stage in a pass

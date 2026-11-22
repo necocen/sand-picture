@@ -3,10 +3,11 @@
 mod unroll;
 
 /// Whether the loops of constant bounds are written out. wgpu hands Metal a
-/// loop in a form its compiler does not unroll, and v2.20's results are those
-/// of the written-out loops, so Apple's native targets write them out. A
-/// browser compiles the WGSL itself, and no other backend was measured: there
-/// the loops stay as written.
+/// loop in a form its compiler does not unroll, and the regression's baseline
+/// holds the results of the written-out loops (writing a loop out can change
+/// the last bits), so Apple's native targets write them out. A browser
+/// compiles the WGSL itself, and no other backend was measured: there the
+/// loops stay as written.
 const WRITE_OUT_LOOPS: bool = cfg!(target_vendor = "apple");
 
 /// `source` as it is compiled on this target.

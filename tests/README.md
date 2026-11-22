@@ -45,9 +45,16 @@ not changed to make a check pass.
 GPU floating point depends on the order of operations and on how the compiler
 fuses them, and Metal compiles with fast math: a rewrite that is the same
 mathematics can change the last bits, and in this flow a last bit is a
-different local arrangement a second later. Such a change is judged by
-comparing ensembles of runs, as `../sand-picture/tests/README.md` describes
-under "Rounding-level changes", not by this check.
+different local arrangement a second later. Such a change cannot pass this
+check and is judged by comparing ensembles of runs instead. The unchanged
+build and the changed one each run the same life from some ten starts that
+differ in rounding alone: the state after the first update is dumped, the
+last bit of the water of a few cells is changed, and the run goes on from it
+(`run --load`). What is compared is what a viewer sees - how fast the upper
+sand drains, when it breaks, the deposit it leaves - against the spread among
+the unchanged build's own runs. One run is one draw of a lottery and shows no
+effect by itself; five a side have twice led to a reading that ten took back.
+If the change is accepted, a new baseline is recorded.
 
 ## A new baseline
 
@@ -63,19 +70,16 @@ Apple M1 Max with macOS 27.2.1, Rust 1.95.0 and wgpu and naga 30.0.1. Before any
 of these is raised, record a candidate in the new environment first, with the
 code unchanged.
 
-The first baseline (2026-11-19) was v2.20 of `../sand-picture`: its 60 entries
-that v2.20's baseline also had (eight buffers, Photoreal and Simple at the six
-times) were equal to it. Since 2026-11-20 the `geometry` buffer holds only the
-rows that last between updates, in a new order, and the transport's fluxes,
-its groups' members and its schedule are no longer compared, and Photoreal
-and the Flow view were recorded anew with their new looks; each change of the
-baseline was checked to leave every other entry as it was.
-
-The model differs from v2.20 in two things since 2026-11-20
-(`docs/design.md`). The speed that frees the white's powder left every entry
-as it was. A turn without a shake before it changed every entry from the
-first turn on: what is left of v2.20's own hashes is `cells`, `faces`,
-`stream`, `terrain` and Simple of the picture at rest (`0`) and a second into
-a shake (`shaken 125`, which is v2.20's `125`: all ten fields were the same).
+The first baseline (2026-11-19) was the output of the implementation this
+program was rewritten from: the 60 entries the two baselines shared (eight
+buffers, Photoreal and Simple at the six times) were equal. Every baseline
+since was recorded after a change that was meant to change it, and the
+entries the change should leave alone were checked to be as before
+(`docs/design.md` tells what each change is): the `geometry` buffer keeping
+only the rows that last between updates, and the new looks of Photoreal and
+Flow (2026-11-20); a turn without a shake before it, which changed every
+entry from the first turn on (2026-11-20); packed sand that gives way before
+it descends, with a scene of its own, which changed every entry (2026-11-22).
 The second turn's checkpoint, `turned 750`, is the update that mirrors the
-grid with the sand up, where the powder's rule differs from v2.20's.
+grid with the sand up: there the rule that frees the white's powder is at
+work.

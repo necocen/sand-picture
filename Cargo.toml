@@ -9,8 +9,8 @@ publish = false
 
 [dependencies]
 mikage = { git = "https://github.com/necocen/mikage.git", tag = "v0.9.3" }
-# 移植の元（v2.20）と同じ版に固定する：naga が WGSL を訳す形が変わると、結果のビットが変わりうる。
-# 上げるのは v2.20 との照合が通ったあと、回帰の基準を取り直してから。
+# 版を固定する：naga が WGSL を訳す形が変わると、結果のビットが変わりうる。
+# 上げるときは、回帰の基準を取り直してから。
 wgpu = "=30.0.1"
 # 時刻：ブラウザでも動く Instant（mikage と同じ crate）。
 web-time = "1"
@@ -43,7 +43,7 @@ path = "tools/check.rs"
 test = false
 
 [features]
-# 絵を窓の画素数で描かず、どの窓でも 1440×960 の絵を窓に合わせて拡大・縮小する（v2.20 と同じ見え方）。
+# 絵を窓の画素数で描かず、どの窓でも 1440×960 の絵を窓に合わせて拡大・縮小する。
 # `cargo run --release --features fixed-picture`
 fixed-picture = []
 

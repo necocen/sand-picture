@@ -8,7 +8,6 @@ dist/
 
 # 実験の記録（走行、計測、検討のメモ）と、その生成物。repo には入れない
 records/
-artifacts/
 
 # 回帰の基準の絵（repo に置くのはハッシュの一覧だけ）
 tests/baseline/**/*.png
