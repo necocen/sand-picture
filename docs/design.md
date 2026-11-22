@@ -37,7 +37,7 @@ sand-picture2/
   mise.toml             道具の版（trunk など）と、少数のタスク（verify・check・check-full・web）。just は入れない
   Cargo.toml            crate は一つ：ライブラリ ＋ 実行ファイル sand-picture ＋ example の道具
   Trunk.toml index.html Web 向けのビルド（mikage の例と同じ形）
-  .gitignore            target/ dist/ records/（実験の記録）.dots/ 基準の絵
+  .gitignore            target/ dist/ records/（実験の記録）基準の絵
   AGENTS.md CLAUDE.md README.md   短く書き直す
   assets/               scene.bin, air.bin
   src/

@@ -12,8 +12,7 @@ records/
 # 回帰の基準の絵（repo に置くのはハッシュの一覧だけ）
 tests/baseline/**/*.png
 
-# 手元のタスク管理とツール
-.dots/
+# 手元のツール
 .claude/
 .playwright-cli/
 *.log
