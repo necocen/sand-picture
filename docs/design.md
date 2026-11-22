@@ -14,9 +14,9 @@
 - crate は分けない。モジュールの境界を仕掛けで守ることもしない。
 - 格子は細かい方（270×180）だけ。実行時の切り替えは無し。ビルドの切り替えはあってもよい。
 - 実験の記録は最初から ignore して、repo に一切入れない。
-- フォルダは `/Users/necocen/Development/sand-picture2`。GitHub に置くときのことは、そのとき考える。
+- フォルダは旧 repo の隣の `sand-picture2`。GitHub に置くときのことは、そのとき考える。
 - trunk で Web 向けにもビルドできること。ツールチェーンは mise と `rust-toolchain.toml`。just は要れば。
-  整備の手本は nocturne12。
+  整備の手本は、作者の別の repo（非公開）。
 - 操作パネルは egui で一つだけ。隠せる。既定は上（下は模様を見たい）。上下を切り替えられると理想。
 - ビューは今と同じ三つ（単純・リアル・流れ）。リアルの美麗さは、あとからしっかり調整する。
 - 初回の読み込みが長いならスプラッシュ。
@@ -65,7 +65,7 @@ sand-picture2/
   tests/                README.md（回帰の手引き）と baseline/hashes.txt（ハッシュだけ。絵は repo に入れない）
 ```
 
-- nocturne12 にならう点：Rust の版は `rust-toolchain.toml`、ほかの道具の版は `mise.toml`、`.gitignore` は用途ごとに
+- 手本の repo にならう点：Rust の版は `rust-toolchain.toml`、ほかの道具の版は `mise.toml`、`.gitignore` は用途ごとに
   見出しを付ける。タスクは 3 つほどなので mise のタスクで足り、just は入れない。
 - 旧 repo から写すもの：WGSL の kernel の本文、`grid`・`material`・場面と初期の堆積・裏返しの計算。
   書き直すもの：バッファと kernel の管理、シェーダーの組み立て、アプリ、道具。
@@ -781,7 +781,7 @@ storage buffer を 10 本使う。計画の「六つなら 8 本ちょうど」�
 - 写す元（旧 repo、読むだけ）：`src/picture_flow/**/*.wgsl`、`grid.rs`・`material.rs`・`initial.rs`・
   `bed_initial.rs`・`mod.rs`（裏返し）・`unroll.rs`、`src/bin/sand_picture/*.rs`、`tools/trace.rs`・`regression.rs`。
 - 順序と寿命の正本：旧 repo の `docs/physics/state-update.md`（S1・S2）、`src/picture_flow/stage.rs`。
-- 整備の手本：nocturne12 の `rust-toolchain.toml`・`mise.toml`・`.gitignore`、mikage の `Trunk.toml`・`index.html`。
+- 整備の手本：作者の別の repo（非公開）の `rust-toolchain.toml`・`mise.toml`・`.gitignore`、mikage の `Trunk.toml`・`index.html`。
 - 設計の記録：旧 repo の `docs/rewrite/design.md` をこの内容に直す。新しい repo には `docs/design.md` として置く。
 
 ## 確かめ方（段取り 0・1 の終わり）
