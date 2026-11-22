@@ -247,6 +247,7 @@ impl App for SandPicture {
                 seconds: product.seconds(),
                 paused: self.paused,
                 speed: product.speed(),
+                since_turn: product.since_turn(),
             },
             State::Opening => return progress(root, None),
             State::Building(building) => return progress(root, Some(building.progress())),
@@ -274,11 +275,13 @@ impl App for SandPicture {
             "completed_updates": product.completed_updates(),
             "seconds": product.seconds(),
             "speed": product.speed(),
+            "since_turn": product.since_turn(),
         })
     }
 
-    /// `{"action": "turn" | "shake" | "pause" | "reset" | "view" | "panel"}`; a
-    /// view is named by `"value"`, and `panel` hides or shows the panel.
+    /// `{"action": "turn" | "shake" | "pause" | "reset" | "view" | "panel" |
+    /// "details"}`; a view is named by `"value"`, `panel` hides or shows the
+    /// panel and `details` folds or unfolds its times since the turn.
     #[cfg(not(target_family = "wasm"))]
     fn on_agent_command(
         &mut self,
@@ -291,6 +294,7 @@ impl App for SandPicture {
             "pause" => self.command(Command::Pause),
             "reset" => self.command(Command::Reset),
             "panel" => self.panel.toggle(),
+            "details" => self.panel.toggle_details(),
             "view" => {
                 let value = payload.get("value").and_then(serde_json::Value::as_str);
                 self.mode = Mode::ALL

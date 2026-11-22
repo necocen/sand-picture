@@ -77,7 +77,8 @@
 - `cargo run --release`：アプリ（F 裏返す / S 揺する / Space 停止 / R リセット / V ビュー / H パネルを隠す・出す / P パネルの上下）。
 - `SP_AGENT=1 cargo run --release`：操作口（HTTP、127.0.0.1:3939）つき。`GET /status` の `app` に状態（組み立て中か、
   絵の時刻、速さ）、`GET /screenshot` で窓の絵、`POST /command` の `{"op":"app.command","payload":{"action":…}}` で
-  `turn`・`shake`・`pause`・`reset`・`view`（`"value":"Flow"` など）・`panel`。決まった更新まで進めるのは mikage の
+  `turn`・`shake`・`pause`・`reset`・`view`（`"value":"Flow"` など）・`panel`・`details`（パネルの Details の開閉）。
+  `/status` の `since_turn` は、裏返してからの絵の時間と壁時計の時間（秒）。決まった更新まで進めるのは mikage の
   `{"op":"run_until_completed","target_tick":N,"dt":0.008}`、持っている絵そのものは `POST /captures` の
   `{"target":"picture","format":"raw"}`。
 - `mise run check` / `mise run check-full`：回帰（GPU を使う。sandbox の外で）。

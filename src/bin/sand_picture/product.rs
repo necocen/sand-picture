@@ -23,6 +23,9 @@ pub struct Product {
     /// Completions within the last RECENT of play: when, and the update then
     /// complete.
     recent: VecDeque<(Instant, u64)>,
+    /// When the picture was last turned over: by the clock, and the updates
+    /// encoded until then.
+    turned: (Instant, u64),
     reset_pending: bool,
     turn_pending: bool,
     shake_pending: bool,
@@ -40,6 +43,7 @@ impl Product {
             completed: 0,
             in_flight: VecDeque::new(),
             recent: VecDeque::new(),
+            turned: (Instant::now(), 0),
             reset_pending: false,
             turn_pending: false,
             shake_pending: false,
@@ -73,12 +77,13 @@ impl Product {
             self.updates = 0;
             self.completed = 0;
             self.in_flight.clear();
+            self.turned = (Instant::now(), 0);
             self.turn_pending = false;
             self.shake_pending = false;
             self.play_begins();
         }
-        if std::mem::take(&mut self.turn_pending) {
-            self.model.start_turn();
+        if std::mem::take(&mut self.turn_pending) && self.model.start_turn() {
+            self.turned = (Instant::now(), self.updates);
         }
         if std::mem::take(&mut self.shake_pending) {
             self.model.start_shake();
@@ -147,6 +152,15 @@ impl Product {
         let (first, last) = (self.recent.front()?, self.recent.back()?);
         let span = last.0.duration_since(first.0).as_secs_f64();
         (span > 0.).then(|| (last.1 - first.1) as f64 * f64::from(DT) / span)
+    }
+
+    /// Since the picture was last turned over: its own time (s), that of its
+    /// completed updates, and the clock's (s), which runs on while the
+    /// picture's time is stopped.
+    pub fn since_turn(&self) -> [f64; 2] {
+        let (at, updates) = self.turned;
+        let picture = self.completed.saturating_sub(updates) as f64 * f64::from(DT);
+        [picture, at.elapsed().as_secs_f64()]
     }
 
     /// From now on the kept picture is `size` pixels.

@@ -32,24 +32,47 @@ pub struct Readout {
     /// Seconds of the picture per second of the clock over the last two
     /// seconds.
     pub speed: Option<f64>,
+    /// Since the picture was last turned over: its own time, and the
+    /// clock's (s).
+    pub since_turn: [f64; 2],
 }
 
 pub struct Panel {
     visible: bool,
     side: Side,
+    /// Whether the times since the turn are unfolded.
+    details: bool,
 }
 impl Default for Panel {
     fn default() -> Self {
         Self {
             visible: true,
             side: Side::default(),
+            details: false,
         }
     }
 }
+
+/// A span of time as minutes and seconds, with hours from the first.
+fn span(seconds: f64) -> String {
+    let seconds = seconds as u64;
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
 impl Panel {
     /// Hide the panel, or show it again.
     pub fn toggle(&mut self) {
         self.visible = !self.visible;
+    }
+
+    /// Fold the times since the turn away, or unfold them.
+    pub fn toggle_details(&mut self) {
+        self.details = !self.details;
     }
 
     /// Move the panel to the window's other edge.
@@ -130,6 +153,8 @@ impl Panel {
                     ui.monospace(speed)
                         .on_hover_text("Seconds of the picture per second, over the last 2 s");
                     ui.separator();
+                    ui.toggle_value(&mut self.details, "Details")
+                        .on_hover_text("The times since the picture was turned over");
                     if ui
                         .button(other)
                         .on_hover_text("Move the panel (P)")
@@ -145,6 +170,19 @@ impl Panel {
                         self.visible = false;
                     }
                 });
+                if self.details {
+                    ui.separator();
+                    let [picture, clock] = readout.since_turn;
+                    // The clock runs on while the picture's time is stopped
+                    // and no picture asks for a frame.
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs(1));
+                    ui.monospace(format!(
+                        "since the turn  {:>7} of the picture  {:>7} by the clock",
+                        span(picture),
+                        span(clock)
+                    ));
+                }
             });
         command
     }

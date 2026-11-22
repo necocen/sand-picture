@@ -296,15 +296,18 @@ impl Model {
         &self.steps
     }
 
-    /// Begin turning the picture over. A turn in progress goes on unchanged;
-    /// hands that were shaking the picture stop shaking it.
-    pub fn start_turn(&mut self) {
-        if !matches!(self.motion, Some(Motion::Turn { .. })) {
+    /// Begin turning the picture over, and tell whether a turn began: one in
+    /// progress goes on unchanged. Hands that were shaking the picture stop
+    /// shaking it.
+    pub fn start_turn(&mut self) -> bool {
+        let begins = !matches!(self.motion, Some(Motion::Turn { .. }));
+        if begins {
             self.motion = Some(Motion::Turn {
                 elapsed: 0.,
                 mirrored: false,
             });
         }
+        begins
     }
 
     /// Begin shaking the picture left and right, unless the hands are at a
