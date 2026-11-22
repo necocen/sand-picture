@@ -136,7 +136,8 @@ impl Product {
         self.updates
     }
 
-    /// Updates the GPU has completed since the scene.
+    /// Updates the GPU has completed since the scene: for the agent's status.
+    #[cfg(not(target_family = "wasm"))]
     pub fn completed_updates(&self) -> u64 {
         self.completed
     }

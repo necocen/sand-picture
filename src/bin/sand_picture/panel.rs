@@ -70,7 +70,9 @@ impl Panel {
         self.visible = !self.visible;
     }
 
-    /// Fold the times since the turn away, or unfold them.
+    /// Fold the times since the turn away, or unfold them: the agent's
+    /// `details` (the button does it in the window).
+    #[cfg(not(target_family = "wasm"))]
     pub fn toggle_details(&mut self) {
         self.details = !self.details;
     }
