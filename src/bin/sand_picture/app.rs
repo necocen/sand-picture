@@ -247,8 +247,6 @@ impl App for SandPicture {
                 seconds: product.seconds(),
                 paused: self.paused,
                 speed: product.speed(),
-                mean_speed: product.mean_speed(),
-                updates: [product.completed_updates(), product.updates()],
             },
             State::Opening => return progress(root, None),
             State::Building(building) => return progress(root, Some(building.progress())),

@@ -23,9 +23,6 @@ pub struct Product {
     /// Completions within the last RECENT of play: when, and the update then
     /// complete.
     recent: VecDeque<(Instant, u64)>,
-    /// Where the present stretch of play began: when, and the updates then
-    /// complete.
-    play: (Instant, u64),
     reset_pending: bool,
     turn_pending: bool,
     shake_pending: bool,
@@ -43,7 +40,6 @@ impl Product {
             completed: 0,
             in_flight: VecDeque::new(),
             recent: VecDeque::new(),
-            play: (Instant::now(), 0),
             reset_pending: false,
             turn_pending: false,
             shake_pending: false,
@@ -124,11 +120,10 @@ impl Product {
         }
     }
 
-    /// A stretch of play begins: after a pause or a reset the speeds are
+    /// A stretch of play begins: after a pause or a reset the speed is
     /// measured anew.
     pub fn play_begins(&mut self) {
         self.recent.clear();
-        self.play = (Instant::now(), self.completed);
     }
 
     /// Updates encoded since the scene: what a picture drawn now shows.
@@ -152,13 +147,6 @@ impl Product {
         let (first, last) = (self.recent.front()?, self.recent.back()?);
         let span = last.0.duration_since(first.0).as_secs_f64();
         (span > 0.).then(|| (last.1 - first.1) as f64 * f64::from(DT) / span)
-    }
-
-    /// The same over the present stretch of play, from its beginning.
-    pub fn mean_speed(&self) -> Option<f64> {
-        let last = self.recent.back()?;
-        let span = last.0.duration_since(self.play.0).as_secs_f64();
-        (span > 0.).then(|| (last.1 - self.play.1) as f64 * f64::from(DT) / span)
     }
 
     /// From now on the kept picture is `size` pixels.

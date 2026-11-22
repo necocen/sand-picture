@@ -1,6 +1,5 @@
 //! The control panel: one egui window at an edge of the picture, which hides.
 use mikage::egui;
-use sand_picture::model::{CELLS, TANK};
 use sand_picture::view::Mode;
 
 /// The window's edge the panel sits at. The top is the default: the deposit,
@@ -30,26 +29,20 @@ pub struct Readout {
     /// The picture's own time (s).
     pub seconds: f64,
     pub paused: bool,
-    /// Seconds of the picture per second of the clock: over the last two
-    /// seconds, and since play began.
+    /// Seconds of the picture per second of the clock over the last two
+    /// seconds.
     pub speed: Option<f64>,
-    pub mean_speed: Option<f64>,
-    /// Updates the GPU has completed, and updates encoded.
-    pub updates: [u64; 2],
 }
 
 pub struct Panel {
     visible: bool,
     side: Side,
-    /// Whether the finer numbers are unfolded.
-    details: bool,
 }
 impl Default for Panel {
     fn default() -> Self {
         Self {
             visible: true,
             side: Side::default(),
-            details: false,
         }
     }
 }
@@ -137,7 +130,6 @@ impl Panel {
                     ui.monospace(speed)
                         .on_hover_text("Seconds of the picture per second, over the last 2 s");
                     ui.separator();
-                    ui.toggle_value(&mut self.details, "Details");
                     if ui
                         .button(other)
                         .on_hover_text("Move the panel (P)")
@@ -153,25 +145,6 @@ impl Panel {
                         self.visible = false;
                     }
                 });
-                if self.details {
-                    ui.separator();
-                    let [done, encoded] = readout.updates;
-                    ui.monospace(format!("updates  {done} done of {encoded}, 8 ms each"));
-                    ui.monospace(match readout.mean_speed {
-                        Some(speed) => format!("speed    {speed:.2} x since play began"),
-                        None => "speed    -".to_owned(),
-                    });
-                    ui.monospace(format!(
-                        "tank     {:.0} x {:.0} cm, {} x {} cells",
-                        TANK[0] * 100.,
-                        TANK[1] * 100.,
-                        CELLS[0],
-                        CELLS[1]
-                    ));
-                    ui.monospace(
-                        "keys     F turn  S shake  Space pause  R reset  V view  H panel  P side",
-                    );
-                }
             });
         command
     }
