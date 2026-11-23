@@ -26,6 +26,17 @@ fn slice_at(x: u32, height: f32) -> vec2<f32> {
     return mix(strata[base + k], strata[base + min(k + 1u, u32(last))], s - f32(k));
 }
 fn record(x: u32, k: u32) -> vec2<f32> { return strata[strata_base(x) + STRATA_HEADER + k]; }
+// Whether slice k of column x belongs to a block captured at once (at least
+// half a cell laid at the same time): its timestamp marks when the column was
+// captured, not a past surface rising through the block.
+fn in_block(x: u32, k: u32) -> bool {
+    let n = slices(x);
+    if k >= n { return false; }
+    let t = record(x, k).y;
+    let half = STRATA_RES / 2u;
+    return (k >= half && record(x, k - half).y == t)
+        || (k + half < n && record(x, k + half).y == t);
+}
 // The last slice of column x laid down by `time` (0 if none).
 fn slice_by_time(x: u32, time: f32) -> u32 {
     let n = slices(x);
@@ -89,15 +100,20 @@ fn bed_at(p: vec2<f32>) -> Bed {
     // linearly, so walk those times in order and solve the crossing segment.
     let a = u32(x0);
     let b = u32(x1);
-    // Sand that both columns laid down at this height in the same update (a
-    // bed captured at once: the factory's deposit, a resting mass) has no
-    // past surface between them to follow: every slice of the block carries
-    // the block's time, and the walk below would stop at the block's top.
-    // Its slices' shares are interpolated between the columns instead.
+    // Sand laid as a block at once (the factory's deposit, or a resting slab
+    // captured after a turn—possibly on different updates in adjacent columns
+    // as bubbles lift off it) has no past surface within the block to follow:
+    // every slice of the block carries the capture time, so the time walk
+    // below would lock onto the block's ends and smear them vertically.
+    // Interpolate its slices horizontally at this height instead.
     let k = min(u32(height * f32(STRATA_RES)), cfg.size.y * STRATA_RES - 1u);
-    if in0 && in1 && record(a, k).y == record(b, k).y {
+    let block0 = in0 && in_block(a, k);
+    let block1 = in1 && in_block(b, k);
+    if in0 && in1 && (block0 || block1 || record(a, k).y == record(b, k).y) {
         return Bed(inside, mix(slice_at(a, height).x, slice_at(b, height).x, w));
     }
+    if block0 && !in1 { return Bed(inside, slice_at(a, height).x); }
+    if block1 && !in0 { return Bed(inside, slice_at(b, height).x); }
     let now = strata[strata_base(a)].y;
     let t0 = select(now, slice_at(a, height).y, in0);
     let t1 = select(now, slice_at(b, height).y, in1);
@@ -116,9 +132,9 @@ fn bed_at(p: vec2<f32>) -> Bed {
             break;
         }
         time = next;
-        gap = rise;
-        if n0 <= next { k0 += 1u; }
-        if n1 <= next { k1 += 1u; }
+        if n0 <= next { k0 = slice_by_time(a, next); }
+        if n1 <= next { k1 = slice_by_time(b, next); }
+        gap = mix(surface_at(a, k0, time).x, surface_at(b, k1, time).x, w) - height;
     }
     return Bed(inside, mix(surface_at(a, k0, time).y, surface_at(b, k1, time).y, w));
 }

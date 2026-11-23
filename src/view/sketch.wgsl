@@ -180,6 +180,16 @@ fn sketch_cells(@builtin(global_invocation_id) id: vec3<u32>) {
         held = vec2<f32>(0.);
         other = vec2<f32>(0.);
     }
+    // A floor-connected bed cell right beside a packed mobile body (for
+    // example, while bubbles delay capture of an adjacent column after a
+    // mid-drainage turn) joins the body's smooth field so the B-spline does
+    // not fall below half and open a dark slit along the bed-body seam.
+    // Bed cells with no mobile body beside them have beside <= 0.5 and stay
+    // excluded, leaving the bed's own crisp surface untouched.
+    let column = terrain[id.x];
+    if column.x > 0. && f32(id.y) <= column.y {
+        held += smoothstep(.5, .75, beside) * max(cells[i].bed.xy, vec2<f32>(0.));
+    }
     let sections = held / cfg.diameters;
     // An outline needs the gas of the cells around a point to weigh a half;
     // sand under a ten-thousandth of the cells shows no grain.

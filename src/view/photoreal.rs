@@ -99,7 +99,13 @@ impl Photoreal {
             ),
             kernel(
                 "sketch_cells",
-                &[entry(0, config), entry(3, &facts), entry(4, &cells)],
+                &[
+                    entry(0, config),
+                    entry(1, &buffers.cells),
+                    entry(3, &facts),
+                    entry(4, &cells),
+                    entry(5, &buffers.terrain),
+                ],
             ),
         ];
         let picture = Picture::new(
