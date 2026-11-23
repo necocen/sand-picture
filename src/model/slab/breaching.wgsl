@@ -119,8 +119,22 @@ fn roof_share(start:vec2<i32>,roof:u32)->f32{
         let cb=cells[at(below)];
         if plug_deposit(cb){return 1.;}
         if !open_water(cb){
-            if cb.volume.gas*cfg.h>=GRAIN_LAYER{return 0.;}
-            return geometry[SET_IN_ROW*cfg.n+roof_body(roof)].y;
+            let gas_below=cb.volume.gas*cfg.h>=GRAIN_LAYER;
+            if !gas_below{
+                let sup=geometry[SET_IN_ROW*cfg.n+roof_body(roof)].y;
+                if sup>0.{return sup;}
+            }
+            // Only breach a roof over a distant bubble or sand when it is a thin
+            // hanging bridge with open water BOTH above (within 18 cells) and below
+            // (>= 2 open-water cells), so displaced water can escape upward and the
+            // bridge collapses instead of hovering over an empty cavern.
+            if step>=2{
+                let rp=point(roof);
+                for(var up=1;up<=18&&rp.y+up<i32(cfg.ny);up++){
+                    if open_water(cells[at(vec2<i32>(rp.x,rp.y+up))]){return 1.;}
+                }
+            }
+            return 0.;
         }
         p=below;
     }

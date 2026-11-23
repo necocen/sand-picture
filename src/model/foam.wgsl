@@ -318,20 +318,37 @@ fn foam_step(
                 let gy = foam_solid_at(p + vec2<f32>(0.0, 0.45)) - foam_solid_at(p - vec2<f32>(0.0, 0.45));
                 let gp = vec2<f32>(gx, gy);
                 let gplen = length(gp);
-                let push = min(0.28, (phi_s - FOAM_SAND_LEVEL) * 1.45);
-                if gplen > 0.03 {
-                    let dir = -gp / gplen;
-                    p += dir * push;
-                    // Only count dense sand genuinely overhead (not a vertical crater wall
-                    // or dilute falling veil) as anchoring the bubble against buoyancy.
-                    if phi_s > 0.35 && dot(gp / gplen, up_dir) > 0.45 { held_k += 1u; }
-                } else {
-                    // Deep inside uniform sand (e.g. mid-drainage flip): escape toward open water.
-                    let esc = select(up_dir, -up_dir, p.y > 0.5 * f32(ROWS));
-                    p += esc * 0.35;
-                    if p.y > 0.5 * f32(ROWS) { held_k += 1u; }
+                // A bubble's buoyancy (~30 Pa) exceeds the submerged weight of a thin
+                // <= 3-cell sand crust (~15 Pa) separating it from open water above
+                // (a cavity or the final top water layer): punch straight through it
+                // instead of corking the cavity from below.
+                var thin_crust = false;
+                if gplen > 0.03 && dot(gp / gplen, up_dir) > 0.30 {
+                    for (var step_u = 1; step_u <= 4; step_u++) {
+                        let probe = p + up_dir * f32(step_u);
+                        if probe.y >= f32(ROWS) - 1.5 || probe.y <= 1.5 { break; }
+                        if foam_solid_at(probe) < 0.15 {
+                            thin_crust = true;
+                            break;
+                        }
+                    }
                 }
-                contact = 1.0;
+                if !thin_crust {
+                    let push = min(0.28, (phi_s - FOAM_SAND_LEVEL) * 1.45);
+                    if gplen > 0.03 {
+                        let dir = -gp / gplen;
+                        p += dir * push;
+                        // Only count dense sand genuinely overhead (not a vertical crater wall
+                        // or dilute falling veil) as anchoring the bubble against buoyancy.
+                        if phi_s > 0.35 && dot(gp / gplen, up_dir) > 0.45 { held_k += 1u; }
+                    } else {
+                        // Deep inside uniform sand (e.g. mid-drainage flip): escape toward open water.
+                        let esc = select(up_dir, -up_dir, p.y > 0.5 * f32(ROWS));
+                        p += esc * 0.35;
+                        if p.y > 0.5 * f32(ROWS) { held_k += 1u; }
+                    }
+                    contact = 1.0;
+                }
             }
 
             // Neighbor bubble soap-film contact (flat shared walls + Plateau borders).
@@ -355,10 +372,11 @@ fn foam_step(
             }
 
             // Tank glass frame with thin wetting water film.
+            // Smooth top glass stops upward rise without pinning bubbles laterally,
+            // so post-flip clusters spread evenly along the ceiling instead of bunching.
             let min_p = vec2<f32>(FOAM_WALL_PAD, FOAM_WALL_PAD);
             let max_p = vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD);
             if p.x < min_p.x || p.x > max_p.x || p.y < min_p.y || p.y > max_p.y {
-                if p.y >= max_p.y - 0.05 && cfg.gravity > 0.0 { held_k += 3u; }
                 p = clamp(p, min_p, max_p);
                 contact = 1.0;
             }
@@ -504,16 +522,22 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     workgroupBarrier();
 
-    // Thread 0 performs any ready vertical coalescence (drain_time >= 2.0 s) and refreshes slot coloring.
+    // Thread 0 performs surfactant-capped vertical coalescence, Rayleigh-Taylor
+    // breakup of over-wide rising bubbles after a flip, and slot coloring.
     if tid == 0u {
+        // A. Surfactant-stabilized vertical coalescence: only merge bubbles pressed
+        // together in a held stack for >= 3.0 s whose combined area stays within
+        // the capillary puddle scale (~pi * l_c^2 ≈ 17.5 cells^2), preventing
+        // runaway growth into giant low-coverage blobs.
         for (var i = 0u; i < MAX_BUBBLES; i++) {
-            if foam_next[i].alive == 0u || foam_next[i].drain_time < 2.0 { continue; }
+            if foam_next[i].alive == 0u || foam_next[i].held == 0u || foam_next[i].drain_time < 3.0 { continue; }
             let j = foam_next[i].drain_partner;
-            if j >= MAX_BUBBLES || j == i || foam_next[j].alive == 0u { continue; }
-            // Merge lower bubble i into upper bubble j, conserving exact combined area.
+            if j >= MAX_BUBBLES || j == i || foam_next[j].alive == 0u || foam_next[j].held == 0u { continue; }
             let ai = foam_next[i].target_area;
             let aj = foam_next[j].target_area;
             let tot = ai + aj;
+            if tot > 20.0 { continue; }
+            // Merge lower bubble i into upper bubble j, conserving exact combined area.
             let cent = (ai * foam_next[i].centroid + aj * foam_next[j].centroid) / max(tot, 1e-4);
             var merged: array<vec2<f32>, FOAM_VERTS>;
             for (var k = 0u; k < FOAM_VERTS; k++) {
@@ -575,6 +599,83 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             sh_alive[i] = 0u;
             sh_bmin[j] = bmin;
             sh_bmax[j] = bmax;
+        }
+
+        // B. Rayleigh-Taylor / flip breakup: a wide freely-rising bubble (exceeding
+        // the Hele-Shaw splitting scale ~4.2 cells wide, area > 10.5 cells^2) splits
+        // cleanly into two equal-area daughter bubbles whenever a free slot exists,
+        // conserving exact total air volume and restoring high curtain coverage after flips.
+        var splits = 0u;
+        for (var j = 0u; j < MAX_BUBBLES && splits < 4u; j++) {
+            if sh_alive[j] == 0u || foam_next[j].held != 0u { continue; }
+            let area = foam_next[j].target_area;
+            let w_bub = sh_bmax[j].x - sh_bmin[j].x;
+            // Only split once rising freely below the ceiling (or wide flat puddle).
+            if area <= 13.5 || w_bub <= 5.0 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
+            var free_slot = 0xffffffffu;
+            for (var s = 0u; s < MAX_BUBBLES; s++) {
+                if sh_alive[s] == 0u {
+                    free_slot = s;
+                    break;
+                }
+            }
+            if free_slot == 0xffffffffu { break; }
+            let half_a = 0.5 * area;
+            let cent = foam_next[j].centroid;
+            let dx = max(0.25 * w_bub, 0.55);
+            let rx = clamp(dx - 0.08, 0.45, 2.2);
+            let ry = clamp(half_a / (3.14159265 * rx), 0.45, 2.0);
+            let rx_exact = half_a / (3.14159265 * ry);
+            let c_left = clamp(
+                cent - vec2<f32>(dx, 0.0),
+                vec2<f32>(FOAM_WALL_PAD + rx_exact, FOAM_WALL_PAD + ry),
+                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_exact, f32(ROWS) - FOAM_WALL_PAD - ry),
+            );
+            let c_right = clamp(
+                cent + vec2<f32>(dx, 0.0),
+                vec2<f32>(FOAM_WALL_PAD + rx_exact, FOAM_WALL_PAD + ry),
+                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_exact, f32(ROWS) - FOAM_WALL_PAD - ry),
+            );
+            var bmin_l = vec2<f32>(f32(COLUMNS), f32(ROWS));
+            var bmax_l = vec2<f32>(0.0);
+            var bmin_r = vec2<f32>(f32(COLUMNS), f32(ROWS));
+            var bmax_r = vec2<f32>(0.0);
+            for (var k = 0u; k < FOAM_VERTS; k++) {
+                let theta = 2.0 * 3.14159265 * f32(k) / f32(FOAM_VERTS);
+                let off = vec2<f32>(rx_exact * cos(theta), ry * sin(theta));
+                let pl = clamp(c_left + off, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
+                let pr = clamp(c_right + off, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
+                foam_next[j].verts[k] = pl;
+                foam_next[free_slot].verts[k] = pr;
+                bmin_l = min(bmin_l, pl);
+                bmax_l = max(bmax_l, pl);
+                bmin_r = min(bmin_r, pr);
+                bmax_r = max(bmax_r, pr);
+            }
+            foam_next[j].target_area = half_a;
+            foam_next[j].centroid = c_left;
+            foam_next[j].bbox_min = bmin_l;
+            foam_next[j].bbox_max = bmax_l;
+            foam_next[j].drain_time = 0.0;
+            foam_next[j].drain_partner = 0xffffffffu;
+            foam_next[j].disp_vel = vec2<f32>(0.0);
+            foam_next[free_slot].target_area = half_a;
+            foam_next[free_slot].drain_time = 0.0;
+            foam_next[free_slot].slot = (foam_next[j].slot + 1u) % GAS_SLOTS;
+            foam_next[free_slot].alive = 1u;
+            foam_next[free_slot].centroid = c_right;
+            foam_next[free_slot].vel = foam_next[j].vel;
+            foam_next[free_slot].bbox_min = bmin_r;
+            foam_next[free_slot].bbox_max = bmax_r;
+            foam_next[free_slot].drain_partner = 0xffffffffu;
+            foam_next[free_slot].held = 0u;
+            foam_next[free_slot].disp_vel = vec2<f32>(0.0);
+            sh_alive[free_slot] = 1u;
+            sh_bmin[j] = bmin_l;
+            sh_bmax[j] = bmax_l;
+            sh_bmin[free_slot] = bmin_r;
+            sh_bmax[free_slot] = bmax_r;
+            splits += 1u;
         }
 
         // Refresh greedy slot coloring in shared memory so touching bubbles keep distinct GAS_SLOTS.

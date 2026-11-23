@@ -106,10 +106,33 @@ fn overburden_stress(i:u32)->f32{
     if wet<=0.||solid<CRITICAL_PACKING*wet{return 0.;}
     let saturation=dot(g,RHO.yz-vec2<f32>(RHO.x))*cfg.gravity*PLATE_GAP/(2.*KINETIC_FRICTION*LATERAL_STRESS_RATIO);
     var weight=0.;
+    var open_above=false;
+    var above_rows=0;
     for(var y=p.y+1;y<i32(cfg.ny)&&weight<saturation;y++){
         let cj=cells[at(vec2<i32>(p.x,y))];let gj=grains(cj);let sj=gj.x+gj.y;let wj=max(cj.volume.water,0.)+sj;
-        if wj<=0.||sj<CRITICAL_PACKING*wj{break;}
+        if wj<=0.||sj<CRITICAL_PACKING*wj{
+            if open_water(cj){open_above=true;}
+            break;
+        }
         weight+=dot(gj,RHO.yz-vec2<f32>(RHO.x))*cfg.gravity*cfg.h;
+        above_rows+=1;
+    }
+    // A thin unsupported sand bridge with open water both above (free top surface)
+    // and below (>= 2 cells of empty water, no bubble or bed supporting it) has
+    // zero vertical bearing stress at its free underside and cannot arch across
+    // a cavern via Janssen wall friction.
+    if open_above&&above_rows<=16{
+        var open_run=0;
+        for(var d=1;d<=16&&p.y-d>=0;d++){
+            let cb=cells[at(vec2<i32>(p.x,p.y-d))];
+            if cb.volume.gas>.15||cb.bed.z>0.{break;}
+            if open_water(cb){
+                open_run+=1;
+                if open_run>=2{return 0.;}
+            }else if open_run>0{
+                break;
+            }
+        }
     }
     return LATERAL_STRESS_RATIO*min(weight,saturation);
 }
