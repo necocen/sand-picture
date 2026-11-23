@@ -176,7 +176,7 @@ fn foam_step(
     }
     if k == 0u {
         sh_vel = foam[bi].vel;
-        atomicStore(&sh_held, foam[bi].held);
+        atomicStore(&sh_held, select(0u, 3u, foam[bi].held != 0u));
         let bmin = foam[bi].bbox_min - vec2<f32>(2.0);
         let bmax = foam[bi].bbox_max + vec2<f32>(2.0);
         var ncnt = 0u;
@@ -242,9 +242,9 @@ fn foam_step(
                 sh_centroid = avg / f32(FOAM_VERTS);
             }
             let uf_mean = select(vec2<f32>(0.0), uf_sum / uf_w, uf_w > 0.5);
-            let was_held = atomicLoad(&sh_held);
-            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.04 * v_rise, was_held != 0u);
-            if was_held != 0u {
+            let was_held = atomicLoad(&sh_held) >= 3u;
+            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.04 * v_rise, was_held);
+            if was_held {
                 // Capillary meniscus hysteresis pins anchored bubbles under the slab so
                 // weak lateral water inflow cannot sweep the raft into clumps, and stops
                 // upward drift from poking pointy cusps into the packed sand above.
@@ -322,12 +322,14 @@ fn foam_step(
                 if gplen > 0.03 {
                     let dir = -gp / gplen;
                     p += dir * push;
-                    if dot(gp, up_dir) > 0.05 { held_k = 1u; }
+                    // Only count dense sand genuinely overhead (not a vertical crater wall
+                    // or dilute falling veil) as anchoring the bubble against buoyancy.
+                    if phi_s > 0.35 && dot(gp / gplen, up_dir) > 0.45 { held_k += 1u; }
                 } else {
                     // Deep inside uniform sand (e.g. mid-drainage flip): escape toward open water.
                     let esc = select(up_dir, -up_dir, p.y > 0.5 * f32(ROWS));
                     p += esc * 0.35;
-                    if p.y > 0.5 * f32(ROWS) { held_k = 1u; }
+                    if p.y > 0.5 * f32(ROWS) { held_k += 1u; }
                 }
                 contact = 1.0;
             }
@@ -347,7 +349,7 @@ fn foam_step(
                     p += vec2<f32>(res.y, res.z) * (0.52 * pen);
                     contact = max(contact, 0.85);
                     if foam[nb].centroid.y > sh_centroid.y && foam[nb].held != 0u {
-                        held_k = 1u;
+                        held_k += 3u;
                     }
                 }
             }
@@ -356,7 +358,7 @@ fn foam_step(
             let min_p = vec2<f32>(FOAM_WALL_PAD, FOAM_WALL_PAD);
             let max_p = vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD);
             if p.x < min_p.x || p.x > max_p.x || p.y < min_p.y || p.y > max_p.y {
-                if p.y >= max_p.y - 0.05 && cfg.gravity > 0.0 { held_k = 1u; }
+                if p.y >= max_p.y - 0.05 && cfg.gravity > 0.0 { held_k += 3u; }
                 p = clamp(p, min_p, max_p);
                 contact = 1.0;
             }
@@ -381,7 +383,7 @@ fn foam_step(
             sh_free_perim = max(free_p, 1e-3);
         }
         if held_k != 0u {
-            atomicOr(&sh_held, 1u);
+            atomicAdd(&sh_held, held_k);
         }
         workgroupBarrier();
 
@@ -438,7 +440,7 @@ fn foam_step(
         foam_next[bi].vel = sh_vel;
         foam_next[bi].bbox_min = bmin;
         foam_next[bi].bbox_max = bmax;
-        let is_held = atomicLoad(&sh_held);
+        let is_held = select(0u, 1u, atomicLoad(&sh_held) >= 3u);
         foam_next[bi].drain_partner = foam[bi].drain_partner;
         foam_next[bi].held = is_held;
         let raw_disp = clamp(

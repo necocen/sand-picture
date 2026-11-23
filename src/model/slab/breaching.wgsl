@@ -25,15 +25,21 @@ fn breach_donor(c:Cell)->bool{return !plug_deposit(c)&&teeth_sandy(c);}
 // rest on the upper sand (a funnel's floor, a pocket) bury its foot.
 fn falls_away(start:vec2<i32>,away:i32)->bool{
     var p=start;
+    var horiz=0;
     for(var step=0;step<4*i32(cfg.ny);step++){
         let below=p-axis(1u);
         if !valid(below){return true;}
         let cb=cells[at(below)];
         if plug_deposit(cb){return true;}
-        if open_water(cb){p=below;continue;}
+        if open_water(cb){p=below;horiz=0;continue;}
+        // Grains shed from a side wall cannot march horizontally across a flat
+        // shelf of bubbles or settled sand to reach a distant slot: require a
+        // downhill slope of at least 45 deg (at most 1 horizontal step per drop).
+        if horiz>=1{return false;}
         let ahead=p+vec2<i32>(away,0);
         if !valid(ahead)||!open_water(cells[at(ahead)]){return false;}
         p=ahead;
+        horiz+=1;
     }
     return false;
 }
