@@ -25,7 +25,13 @@
 @compute @workgroup_size(128) fn free_powder(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}
     let c=cells[i];let g=grains(c);let water=max(c.volume.water,0.);let wet=water+g.x+g.y;
-    if g.x<=0.||water<=0.||c.volume.gas>0.15||c.powder.free>=c.powder.mobile{return;}
+    if g.x<=0.||water<=0.||c.volume.gas>0.10||c.powder.free>=c.powder.mobile||standing(i){return;}
+    // Bubble menisci and seepage right above a bubble do not tear consolidated sand into 20 um dust.
+    let p=point(i);
+    for(var dy=-2;dy<=2;dy++){for(var dx=-2;dx<=2;dx++){
+        let q=p+vec2<i32>(dx,dy);
+        if valid(q)&&cells[at(q)].volume.gas>0.10{return;}
+    }}
     let slip=c.momentum[1]/g.x-c.momentum[0]/water;
     let settling=TERMINAL_SPEED.x*length(vec3<f32>(cfg.lateral,cfg.gravity,plate_gravity()))/STANDARD_GRAVITY;
     if length(slip)<=settling{return;}

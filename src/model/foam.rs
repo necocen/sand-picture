@@ -145,12 +145,11 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
         }
     }
 
-    // Scale existing bubble areas slightly (~1.12x) and add 26 extra bubbles along
-    // a second layer just below the ceiling (~125 bubbles total, ~740 cells^2 of air)
-    // for richer underside coverage and a gentler, multi-minute drainage pace.
+    // Scale existing bubble areas (~1.20x) and fill all remaining slots up to
+    // MAX_BUBBLES (128 bubbles total, ~820 cells^2 of air) for lush coverage.
     let extracted_gas: f64 = list.iter().map(|b| f64::from(b.area)).sum();
     if extracted_gas > 1.0 && total_scene_gas > 0.0 {
-        let ratio = (1.12 * total_scene_gas / extracted_gas) as f32;
+        let ratio = (1.20 * total_scene_gas / extracted_gas) as f32;
         let pad = 0.06_f32;
         for b in &mut list {
             b.area *= ratio;
@@ -175,7 +174,7 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
         }
     }
 
-    let extra_target = MAX_BUBBLES.saturating_sub(list.len()).min(26);
+    let extra_target = MAX_BUBBLES.saturating_sub(list.len());
     if extra_target > 0 {
         let pad = 0.06_f32;
         let span = nx as f32 - 12.0;
@@ -184,9 +183,9 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
             // Deterministic varied mix of medium cushions and small capillary spacers
             let hash = ((idx as u32).wrapping_mul(2654435761) >> 16) as f32 / 65536.0;
             let area_f = if idx % 3 == 0 {
-                2.4 + 1.6 * hash // small round spacer
+                2.8 + 1.8 * hash // small round spacer
             } else {
-                5.5 + 4.5 * hash // medium horizontal cushion
+                6.5 + 5.0 * hash // medium horizontal cushion
             };
             let aspect = if idx % 3 == 0 { 1.1 } else { 2.4 };
             let ry = (area_f / (std::f32::consts::PI * aspect))

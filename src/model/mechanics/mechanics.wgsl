@@ -118,6 +118,21 @@ fn overburden_stress(i:u32)->f32{
 fn friction_limit(i:u32,c:Cell,mu:f32)->f32{
     let wet=dense_volume(i);let g=grains(c);
     if wet<=.01||g.x+g.y<=.005{return 0.;}
+    // An isolated 1-3 cell speck floating in open water (no wall, bed, bubble,
+    // or packed body of >= 3 neighbors around it) cannot arch against the glass
+    // plates and must fall under gravity.
+    let p=point(i);
+    if p.x>0&&p.x<i32(cfg.nx)-1&&p.y>0&&p.y<i32(cfg.ny)-1{
+        var supported=false;var packed_nbrs=0u;
+        for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
+            if dx==0&&dy==0{continue;}
+            let cj=cells[at(p+vec2<i32>(dx,dy))];
+            let gj=grains(cj);let sj=gj.x+gj.y;let wj=max(cj.volume.water,0.)+sj;
+            if cj.bed.z>0.||cj.volume.gas>0.10{supported=true;}
+            if wj>0.&&sj>=FREEZING_PACKING*wj{packed_nbrs+=1u;}
+        }}
+        if !supported&&packed_nbrs<3u{return 0.;}
+    }
     // A layer whose support flows away slides to fill the voids on its load
     // alone: the suction resists the shear of a packing that must dilate,
     // not a filling the kinematic model imposes. Only in the slow flow an

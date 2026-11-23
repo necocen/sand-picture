@@ -64,8 +64,10 @@ struct Sketch {
 const EXPOSURE: f32 = 1. / 60.;
 // The packing of sand at rest, the deposit's (material.rs).
 const REST_PACKING: f32 = .585;
-// The most cells over a body that the layer on it takes up in the model.
-const SURFACE_LAYER: i32 = 8;
+// The most cells over a body that the avalanching surface cloud takes up in the
+// model: kept wide enough that steep upper-crater avalanches stay tucked into
+// the body surface instead of popping out as vertical diagonal-streak tufts.
+const SURFACE_LAYER: i32 = 16;
 // The least sand (of a cell's volume) with which the water over a body
 // bears the layer on: less shows a grain in one pixel of a thousand.
 const LAYER_SAND: f32 = 1.e-4;

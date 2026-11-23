@@ -654,6 +654,10 @@ fn foam_raster(
 
     var held_mask = 0u;
     var anchor_mask = 0u;
+    var c0_f = 0.0;
+    var c0_shape = vec4<f32>(0.0);
+    var c1_f = 0.0;
+    var c1_shape = vec4<f32>(0.0);
     for (var l = 0u; l < GAS_SLOTS; l++) {
         let f = slot_frac[l] * scale;
         let keep_w = geometry[layer_index(i, l)].w;
@@ -662,8 +666,18 @@ fn foam_raster(
             let l1_sum = abs(n.x) + abs(n.y);
             let n_l1 = select(vec2<f32>(0.0, 1.0), n / l1_sum, l1_sum > 1e-6);
             let alpha = intercept(n_l1, clamp(f, 0.0, 1.0));
+            let plane = vec4<f32>(n_l1, alpha, 0.0);
             geometry[layer_index(i, l)] = vec4<f32>(f, f32(l + 1u), 0.0, keep_w);
-            geometry[shape_index(i, l)] = vec4<f32>(n_l1, alpha, 0.0);
+            geometry[shape_index(i, l)] = plane;
+            if f > c0_f {
+                c1_f = c0_f;
+                c1_shape = c0_shape;
+                c0_f = f;
+                c0_shape = plane;
+            } else if f > c1_f {
+                c1_f = f;
+                c1_shape = plane;
+            }
             atomicStore(&labels[label_node(i, l)], slot_bub[l]);
             held_mask |= 1u << l;
             if slot_bub[l] < MAX_BUBBLES && foam[slot_bub[l]].held != 0u {
@@ -675,6 +689,10 @@ fn foam_raster(
             atomicStore(&labels[label_node(i, l)], NO_LABEL);
         }
     }
+    // Populate CONTACT_ROW with the two largest bubbles' exact planes so curved_passage,
+    // free_wet_aperture, grain_crosses, and slot_width seal bubble boundaries cleanly.
+    geometry[contact_index(i, 0u)] = c0_shape;
+    geometry[contact_index(i, 1u)] = c1_shape;
 
     let old_water = max(c.volume.water, 0.0);
     let new_water = max(room - total_gas, 0.0);
