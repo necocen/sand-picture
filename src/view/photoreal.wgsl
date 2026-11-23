@@ -25,8 +25,7 @@ struct FoamBubble {
     bbox_max: vec2<f32>,
     drain_partner: u32,
     held: u32,
-    pad0: u32,
-    pad1: u32,
+    disp_vel: vec2<f32>,
     verts: array<vec2<f32>, FOAM_VERTS>,
 }
 @group(0) @binding(6) var<storage, read> foam: array<FoamBubble>;

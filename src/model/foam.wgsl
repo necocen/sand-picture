@@ -23,8 +23,7 @@ struct FoamBubble {
     bbox_max: vec2<f32>,
     drain_partner: u32,
     held: u32,
-    pad0: u32,
-    pad1: u32,
+    disp_vel: vec2<f32>,
     verts: array<vec2<f32>, FOAM_VERTS>,
 }
 
@@ -43,7 +42,7 @@ var<workgroup> sh_pos: array<vec2<f32>, FOAM_VERTS>;
 var<workgroup> sh_pred: array<vec2<f32>, FOAM_VERTS>;
 var<workgroup> sh_tmp: array<vec2<f32>, FOAM_VERTS>;
 var<workgroup> sh_contact: array<f32, FOAM_VERTS>;
-var<workgroup> sh_uf: array<vec2<f32>, FOAM_VERTS>;
+var<workgroup> sh_uf: array<vec3<f32>, FOAM_VERTS>;
 var<workgroup> sh_nbrs: array<u32, FOAM_MAX_NBRS>;
 var<workgroup> sh_nbr_count: u32;
 var<workgroup> sh_centroid: vec2<f32>;
@@ -78,15 +77,22 @@ fn foam_solid_at(pos: vec2<f32>) -> f32 {
     return mix(mix(s00, s10, tx), mix(s01, s11, tx), ty);
 }
 
-fn foam_flow_at(pos: vec2<f32>) -> vec2<f32> {
+// Sample ambient open-water velocity outside the bubble so the ring average
+// recovers U_inf with zero self-induced dipole feedback (2D harmonic mean-value theorem).
+fn foam_ambient_flow(pos: vec2<f32>) -> vec3<f32> {
     let cx = clamp(i32(floor(pos.x)), 0, i32(COLUMNS) - 1);
     let cy = clamp(i32(floor(pos.y)), 0, i32(ROWS) - 1);
     let i = at(vec2<i32>(cx, cy));
+    let c = cells[i];
+    let solid = max(c.volume.fine, 0.) + max(c.volume.coarse, 0.) + max(c.bed.x, 0.) + max(c.bed.y, 0.);
+    if c.volume.gas > 0.35 || solid > 0.35 {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
     let vr = select(0., faces[2u * i].volume.w, cx < i32(COLUMNS) - 1);
     let vl = select(0., faces[2u * at(vec2<i32>(cx - 1, cy))].volume.w, cx > 0);
     let vu = select(0., faces[2u * i + 1u].volume.w, cy < i32(ROWS) - 1);
     let vd = select(0., faces[2u * at(vec2<i32>(cx, cy - 1)) + 1u].volume.w, cy > 0);
-    return 0.5 * vec2<f32>(vl + vr, vd + vu);
+    return vec3<f32>(0.5 * (vl + vr), 0.5 * (vd + vu), 1.0);
 }
 
 // Signed distance (< 0 inside) and exact outward unit normal from point `p` to CCW bubble `bi`.
@@ -198,7 +204,12 @@ fn foam_step(
 
     for (var sub = 0u; sub < FOAM_SUBSTEPS; sub++) {
         if k < FOAM_VERTS {
-            sh_uf[k] = foam_flow_at(sh_pos[k]);
+            let p_prev = sh_pos[(k + FOAM_VERTS - 1u) % FOAM_VERTS];
+            let p_next = sh_pos[(k + 1u) % FOAM_VERTS];
+            let tang = p_next - p_prev;
+            let t_len = max(length(tang), 1e-6);
+            let n_out = vec2<f32>(tang.y, -tang.x) / t_len;
+            sh_uf[k] = foam_ambient_flow(sh_pos[k] + 1.2 * n_out);
         }
         workgroupBarrier();
 
@@ -208,6 +219,7 @@ fn foam_step(
             var cy = 0.0;
             var per = 0.0;
             var uf_sum = vec2<f32>(0.0);
+            var uf_w = 0.0;
             for (var m = 0u; m < FOAM_VERTS; m++) {
                 let p0 = sh_pos[m];
                 let p1 = sh_pos[(m + 1u) % FOAM_VERTS];
@@ -216,7 +228,8 @@ fn foam_step(
                 cx += (p0.x + p1.x) * cr;
                 cy += (p0.y + p1.y) * cr;
                 per += length(p1 - p0);
-                uf_sum += sh_uf[m];
+                uf_sum += sh_uf[m].xy;
+                uf_w += sh_uf[m].z;
             }
             let area = max(0.5 * a2, 1e-4);
             sh_area = area;
@@ -228,7 +241,7 @@ fn foam_step(
                 for (var m = 0u; m < FOAM_VERTS; m++) { avg += sh_pos[m]; }
                 sh_centroid = avg / f32(FOAM_VERTS);
             }
-            let uf_mean = uf_sum / f32(FOAM_VERTS);
+            let uf_mean = select(vec2<f32>(0.0), uf_sum / uf_w, uf_w > 0.5);
             let was_held = atomicLoad(&sh_held);
             var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.04 * v_rise, was_held != 0u);
             if was_held != 0u {
@@ -265,8 +278,9 @@ fn foam_step(
             let p_hydro = -RHO.x * press_factor * dot(g_vec, p_curr - sh_centroid) * cfg.h;
             let dn_total = clamp((dt_sub / FOAM_GAMMA) * (p_laplace + p_hydro) / cfg.h, -0.10, 0.10);
 
-            // Blend local fluid velocity softly (pinned bubbles resist lateral shear).
-            let v_vert = mix(sh_vel, sh_uf[k], 0.10);
+            // Blend local ambient fluid velocity softly (pinned bubbles resist lateral shear).
+            let uf_loc = select(sh_vel, sh_uf[k].xy, sh_uf[k].z > 0.5);
+            let v_vert = mix(sh_vel, uf_loc, 0.10);
             let pred = p_curr + (v_vert / cfg.h) * dt_sub + dn_total * n_out;
             sh_pred[k] = pred;
             sh_tmp[k] = pred;
@@ -424,8 +438,22 @@ fn foam_step(
         foam_next[bi].vel = sh_vel;
         foam_next[bi].bbox_min = bmin;
         foam_next[bi].bbox_max = bmax;
+        let is_held = atomicLoad(&sh_held);
         foam_next[bi].drain_partner = foam[bi].drain_partner;
-        foam_next[bi].held = atomicLoad(&sh_held);
+        foam_next[bi].held = is_held;
+        let raw_disp = clamp(
+            (cent - foam[bi].centroid) * cfg.h / max(cfg.dt, 1e-6),
+            vec2<f32>(-0.15),
+            vec2<f32>(0.15),
+        );
+        // Anchored bubbles are stationary impermeable obstacles (disp_vel = 0) so
+        // sub-cell contact projection jitter never rings into the streamfunction solve.
+        // Freely rising bubbles use smoothed displacement velocity for their wake.
+        foam_next[bi].disp_vel = select(
+            mix(foam[bi].disp_vel, raw_disp, 0.2),
+            vec2<f32>(0.0),
+            is_held != 0u,
+        );
     }
 }
 
@@ -533,6 +561,7 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             foam_next[j].target_area = tot;
             foam_next[j].centroid = cent;
             foam_next[j].vel = (ai * foam_next[i].vel + aj * foam_next[j].vel) / max(tot, 1e-4);
+            foam_next[j].disp_vel = vec2<f32>(0.0);
             foam_next[j].bbox_min = bmin;
             foam_next[j].bbox_max = bmax;
             foam_next[j].drain_time = 0.0;
@@ -540,6 +569,7 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             foam_next[i].alive = 0u;
             foam_next[i].target_area = 0.0;
             foam_next[i].drain_time = 0.0;
+            foam_next[i].disp_vel = vec2<f32>(0.0);
             sh_alive[i] = 0u;
             sh_bmin[j] = bmin;
             sh_bmax[j] = bmax;
@@ -637,7 +667,7 @@ fn foam_raster(
         }
         slot_frac[s] += frac;
         total_gas += frac;
-        gas_mom += frac * foam[bi].vel;
+        gas_mom += frac * foam[bi].disp_vel;
     }
 
     // Clamp total gas to available non-sand room so sand conservation is strictly exact.
@@ -730,6 +760,7 @@ fn invert_foam(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     foam[bi].centroid = box_sz - foam[bi].centroid;
     foam[bi].vel = -foam[bi].vel;
+    foam[bi].disp_vel = vec2<f32>(0.0);
     foam[bi].bbox_min = bmin;
     foam[bi].bbox_max = bmax;
     foam[bi].drain_time = 0.0;

@@ -36,7 +36,7 @@ pub const USES: &[(Program, &str, &[&str])] = &[
     (Program::Model, "foam_coalesce", &["cfg", "labels", "foam", "foam_next"]),
     (Program::Model, "foam_raster", &["cfg", "cells", "geometry", "labels", "foam"]),
     (Program::Model, "foam_step", &["cfg", "cells", "faces", "foam", "foam_next"]),
-    (Program::Model, "free_powder", &["cfg", "cells", "geometry"]),
+    (Program::Model, "free_powder", &["cfg", "cells"]),
     (Program::Model, "gap_marks", &["cfg", "cells", "faces", "gaps", "labels"]),
     (Program::Model, "gas_capacity", &["cfg", "scratch", "faces", "carry_plan", "members"]),
     (Program::Model, "grain_constraint", &["cfg", "cells", "scratch", "faces", "geometry", "grain_works", "potential"]),

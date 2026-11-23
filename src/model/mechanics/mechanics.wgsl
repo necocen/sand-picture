@@ -476,24 +476,18 @@ fn entry_resistance(f:u32)->f32{
     faces[f].coarse_momentum.w=shear.bound;
     var force=load.w;let gas_fraction=face_gas(f);var gas_weight=0.;var gas_force=0.;
     if gas_fraction>0. {
-        // Air shares the common flow: no gas pressure wave, no gas unknown.
-        let rho=1.1767;let mu=.00001846;let resistance=rho/cfg.dt+12.*mu/(.001*.001);
-        let old=face_history(p,a,3u);let lap=viscous_laplacian(p,a,3u);
-        // Its weight relative to the water's, as the wet phases' (predict).
-        let air_force=rho*old/cfg.dt-(rho-RHO.x)*select(-cfg.lateral,cfg.gravity,a==1u)+mu*lap/(cfg.h*cfg.h);
-        gas_weight=gas_fraction*resistance;gas_force=gas_fraction*air_force;
-    }
-    // A gas interface crossing the face drags its menisci over the plates: a
-    // moving meniscus in a gap b needs the extra pressure jump
-    // 3.8 (2 sigma/b) Ca^(2/3), Ca = mu U/sigma (Park and Homsy 1984). Each
-    // identity's change across the face is one interface (a lamella between
-    // two bubbles is two, cf. Cantat 2013), its area per volume the jump over
-    // h; the drag is the secant at the gas's previous speed, at least 1 mm/s.
-    let j=at(p+axis(a));var jumps=0.;
-    for(var l=0u;l<GAS_SLOTS;l++){jumps+=abs(geometry[layer_index(f/2u,l)].x-geometry[layer_index(j,l)].x);}
-    if jumps>0.{
-        let speed=max(abs(face_history(p,a,3u)),.001);
-        gas_weight+=7.6*pow(SURFACE_TENSION,1./3.)*pow(9.4e-4,2./3.)/(.001*pow(speed,1./3.))*jumps/cfg.h;
+        // Prototype A: Lagrangian closed-curve bubbles (`foam_step`) already solve
+        // buoyancy, Young-Laplace surface tension, and plate meniscus drag. Here
+        // the gas acts as an immersed moving body at its true displacement velocity
+        // `u_gas`, with Brinkman impedance inside the bubble so water flows cleanly
+        // around stationary bubbles instead of jetting through them (while leaving
+        // open wet throats beside bubbles unobstructed).
+        let u_gas=face_history(p,a,3u);
+        let gas_cover=max(0.,1.-face.coarse_momentum.z);
+        let block=smoothstep(.45,.85,max(gas_fraction,gas_cover));
+        let impedance=mix(RHO.x/cfg.dt,2e7,block);
+        gas_weight=gas_fraction*impedance;
+        gas_force=gas_weight*u_gas;
     }
     // On a gliding face the sand strip stands and the gas strip moves at the
     // face's mean velocity times glide_ratio: seen by the mean, its weight
