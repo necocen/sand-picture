@@ -145,16 +145,18 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
         }
     }
 
-    // Scale bubble areas slightly so total initial gas matches `assets/air.bin` exactly (~526 cells^2).
+    // Scale existing bubble areas slightly (~1.12x) and add 26 extra bubbles along
+    // a second layer just below the ceiling (~125 bubbles total, ~740 cells^2 of air)
+    // for richer underside coverage and a gentler, multi-minute drainage pace.
     let extracted_gas: f64 = list.iter().map(|b| f64::from(b.area)).sum();
-    if extracted_gas > 1.0 && total_scene_gas > extracted_gas {
-        let ratio = (total_scene_gas / extracted_gas) as f32;
+    if extracted_gas > 1.0 && total_scene_gas > 0.0 {
+        let ratio = (1.12 * total_scene_gas / extracted_gas) as f32;
         let pad = 0.06_f32;
         for b in &mut list {
             b.area *= ratio;
             let cur_area = polygon_area(&b.verts);
             let s = if cur_area > 1e-4 {
-                (b.area / cur_area).sqrt().clamp(0.7, 1.4)
+                (b.area / cur_area).sqrt().clamp(0.7, 1.45)
             } else {
                 ratio.sqrt()
             };
@@ -170,6 +172,50 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
             }
             b.bbox_min = bmin;
             b.bbox_max = bmax;
+        }
+    }
+
+    let extra_target = MAX_BUBBLES.saturating_sub(list.len()).min(26);
+    if extra_target > 0 {
+        let pad = 0.06_f32;
+        let span = nx as f32 - 12.0;
+        for idx in 0..extra_target {
+            let t = (idx as f32 + 0.5) / extra_target as f32;
+            // Deterministic varied mix of medium cushions and small capillary spacers
+            let hash = ((idx as u32).wrapping_mul(2654435761) >> 16) as f32 / 65536.0;
+            let area_f = if idx % 3 == 0 {
+                2.4 + 1.6 * hash // small round spacer
+            } else {
+                5.5 + 4.5 * hash // medium horizontal cushion
+            };
+            let aspect = if idx % 3 == 0 { 1.1 } else { 2.4 };
+            let ry = (area_f / (std::f32::consts::PI * aspect))
+                .sqrt()
+                .clamp(0.55, 1.35);
+            let rx = (area_f / (std::f32::consts::PI * ry)).max(0.55);
+            let cx = (6.0 + t * span).clamp(pad + rx, nx as f32 - pad - rx);
+            let cy = (ny as f32 - 3.6 - ry).clamp(pad + ry, ny as f32 - pad - ry);
+            let mut verts = [[0.0_f32; 2]; FOAM_VERTS];
+            let mut bmin = [nx as f32, ny as f32];
+            let mut bmax = [0.0_f32, 0.0_f32];
+            for (k, v) in verts.iter_mut().enumerate() {
+                let theta = 2.0 * std::f32::consts::PI * (k as f32) / (FOAM_VERTS as f32);
+                v[0] = (cx + rx * theta.cos()).clamp(pad, nx as f32 - pad);
+                v[1] = (cy + ry * theta.sin()).clamp(pad, ny as f32 - pad);
+                bmin[0] = bmin[0].min(v[0]);
+                bmin[1] = bmin[1].min(v[1]);
+                bmax[0] = bmax[0].max(v[0]);
+                bmax[1] = bmax[1].max(v[1]);
+            }
+            list.push(RawBubble {
+                area: area_f,
+                cx,
+                cy,
+                bbox_min: bmin,
+                bbox_max: bmax,
+                verts,
+                slot: (idx % GAS_SLOTS) as u32,
+            });
         }
     }
 

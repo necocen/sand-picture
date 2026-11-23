@@ -36,7 +36,7 @@ const FOAM_JACOBI: u32 = 6u;
 const FOAM_GAMMA: f32 = 95.0;        // Meniscus normal mobility drag (Pa s / m)
 const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubbles (cells)
 const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
-const FOAM_SAND_LEVEL: f32 = 0.22;   // Packed sand outer boundary contour (avoids clipping gas in raster)
+const FOAM_SAND_LEVEL: f32 = 0.25;   // Packed sand outer boundary contour (avoids clipping gas in raster)
 const FOAM_MAX_NBRS: u32 = 24u;
 
 var<workgroup> sh_pos: array<vec2<f32>, FOAM_VERTS>;
@@ -230,11 +230,15 @@ fn foam_step(
             }
             let uf_mean = uf_sum / f32(FOAM_VERTS);
             let was_held = atomicLoad(&sh_held);
-            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.22 * v_rise, was_held != 0u);
+            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.04 * v_rise, was_held != 0u);
             if was_held != 0u {
                 // Capillary meniscus hysteresis pins anchored bubbles under the slab so
-                // weak lateral water inflow cannot sweep the raft into clumps.
-                v_tgt.x = 0.06 * uf_mean.x;
+                // weak lateral water inflow cannot sweep the raft into clumps, and stops
+                // upward drift from poking pointy cusps into the packed sand above.
+                v_tgt.x = 0.05 * uf_mean.x;
+                if dot(v_tgt, up_dir) > 0.0 {
+                    v_tgt -= up_dir * (0.75 * dot(v_tgt, up_dir));
+                }
             }
             let relax = 1.0 - exp(-dt_sub / 0.012);
             sh_vel = clamp(mix(sh_vel, v_tgt, relax), vec2<f32>(-0.22), vec2<f32>(0.22));
@@ -257,7 +261,7 @@ fn foam_step(
             // preserve 100% of their area without fighting sand or neighbor films.
             let perim_m = max(sh_perim * cfg.h, 1e-4);
             let p_laplace = SURFACE_TENSION * (2.0 * 3.14159265 / perim_m);
-            let press_factor = mix(1.0, 1.55, clamp((target_area - 3.5) / 6.5, 0.0, 1.0));
+            let press_factor = mix(1.0, 1.95, clamp((target_area - 3.5) / 7.5, 0.0, 1.0));
             let p_hydro = -RHO.x * press_factor * dot(g_vec, p_curr - sh_centroid) * cfg.h;
             let dn_total = clamp((dt_sub / FOAM_GAMMA) * (p_laplace + p_hydro) / cfg.h, -0.10, 0.10);
 
@@ -672,8 +676,18 @@ fn foam_raster(
         }
     }
 
+    let old_water = max(c.volume.water, 0.0);
+    let new_water = max(room - total_gas, 0.0);
+    // Keep water velocity (momentum[0] / water) bounded when a moving bubble displaces
+    // water out of a cell; otherwise momentum/water spikes and shatters adjacent sand
+    // into spurious free powder (glowing milky haze beneath bubbles).
+    if old_water > 1e-6 {
+        c.momentum[0] *= min(new_water / old_water, 1.0);
+    } else {
+        c.momentum[0] = vec2<f32>(0.0);
+    }
     c.volume.gas = total_gas;
-    c.volume.water = max(room - total_gas, 0.0);
+    c.volume.water = new_water;
     c.momentum[3] = gas_mom;
     cells[i] = c;
 
