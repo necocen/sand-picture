@@ -130,15 +130,18 @@ fn layer_supply(f:u32,donor:u32,interval:f32)->vec2<f32>{
     // angle of repose (Taberlet et al. 2003).
     let c=cells[donor];let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
     let dense=max(scratch[BODY_ROW*cfg.n+donor].x,1e-3)*wet;let phi=min(solid/dense,CLOSE_PACKING);
-    var falls=a==1u&&!face_plus;
-    if a==0u{
+    var falls=0.;
+    if a==1u&&!face_plus{
+        let below=point(donor)-axis(1u);
+        if valid(below){falls=roof_share(below,donor);}
+    }else if a==0u{
         let receiver=point(donor)+select(-axis(0u),axis(0u),face_plus);
-        if valid(receiver){let record=scratch[BODY_ROW*cfg.n+at(receiver)];falls=select(record.w,record.z,face_plus)>0.;}
+        if valid(receiver){let record=scratch[BODY_ROW*cfg.n+at(receiver)];falls=select(record.w,record.z,face_plus);}
     }
-    if solid>0.&&falls{
+    if solid>0.&&falls>0.{
         var up=-1.;
         if a==0u{up=side_face_up(point(donor),point(donor)+select(-axis(0u),axis(0u),face_plus));}
-        let face_speed=breaching_rate(g,white_powder(cells[donor]),phi)*inclination_factor(up,grain_friction(g));
+        let face_speed=falls*breaching_rate(g,white_powder(cells[donor]),phi)*inclination_factor(up,grain_friction(g));
         supply+=face_speed*interval*g/dense;
     }
     return supply;

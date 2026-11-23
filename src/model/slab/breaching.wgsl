@@ -8,11 +8,12 @@
 // these.
 
 // Water a released grain can fall through: no deposit, no bubble a grain
-// layer thick, and less sand than LOOSE_PACKING of its wet part.
+// layer thick, and uncaged sand (below FREEZING_PACKING of its wet part;
+// from FREEZING_PACKING up grains are caged in contact and block falling grains).
 fn open_water(c:Cell)->bool{
     if plug_deposit(c)||c.volume.gas*cfg.h>=GRAIN_LAYER{return false;}
     let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
-    return wet>0.&&solid<LOOSE_PACKING*wet;
+    return wet>0.&&solid<FREEZING_PACKING*wet;
 }
 // Sand that can shed grains from a face: sandy (teeth_sandy), no deposit.
 fn breach_donor(c:Cell)->bool{return !plug_deposit(c)&&teeth_sandy(c);}

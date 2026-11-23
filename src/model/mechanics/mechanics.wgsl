@@ -483,9 +483,8 @@ fn entry_resistance(f:u32)->f32{
         // around stationary bubbles instead of jetting through them (while leaving
         // open wet throats beside bubbles unobstructed).
         let u_gas=face_history(p,a,3u);
-        let gas_cover=max(0.,1.-face.coarse_momentum.z);
-        let block=smoothstep(.45,.85,max(gas_fraction,gas_cover));
-        let impedance=mix(RHO.x/cfg.dt,2e7,block);
+        let block=smoothstep(.55,.90,gas_fraction);
+        let impedance=mix(RHO.x/cfg.dt,5e6,block);
         gas_weight=gas_fraction*impedance;
         gas_force=gas_weight*u_gas;
     }
