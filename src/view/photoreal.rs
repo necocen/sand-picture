@@ -3,7 +3,7 @@
 //! the picture is drawn from the sketch as smooth fields (photoreal.wgsl).
 use super::picture::Picture;
 use super::{CELLS_WGSL, SCENE_WGSL};
-use crate::model::{Buffers, row_constants};
+use crate::model::{Buffers, FOAM_VERTS, MAX_BUBBLES, row_constants};
 use crate::wgsl;
 
 /// The shader of the kernel that sketches the state. It addresses the
@@ -20,8 +20,12 @@ pub fn sketch_source() -> String {
 
 /// The picture's shader.
 pub fn source() -> String {
+    let foam_consts = format!(
+        "const MAX_BUBBLES: u32 = {MAX_BUBBLES}u;\nconst FOAM_VERTS: u32 = {FOAM_VERTS}u;\n"
+    );
     [
         &row_constants(),
+        &foam_consts,
         SCENE_WGSL,
         include_str!("optics.wgsl"),
         include_str!("studio.wgsl"),
@@ -118,6 +122,7 @@ impl Photoreal {
                 entry(2, &cells),
                 entry(4, &buffers.strata),
                 entry(5, &buffers.terrain),
+                entry(6, &buffers.foam),
             ],
         );
         Self {

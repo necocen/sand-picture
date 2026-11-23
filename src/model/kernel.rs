@@ -10,12 +10,10 @@ use super::uses::uses;
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
-/// A fixed workgroup count, or one that an earlier kernel of the same update
-/// writes into an indirect-argument buffer (named as a global of the program).
+/// A fixed workgroup count.
 #[derive(Clone)]
 pub enum Groups {
     Fixed(u32),
-    Indirect(&'static str),
 }
 
 /// What a kernel is made from.
@@ -40,12 +38,6 @@ impl Plan {
         }
     }
 
-    /// Dispatch the workgroup counts written in the buffer `arguments`.
-    pub fn indirect(mut self, arguments: &'static str) -> Self {
-        self.groups = Groups::Indirect(arguments);
-        self
-    }
-
     /// The kernel's `cfg` is its own, of these words.
     pub fn with_config(mut self, words: &[u32]) -> Self {
         self.config = Some(words.to_vec());
@@ -56,18 +48,14 @@ impl Plan {
 pub struct Kernel {
     pipeline: wgpu::ComputePipeline,
     bindings: wgpu::BindGroup,
-    /// The fixed workgroup count, or the buffer that holds the counts.
-    groups: Result<u32, wgpu::Buffer>,
+    groups: u32,
 }
 impl Kernel {
     /// Records this dispatch in a compute pass.
     pub fn record(&self, pass: &mut wgpu::ComputePass<'_>) {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bindings, &[]);
-        match &self.groups {
-            Ok(groups) => pass.dispatch_workgroups(*groups, 1, 1),
-            Err(arguments) => pass.dispatch_workgroups_indirect(arguments, 0),
-        }
+        pass.dispatch_workgroups(self.groups, 1, 1);
     }
 }
 
@@ -187,8 +175,7 @@ impl Pipelines {
             }),
             pipeline: pipeline.clone(),
             groups: match plan.groups {
-                Groups::Fixed(groups) => Ok(groups),
-                Groups::Indirect(arguments) => Err(buffers.get(arguments).clone()),
+                Groups::Fixed(groups) => groups,
             },
         }
     }

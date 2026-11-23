@@ -2,10 +2,6 @@
 //! component after each update's transport (labels.wgsl), where bubbles
 //! pressed one under another join and bubbles at rest are held.
 use super::GAS_SLOTS;
-use super::grid::CELLS;
-use super::kernel::Plan;
-use super::shader::Program;
-use super::update::Plans;
 
 /// Bubbles the relabelling tracks per update (components at least as large as
 /// a round bubble a capillary length across); further ones keep their identity.
@@ -60,32 +56,4 @@ pub fn initial(n: u32) -> Vec<u8> {
         word.copy_from_slice(&anchored.to_le_bytes());
     }
     contents
-}
-
-pub struct Labels {
-    /// Reset, join, roots, sizes, records for the bubbles, measure, choose the
-    /// identities (one workgroup, a thread per record), apply.
-    kernels: [usize; 8],
-}
-impl Labels {
-    pub fn new(plans: &mut Plans) -> Self {
-        let cells = ((CELLS[0] * CELLS[1]) as u32).div_ceil(128);
-        let mut kernel = |entry, groups| plans.add(Plan::new(Program::Model, entry, groups));
-        Self {
-            kernels: [
-                kernel("label_init", cells),
-                kernel("label_merge", cells),
-                kernel("label_roots", cells),
-                kernel("label_sizes", cells),
-                kernel("label_records", cells),
-                kernel("label_measure", cells),
-                kernel("label_color", 1),
-                kernel("label_apply", cells),
-            ],
-        }
-    }
-
-    pub fn kernels(&self) -> Vec<usize> {
-        self.kernels.to_vec()
-    }
 }
