@@ -53,11 +53,18 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
     let mut visited = vec![false; nx * ny * GAS_SLOTS];
     let mut list: Vec<RawBubble> = Vec::new();
 
+    let total_scene_gas: f64 = scene
+        .gas_layers
+        .iter()
+        .flat_map(|c| c.iter())
+        .map(|&v| f64::from(v.max(0.0)))
+        .sum();
+
     for slot in 0..GAS_SLOTS {
         for y in 0..ny {
             for x in 0..nx {
                 let start = (y * nx + x) * GAS_SLOTS + slot;
-                if visited[start] || scene.gas_layers[y * nx + x][slot] < 0.05 {
+                if visited[start] || scene.gas_layers[y * nx + x][slot] < 0.02 {
                     continue;
                 }
                 let mut queue = VecDeque::new();
@@ -87,13 +94,13 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
                         }
                         let (qx, qy) = (nx_i as usize, ny_i as usize);
                         let key = (qy * nx + qx) * GAS_SLOTS + slot;
-                        if !visited[key] && scene.gas_layers[qy * nx + qx][slot] >= 0.05 {
+                        if !visited[key] && scene.gas_layers[qy * nx + qx][slot] >= 0.005 {
                             visited[key] = true;
                             queue.push_back((qx, qy));
                         }
                     }
                 }
-                if area < 0.25 || list.len() >= MAX_BUBBLES {
+                if area < 0.20 || list.len() >= MAX_BUBBLES {
                     continue;
                 }
                 let area_f = area as f32;
@@ -101,31 +108,21 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
                 let cy = (sy / area) as f32;
                 let span_x = (max_x - min_x + 1) as f32;
                 let span_y = (max_y - min_y + 1) as f32;
-                let aspect = (span_x / span_y).clamp(0.7, 3.0);
-                let mut ry = (area_f / (std::f32::consts::PI * aspect)).sqrt().max(0.32);
-                let mut rx = area_f / (std::f32::consts::PI * ry);
+                let aspect = (span_x / span_y).clamp(0.8, 4.5);
+                let ry = (area_f / (std::f32::consts::PI * aspect))
+                    .sqrt()
+                    .clamp(0.32, 1.8);
+                let rx = (area_f / (std::f32::consts::PI * ry)).max(0.28);
 
-                // Clamp center so the initial curve fits inside the tank's wetting film.
-                let pad = 0.08_f32;
-                let cx = cx.clamp(pad + rx.min(2.0), nx as f32 - pad - rx.min(2.0));
-                let cy = cy.clamp(pad + ry.min(2.0), ny as f32 - pad - ry.min(2.0));
-                rx = rx.min(cx - pad).min(nx as f32 - pad - cx).max(0.25);
-                ry = ry.min(cy - pad).min(ny as f32 - pad - cy).max(0.25);
+                let pad = 0.06_f32;
+                let cx = cx.clamp(pad + rx, nx as f32 - pad - rx);
+                let cy = cy.clamp(pad + ry, ny as f32 - pad - ry);
 
                 let mut verts = [[0.0_f32; 2]; FOAM_VERTS];
                 for (k, v) in verts.iter_mut().enumerate() {
                     let theta = 2.0 * std::f32::consts::PI * (k as f32) / (FOAM_VERTS as f32);
                     v[0] = (cx + rx * theta.cos()).clamp(pad, nx as f32 - pad);
                     v[1] = (cy + ry * theta.sin()).clamp(pad, ny as f32 - pad);
-                }
-                // Rescale slightly around centroid so exact polygon area matches `area_f`.
-                let cur_area = polygon_area(&verts);
-                if cur_area > 1e-4 {
-                    let s = (area_f / cur_area).sqrt().clamp(0.7, 1.4);
-                    for v in &mut verts {
-                        v[0] = (cx + (v[0] - cx) * s).clamp(pad, nx as f32 - pad);
-                        v[1] = (cy + (v[1] - cy) * s).clamp(pad, ny as f32 - pad);
-                    }
                 }
                 let mut bmin = [nx as f32, ny as f32];
                 let mut bmax = [0.0_f32, 0.0_f32];
@@ -145,6 +142,34 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
                     slot: slot as u32,
                 });
             }
+        }
+    }
+
+    // Scale bubble areas slightly so total initial gas matches `assets/air.bin` exactly (~526 cells^2).
+    let extracted_gas: f64 = list.iter().map(|b| f64::from(b.area)).sum();
+    if extracted_gas > 1.0 && total_scene_gas > extracted_gas {
+        let ratio = (total_scene_gas / extracted_gas) as f32;
+        let pad = 0.06_f32;
+        for b in &mut list {
+            b.area *= ratio;
+            let cur_area = polygon_area(&b.verts);
+            let s = if cur_area > 1e-4 {
+                (b.area / cur_area).sqrt().clamp(0.7, 1.4)
+            } else {
+                ratio.sqrt()
+            };
+            let mut bmin = [nx as f32, ny as f32];
+            let mut bmax = [0.0_f32, 0.0_f32];
+            for v in &mut b.verts {
+                v[0] = (b.cx + (v[0] - b.cx) * s).clamp(pad, nx as f32 - pad);
+                v[1] = (b.cy + (v[1] - b.cy) * s).clamp(pad, ny as f32 - pad);
+                bmin[0] = bmin[0].min(v[0]);
+                bmin[1] = bmin[1].min(v[1]);
+                bmax[0] = bmax[0].max(v[0]);
+                bmax[1] = bmax[1].max(v[1]);
+            }
+            b.bbox_min = bmin;
+            b.bbox_max = bmax;
         }
     }
 

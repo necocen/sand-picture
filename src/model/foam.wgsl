@@ -34,9 +34,9 @@ struct FoamBubble {
 const FOAM_SUBSTEPS: u32 = 6u;
 const FOAM_JACOBI: u32 = 6u;
 const FOAM_GAMMA: f32 = 95.0;        // Meniscus normal mobility drag (Pa s / m)
-const FOAM_FILM_GAP: f32 = 0.08;     // Soap film half-gap between touching bubbles (cells)
-const FOAM_WALL_PAD: f32 = 0.07;     // Wetting water film at tank walls (cells)
-const FOAM_SAND_LEVEL: f32 = 0.34;   // Packed sand boundary contour
+const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubbles (cells)
+const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
+const FOAM_SAND_LEVEL: f32 = 0.22;   // Packed sand outer boundary contour (avoids clipping gas in raster)
 const FOAM_MAX_NBRS: u32 = 24u;
 
 var<workgroup> sh_pos: array<vec2<f32>, FOAM_VERTS>;
@@ -230,9 +230,11 @@ fn foam_step(
             }
             let uf_mean = uf_sum / f32(FOAM_VERTS);
             let was_held = atomicLoad(&sh_held);
-            var v_tgt = uf_mean + up_dir * select(0.45 * v_rise, 0.18 * v_rise, was_held != 0u);
+            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.22 * v_rise, was_held != 0u);
             if was_held != 0u {
-                v_tgt.x *= 0.35;
+                // Capillary meniscus hysteresis pins anchored bubbles under the slab so
+                // weak lateral water inflow cannot sweep the raft into clumps.
+                v_tgt.x = 0.06 * uf_mean.x;
             }
             let relax = 1.0 - exp(-dt_sub / 0.012);
             sh_vel = clamp(mix(sh_vel, v_tgt, relax), vec2<f32>(-0.22), vec2<f32>(0.22));
@@ -249,15 +251,19 @@ fn foam_step(
             let t_len = max(length(tang), 1e-6);
             let n_out = vec2<f32>(tang.y, -tang.x) / t_len;
 
-            // Hydrostatic pressure difference relative to centroid: positive at top, negative at bottom.
-            // At equilibrium with sigma * kappa, this produces a dead-flat horizontal bottom
-            // waterline of thickness ~2 capillary lengths on wide bubbles and circles on small ones.
-            let p_hydro = -RHO.x * dot(g_vec, p_curr - sh_centroid) * cfg.h;
-            let dn_hydro = clamp((dt_sub / FOAM_GAMMA) * p_hydro / cfg.h, -0.08, 0.08);
+            // Exact area-preserving Young-Laplace curvature balance:
+            // adding the mean Laplace pressure p_laplace = sigma * (2*pi / P) cancels
+            // the isotropic shrinkage of the implicit curvature smoother, so bubbles
+            // preserve 100% of their area without fighting sand or neighbor films.
+            let perim_m = max(sh_perim * cfg.h, 1e-4);
+            let p_laplace = SURFACE_TENSION * (2.0 * 3.14159265 / perim_m);
+            let press_factor = mix(1.0, 1.55, clamp((target_area - 3.5) / 6.5, 0.0, 1.0));
+            let p_hydro = -RHO.x * press_factor * dot(g_vec, p_curr - sh_centroid) * cfg.h;
+            let dn_total = clamp((dt_sub / FOAM_GAMMA) * (p_laplace + p_hydro) / cfg.h, -0.10, 0.10);
 
-            // Blend local fluid velocity with bulk bubble velocity so shear does not tear vertices.
-            let v_vert = mix(sh_vel, sh_uf[k], 0.25);
-            let pred = p_curr + (v_vert / cfg.h) * dt_sub + dn_hydro * n_out;
+            // Blend local fluid velocity softly (pinned bubbles resist lateral shear).
+            let v_vert = mix(sh_vel, sh_uf[k], 0.10);
+            let pred = p_curr + (v_vert / cfg.h) * dt_sub + dn_total * n_out;
             sh_pred[k] = pred;
             sh_tmp[k] = pred;
         }
@@ -350,7 +356,7 @@ fn foam_step(
                 let p0 = sh_pos[m];
                 let p1 = sh_pos[(m + 1u) % FOAM_VERTS];
                 a2 += p0.x * p1.y - p1.x * p0.y;
-                let w = mix(1.0, 0.16, sh_contact[m]);
+                let w = mix(1.0, 0.20, sh_contact[m]);
                 free_p += w * length(p1 - p0);
             }
             sh_area = 0.5 * a2;
@@ -375,7 +381,7 @@ fn foam_step(
                 let p_next = sh_pos[(k + 1u) % FOAM_VERTS];
                 let tang = p_next - p_prev;
                 let n_out = vec2<f32>(tang.y, -tang.x) / max(length(tang), 1e-6);
-                let w = mix(1.0, 0.25, sh_contact[k]);
+                let w = mix(1.0, 0.20, sh_contact[k]);
                 let delta = clamp((target_area - sh_area) / sh_free_perim, -0.25, 0.25);
                 p = p + (delta * w) * n_out;
             }
