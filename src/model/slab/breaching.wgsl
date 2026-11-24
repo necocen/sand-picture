@@ -24,6 +24,20 @@ fn breach_donor(c:Cell)->bool{return !plug_deposit(c)&&teeth_sandy(c);}
 // while a turbidity current carries its grains off; grains that come to
 // rest on the upper sand (a funnel's floor, a pocket) bury its foot.
 fn falls_away(start:vec2<i32>,away:i32)->bool{
+    // A steep vertical cliff (>= 2 open-water cells directly below `start`)
+    // facing free open water reaching the ceiling cannot stand at 90 deg:
+    // its grains breach into the open water beside it and slump into a natural
+    // talus slope at its foot until the face retreats to the angle of repose.
+    // Enclosed interior cavities do not reach the ceiling and stay sealed.
+    var open_top=true;
+    for(var y=start.y+1;y<i32(cfg.ny);y++){
+        if !open_water(cells[at(vec2<i32>(start.x,y))]){open_top=false;break;}
+    }
+    if open_top&&start.y>=2
+        &&open_water(cells[at(start-axis(1u))])
+        &&open_water(cells[at(start-2*axis(1u))]){
+        return true;
+    }
     var p=start;
     var horiz=0;
     for(var step=0;step<4*i32(cfg.ny);step++){
