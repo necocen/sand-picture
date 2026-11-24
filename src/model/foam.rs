@@ -26,10 +26,10 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-/// Target total air area (cells^2) matching the natural single-layer steady state.
-const TARGET_AIR_AREA: f32 = 490.0;
+/// Target total air area (cells^2) matching the natural plump single-layer steady state.
+const TARGET_AIR_AREA: f32 = 785.0;
 /// Steady-state Rayleigh-Taylor breakup area threshold (cells^2), matching `foam.wgsl`.
-const STEADY_SPLIT_AREA: f32 = 6.8;
+const STEADY_SPLIT_AREA: f32 = 13.0;
 
 struct RawBubble {
     area: f32,
@@ -152,18 +152,18 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
             // Gently part bubbles off the two final draining crests while leaving
             // an occasional small stray bubble (matching real post-drainage ceilings).
             let mut cx = raw_cx;
-            for (peak, half_gap) in [(left_peak, 11.0_f32), (right_peak, 13.0_f32)] {
+            for (peak, half_gap) in [(left_peak, 8.0_f32), (right_peak, 11.0_f32)] {
                 let d = cx - peak;
                 if d.abs() < half_gap && !(area < 3.6 && idx % 5 == 0) {
                     let sign = if d >= 0.0 { 1.0 } else { -1.0 };
                     cx = peak + sign * (half_gap + 0.35 * (half_gap - d.abs()));
                 }
             }
-            let aspect = 1.0 + 0.25 * ((area - 2.2) / 4.6).clamp(0.0, 1.0);
+            let aspect = 1.0 + 0.45 * ((area - 3.0) / 10.5).clamp(0.0, 1.0);
             let ry = (area / (std::f32::consts::PI * aspect))
                 .sqrt()
-                .clamp(0.58, 1.35);
-            let rx = (area / (std::f32::consts::PI * ry)).max(0.52);
+                .clamp(0.65, 1.65);
+            let rx = (area / (std::f32::consts::PI * ry)).max(0.55);
             (cx, area, rx, ry)
         })
         .collect();
@@ -172,8 +172,8 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
     // Pack touching raft neighbors tightly (flat vertical soap films) while
     // preserving the natural open stretches above the crests (~86-89% coverage).
     let raw_span: f32 = geom.iter().map(|g| 2.0 * g.2).sum();
-    if raw_span > 0.87 * usable_w && raw_span > 1.0 {
-        let sx = (0.87 * usable_w) / raw_span;
+    if raw_span > 0.90 * usable_w && raw_span > 1.0 {
+        let sx = (0.90 * usable_w) / raw_span;
         for g in &mut geom {
             g.2 = (g.2 * sx).max(0.48);
             g.3 = g.1 / (std::f32::consts::PI * g.2);

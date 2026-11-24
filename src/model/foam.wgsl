@@ -539,10 +539,10 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
     // Thread 0 performs surfactant-capped vertical coalescence, Rayleigh-Taylor
     // breakup of over-wide rising bubbles after a flip, and slot coloring.
     if tid == 0u {
-        // A. Surfactant-stabilized vertical coalescence: only merge bubbles pressed
+        // A. Surfactant-stabilized vertical coalescence: merge bubbles pressed
         // together in a held stack for >= 3.0 s whose combined area stays within
-        // the capillary puddle scale (~pi * l_c^2 ≈ 17.5 cells^2), preventing
-        // runaway growth into giant low-coverage blobs.
+        // the capillary puddle scale (<= 20.0 cells^2), allowing plump horizontal
+        // cushions to form organically while preventing runaway giant blobs.
         for (var i = 0u; i < MAX_BUBBLES; i++) {
             if foam_next[i].alive == 0u || foam_next[i].held == 0u || foam_next[i].drain_time < 3.0 { continue; }
             let j = foam_next[i].drain_partner;
@@ -550,7 +550,7 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             let ai = foam_next[i].target_area;
             let aj = foam_next[j].target_area;
             let tot = ai + aj;
-            if tot > 9.8 { continue; }
+            if tot > 20.0 { continue; }
             // Merge lower bubble i into upper bubble j, conserving exact combined area.
             let cent = (ai * foam_next[i].centroid + aj * foam_next[j].centroid) / max(tot, 1e-4);
             var merged: array<vec2<f32>, FOAM_VERTS>;
@@ -616,17 +616,17 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
         }
 
         // B. Rayleigh-Taylor / flip breakup: a wide freely-rising bubble (exceeding
-        // the Hele-Shaw splitting scale ~3.20 cells wide, area > 6.8 cells^2) splits
+        // the Hele-Shaw splitting scale ~4.7 cells wide, area > 13.0 cells^2) splits
         // cleanly into two slightly asymmetric daughter bubbles whenever a free slot
         // exists, conserving exact total air volume and preserving a natural polydisperse
-        // mix of small capillary spacers and medium cushions across unlimited flips.
+        // mix of small capillary spacers and plump cushions across unlimited flips.
         var splits = 0u;
         for (var j = 0u; j < MAX_BUBBLES && splits < 4u; j++) {
             if sh_alive[j] == 0u || foam_next[j].held != 0u { continue; }
             let area = foam_next[j].target_area;
             let w_bub = sh_bmax[j].x - sh_bmin[j].x;
             // Only split once rising freely below the ceiling.
-            if area <= 6.8 || w_bub <= 3.20 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
+            if area <= 13.0 || w_bub <= 4.70 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
             var free_slot = 0xffffffffu;
             for (var s = 0u; s < MAX_BUBBLES; s++) {
                 if sh_alive[s] == 0u {
