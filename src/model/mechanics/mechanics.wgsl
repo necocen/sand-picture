@@ -502,16 +502,19 @@ fn entry_resistance(f:u32)->f32{
     var force=load.w;let gas_fraction=face_gas(f);var gas_weight=0.;var gas_force=0.;
     if gas_fraction>0. {
         // Prototype A: Lagrangian closed-curve bubbles (`foam_step`) already solve
-        // buoyancy, Young-Laplace surface tension, and plate meniscus drag. Here
-        // the gas acts as an immersed moving body at its true displacement velocity
-        // `u_gas`, with Brinkman impedance inside the bubble so water flows cleanly
-        // around stationary bubbles instead of jetting through them (while leaving
-        // open wet throats beside bubbles unobstructed).
+        // buoyancy, Young-Laplace surface tension, and plate meniscus drag. Stationary
+        // bubbles act as impermeable Brinkman obstacles (`5e6`) so water flows cleanly
+        // around them through wet throats; moving bubbles couple with water-inertia
+        // added mass (`RHO.x / dt`) bounded by true hydrostatic buoyancy (`RHO.x * g`),
+        // so a bubble hitting a sand roof never acts as a high-pressure piston driving
+        // pore-water jets through packed sand.
         let u_gas=face_history(p,a,3u);
         let block=smoothstep(.55,.90,gas_fraction);
-        let impedance=mix(RHO.x/cfg.dt,5e6,block);
+        let moving=smoothstep(.0005,.004,abs(u_gas));
+        let impedance=mix(mix(RHO.x/cfg.dt,5e6,block),RHO.x/cfg.dt,moving);
+        let max_force=gas_fraction*RHO.x*STANDARD_GRAVITY;
         gas_weight=gas_fraction*impedance;
-        gas_force=gas_weight*u_gas;
+        gas_force=clamp(gas_weight*u_gas,-max_force,max_force);
     }
     // On a gliding face the sand strip stands and the gas strip moves at the
     // face's mean velocity times glide_ratio: seen by the mean, its weight

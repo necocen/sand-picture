@@ -826,15 +826,19 @@ fn foam_raster(
         gas_mom += frac * foam[bi].disp_vel;
     }
 
-    // Clamp total gas to available non-sand room so sand conservation is strictly exact.
+    // Clamp total gas to available open-water room so sand conservation is exact
+    // and hydrophilic silica grains always retain their irreducible saturated pore
+    // water at BED_PACKING (capillary entry pressure ~5 kPa >> bubble buoyancy ~20 Pa):
+    // air cannot dry out wet sand above BED_PACKING or crush cell water to zero.
     var c = cells[i];
-    let occupied = max(c.volume.fine, 0.0) + max(c.volume.coarse, 0.0)
-                 + max(c.bed.x, 0.0) + max(c.bed.y, 0.0) + max(c.bed.w, 0.0);
-    let room = max(1.0 - occupied, 0.0);
+    let mobile_solid = max(c.volume.fine, 0.0) + max(c.volume.coarse, 0.0);
+    let bed_occ = max(c.bed.x, 0.0) + max(c.bed.y, 0.0) + max(c.bed.w, 0.0);
+    let room = max(1.0 - mobile_solid - bed_occ, 0.0);
+    let gas_room = max(1.0 - mobile_solid / BED_PACKING - bed_occ, 0.0);
     var scale = 1.0;
-    if total_gas > room && total_gas > 1e-6 {
-        scale = room / total_gas;
-        total_gas = room;
+    if total_gas > gas_room && total_gas > 1e-6 {
+        scale = gas_room / total_gas;
+        total_gas = gas_room;
         gas_mom *= scale;
     }
 
