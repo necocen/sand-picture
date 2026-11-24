@@ -33,7 +33,7 @@ struct FoamBubble {
 const FOAM_SUBSTEPS: u32 = 6u;
 const FOAM_JACOBI: u32 = 6u;
 const FOAM_GAMMA: f32 = 85.0;        // Meniscus normal mobility drag (Pa s / m)
-const FOAM_SIGMA: f32 = 0.0135;      // Surfactant-water interfacial tension (N/m): capillary thickness ~2.4 cells under sand
+const FOAM_SIGMA: f32 = 0.0170;      // Surfactant-water interfacial tension (N/m): capillary thickness ~2.1 cells under sand
 const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubbles (cells)
 const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
 const FOAM_SAND_LEVEL: f32 = 0.25;   // Packed sand outer boundary contour (avoids clipping gas in raster)

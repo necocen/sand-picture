@@ -27,9 +27,10 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
 }
 
 /// Target total air area (cells^2) matching the polydisperse single-layer foam:
-/// at capillary thickness ~2.35 cells, total horizontal span stays <= ~235/270 (~87%)
-/// so even a completely flat deposit cannot seal wall-to-wall and stall across flips.
-const TARGET_AIR_AREA: f32 = 500.0;
+/// at capillary thickness ~2.1 cells (`FOAM_SIGMA = 0.0170`), worst-case flat
+/// horizontal span stays <= ~218/270 (~81%), guaranteeing open shifting throats
+/// above granular arching width even on a flat sand underside or across flips.
+const TARGET_AIR_AREA: f32 = 435.0;
 /// Steady-state Rayleigh-Taylor breakup area threshold (cells^2), matching `foam.wgsl`.
 const STEADY_SPLIT_AREA: f32 = 16.5;
 
