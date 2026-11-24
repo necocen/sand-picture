@@ -26,10 +26,11 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-/// Target total air area (cells^2) matching the natural plump single-layer steady state.
-const TARGET_AIR_AREA: f32 = 785.0;
+/// Target total air area (cells^2) matching the polydisperse single-layer foam
+/// (~520 cells^2 rasterized under sand at capillary thickness ~2.25 cells -> ~86-92% span).
+const TARGET_AIR_AREA: f32 = 590.0;
 /// Steady-state Rayleigh-Taylor breakup area threshold (cells^2), matching `foam.wgsl`.
-const STEADY_SPLIT_AREA: f32 = 13.0;
+const STEADY_SPLIT_AREA: f32 = 22.0;
 
 struct RawBubble {
     area: f32,
@@ -79,8 +80,9 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
                         }
                     }
                 }
-                // Drop sub-cell dust slivers so initial bubbles match the steady-state floor.
-                if area >= 1.85 {
+                // Keep small capillary pearls (>= 0.70 cells^2) alongside medium domes
+                // and wide flat ribbons so the foam starts truly polydisperse.
+                if area >= 0.70 {
                     seeds.push(((sx / area) as f32, area as f32));
                 }
             }
@@ -99,7 +101,7 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
         1.0
     };
 
-    const SPLIT_FRACS: [f32; 4] = [0.38, 0.44, 0.50, 0.57];
+    const SPLIT_FRACS: [f32; 4] = [0.26, 0.36, 0.45, 0.62];
     let mut split_idx = 0usize;
     let mut steady: Vec<(f32, f32)> = Vec::new();
     for (cx, raw_area) in seeds {
@@ -110,7 +112,7 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
                 split_idx += 1;
                 let a_left = area * frac;
                 let a_right = area - a_left;
-                let sep = 1.15 * area.sqrt();
+                let sep = 1.25 * area.sqrt();
                 stack.push((x + frac * sep, a_right));
                 stack.push((x - (1.0 - frac) * sep, a_left));
             } else if steady.len() < MAX_BUBBLES - 8 {
@@ -120,68 +122,35 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
     }
     steady.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    // Compute natural single-layer flat-topped ceiling domes, matching the
-    // settled post-drainage raft distribution (bubbles naturally gather in
-    // touching capillary rafts with modest open stretches above the final
-    // draining sand crests, covering ~86-88% of the ceiling instead of an
-    // artificial wall-to-wall ruler).
+    // Shape each ceiling bubble at its natural Young-Laplace aspect ratio in
+    // surfactant water: tiny pearls (< 3 cells^2) stay round while large pockets
+    // (12-22 cells^2) flatten horizontally at capillary half-height ~1.35 cells.
+    // Preserve `assets/air.bin`'s organic horizontal spacing without carving
+    // artificial gaps or squishing into uniform teeth.
     let pad = 0.06_f32;
     let usable_w = nx as f32 - 2.0 * pad;
-    // Measure each column's settled sand height so bubbles clear the two
-    // highest post-drainage mountain crests just as after a real cycle.
-    let mut col_h = vec![0.0_f32; nx];
-    for (x, height) in col_h.iter_mut().enumerate() {
-        let mut h = 0.0_f32;
-        for y in 0..ny {
-            let c = scene.cells[y * nx + x];
-            h += c[1].max(0.0) + c[2].max(0.0);
-        }
-        *height = h;
-    }
-    let left_peak = (15..nx / 2)
-        .max_by(|&a, &b| col_h[a].total_cmp(&col_h[b]))
-        .unwrap_or(nx / 4) as f32;
-    let right_peak = (nx / 2..nx - 15)
-        .max_by(|&a, &b| col_h[a].total_cmp(&col_h[b]))
-        .unwrap_or(3 * nx / 4) as f32;
-
     let mut geom: Vec<(f32, f32, f32, f32)> = steady
         .iter()
-        .enumerate()
-        .map(|(idx, &(raw_cx, area))| {
-            // Gently part bubbles off the two final draining crests while leaving
-            // an occasional small stray bubble (matching real post-drainage ceilings).
-            let mut cx = raw_cx;
-            for (peak, half_gap) in [(left_peak, 8.0_f32), (right_peak, 11.0_f32)] {
-                let d = cx - peak;
-                if d.abs() < half_gap && !(area < 3.6 && idx % 5 == 0) {
-                    let sign = if d >= 0.0 { 1.0 } else { -1.0 };
-                    cx = peak + sign * (half_gap + 0.35 * (half_gap - d.abs()));
-                }
-            }
-            let aspect = 1.0 + 0.45 * ((area - 3.0) / 10.5).clamp(0.0, 1.0);
+        .map(|&(cx, area)| {
+            let aspect = 1.0 + 2.4 * ((area - 2.5) / 17.5).clamp(0.0, 1.0);
             let ry = (area / (std::f32::consts::PI * aspect))
                 .sqrt()
-                .clamp(0.65, 1.65);
-            let rx = (area / (std::f32::consts::PI * ry)).max(0.55);
+                .clamp(0.45, 1.42);
+            let rx = (area / (std::f32::consts::PI * ry)).max(0.45);
             (cx, area, rx, ry)
         })
         .collect();
-    geom.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    // Pack touching raft neighbors tightly (flat vertical soap films) while
-    // preserving the natural open stretches above the crests (~86-89% coverage).
     let raw_span: f32 = geom.iter().map(|g| 2.0 * g.2).sum();
-    if raw_span > 0.90 * usable_w && raw_span > 1.0 {
-        let sx = (0.90 * usable_w) / raw_span;
+    if raw_span > 0.94 * usable_w && raw_span > 1.0 {
+        let sx = (0.94 * usable_w) / raw_span;
         for g in &mut geom {
-            g.2 = (g.2 * sx).max(0.48);
+            g.2 = (g.2 * sx).max(0.42);
             g.3 = g.1 / (std::f32::consts::PI * g.2);
         }
     }
 
-    // Gentle 1D non-overlap separation within each raft without erasing open gaps.
-    let gap = 0.02_f32;
+    let gap = 0.04_f32;
     for _ in 0..24 {
         for g in &mut geom {
             g.0 = g.0.clamp(pad + g.2, nx as f32 - pad - g.2);

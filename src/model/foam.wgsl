@@ -32,7 +32,8 @@ struct FoamBubble {
 
 const FOAM_SUBSTEPS: u32 = 6u;
 const FOAM_JACOBI: u32 = 6u;
-const FOAM_GAMMA: f32 = 95.0;        // Meniscus normal mobility drag (Pa s / m)
+const FOAM_GAMMA: f32 = 85.0;        // Meniscus normal mobility drag (Pa s / m)
+const FOAM_SIGMA: f32 = 0.0105;      // Surfactant-water interfacial tension (N/m): capillary thickness 2*l_c ≈ 3.1 cells
 const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubbles (cells)
 const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
 const FOAM_SAND_LEVEL: f32 = 0.25;   // Packed sand outer boundary contour (avoids clipping gas in raster)
@@ -249,14 +250,15 @@ fn foam_step(
             let was_held = atomicLoad(&sh_held) >= 3u;
             let at_ceiling = (up_dir.y > 0.5 && max_y >= f32(ROWS) - 0.35)
                 || (up_dir.y < -0.5 && min_y <= 0.35);
-            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.04 * v_rise, was_held);
+            var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.16 * v_rise, was_held);
             if was_held {
-                // Capillary meniscus hysteresis pins anchored bubbles under the slab so
-                // weak lateral water inflow cannot sweep the raft into clumps, and stops
-                // upward drift from poking pointy cusps into the packed sand above.
-                v_tgt.x = 0.05 * uf_mean.x;
-                if dot(v_tgt, up_dir) > 0.0 {
-                    v_tgt -= up_dir * (0.75 * dot(v_tgt, up_dir));
+                // Capillary meniscus friction damps lateral sweep but still allows
+                // held bubbles to creep up sloping sand roofs and shift in return
+                // eddies so throats migrate, pinch shut, and reopen organically.
+                v_tgt.x = 0.28 * uf_mean.x;
+                let v_up = dot(v_tgt, up_dir);
+                if v_up > 0.0 {
+                    v_tgt -= up_dir * (0.35 * v_up);
                 }
             } else if at_ceiling {
                 // Impermeable top glass stops normal rise so ceiling bubbles keep 100% of
@@ -282,19 +284,17 @@ fn foam_step(
             let t_len = max(length(tang), 1e-6);
             let n_out = vec2<f32>(tang.y, -tang.x) / t_len;
 
-            // Exact area-preserving Young-Laplace curvature balance:
-            // adding the mean Laplace pressure p_laplace = sigma * (2*pi / P) cancels
-            // the isotropic shrinkage of the implicit curvature smoother, so bubbles
-            // preserve 100% of their area without fighting sand or neighbor films.
+            // Exact area-preserving Young-Laplace curvature balance in surfactant water:
+            // small bubbles (< l_c) stay crisp round capillary pearls while larger
+            // bubbles (> 2*l_c) naturally flatten into wide horizontal-bottom ribbons.
             let perim_m = max(sh_perim * cfg.h, 1e-4);
-            let p_laplace = SURFACE_TENSION * (2.0 * 3.14159265 / perim_m);
-            let press_factor = mix(1.0, 1.95, clamp((target_area - 3.5) / 7.5, 0.0, 1.0));
-            let p_hydro = -RHO.x * press_factor * dot(g_vec, p_curr - sh_centroid) * cfg.h;
+            let p_laplace = FOAM_SIGMA * (2.0 * 3.14159265 / perim_m);
+            let p_hydro = -RHO.x * dot(g_vec, p_curr - sh_centroid) * cfg.h;
             let dn_total = clamp((dt_sub / FOAM_GAMMA) * (p_laplace + p_hydro) / cfg.h, -0.10, 0.10);
 
-            // Blend local ambient fluid velocity softly (pinned bubbles resist lateral shear).
+            // Blend local ambient fluid velocity softly so sand-plume return currents sway the raft.
             let uf_loc = select(sh_vel, sh_uf[k].xy, sh_uf[k].z > 0.5);
-            let v_vert = mix(sh_vel, uf_loc, 0.10);
+            let v_vert = mix(sh_vel, uf_loc, 0.16);
             let pred = p_curr + (v_vert / cfg.h) * dt_sub + dn_total * n_out;
             sh_pred[k] = pred;
             sh_tmp[k] = pred;
@@ -303,7 +303,7 @@ fn foam_step(
 
         // Semi-implicit curvature surface tension + arclength equalization (Jacobi on ring).
         let ds_m = (sh_perim / f32(FOAM_VERTS)) * cfg.h;
-        let lambda = clamp((SURFACE_TENSION * dt_sub) / (FOAM_GAMMA * max(ds_m * ds_m, 1e-8)), 0.02, 8.0);
+        let lambda = clamp((FOAM_SIGMA * dt_sub) / (FOAM_GAMMA * max(ds_m * ds_m, 1e-8)), 0.02, 8.0);
         let inv_denom = 1.0 / (1.0 + 2.0 * lambda);
         for (var it = 0u; it < FOAM_JACOBI; it++) {
             var next_p = vec2<f32>(0.0);
@@ -504,31 +504,53 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
     sh_bmax[tid] = foam_next[tid].bbox_max;
     workgroupBarrier();
 
-    // Each thread detects whether bubble `tid` is pressed vertically underneath an upper partner.
+    // Each thread detects whether bubble `tid` is pressed tightly against a coalescence
+    // partner: either vertically underneath an upper partner (fast buoyancy film drainage)
+    // or strongly compressed laterally against a right-hand neighbor (slower lateral fusion).
     if sh_alive[tid] != 0u {
         let a_min = sh_bmin[tid];
         let a_max = sh_bmax[tid];
-        let a_cent_y = foam_next[tid].centroid.y;
+        let a_cent = foam_next[tid].centroid;
         let wa = max(a_max.x - a_min.x, 0.5);
+        let ha = max(a_max.y - a_min.y, 0.5);
         var best_j = 0xffffffffu;
-        var best_overlap = 0.0;
+        var best_score = 0.0;
+        var drain_rate = 1.0;
         for (var j = 0u; j < MAX_BUBBLES; j++) {
             if j == tid || sh_alive[j] == 0u { continue; }
             let b_min = sh_bmin[j];
             let b_max = sh_bmax[j];
-            let b_cent_y = 0.5 * (b_min.y + b_max.y);
-            if b_cent_y <= a_cent_y + 0.45 { continue; }
-            let vgap = b_min.y - a_max.y;
-            if vgap > 0.35 || vgap < -0.8 { continue; }
-            let ov = min(a_max.x, b_max.x) - max(a_min.x, b_min.x);
+            let b_cent = foam_next[j].centroid;
             let wb = max(b_max.x - b_min.x, 0.5);
-            if ov > 0.35 * min(wa, wb) && ov > best_overlap {
-                best_overlap = ov;
-                best_j = j;
+            let hb = max(b_max.y - b_min.y, 0.5);
+            // 1. Vertical stack (buoyancy presses lower bubble into upper bubble).
+            if b_cent.y > a_cent.y + 0.45 {
+                let vgap = b_min.y - a_max.y;
+                if vgap <= 0.35 && vgap >= -0.8 {
+                    let ov = min(a_max.x, b_max.x) - max(a_min.x, b_min.x);
+                    if ov > 0.35 * min(wa, wb) && ov > best_score {
+                        best_score = ov;
+                        best_j = j;
+                        drain_rate = 1.0;
+                    }
+                }
+            }
+            // 2. Strongly compressed lateral pair under sand (forms wide flat air ribbons).
+            if b_cent.x > a_cent.x && abs(b_cent.y - a_cent.y) < 0.65 {
+                let hgap = b_min.x - a_max.x;
+                let vov = min(a_max.y, b_max.y) - max(a_min.y, b_min.y);
+                if hgap <= -0.04 && hgap >= -0.6 && vov > 0.65 * min(ha, hb) {
+                    let score = 0.35 * vov;
+                    if score > best_score {
+                        best_score = score;
+                        best_j = j;
+                        drain_rate = 0.16; // ~15 s under sustained lateral compression
+                    }
+                }
             }
         }
         if best_j != 0xffffffffu && best_j == foam_next[tid].drain_partner {
-            foam_next[tid].drain_time = foam_next[tid].drain_time + cfg.dt;
+            foam_next[tid].drain_time = foam_next[tid].drain_time + drain_rate * cfg.dt;
         } else {
             foam_next[tid].drain_partner = best_j;
             foam_next[tid].drain_time = 0.0;
@@ -536,21 +558,22 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     workgroupBarrier();
 
-    // Thread 0 performs surfactant-capped vertical coalescence, Rayleigh-Taylor
-    // breakup of over-wide rising bubbles after a flip, and slot coloring.
+    // Thread 0 performs size-dependent film-drainage coalescence, Rayleigh-Taylor
+    // breakup of over-wide rising ribbons after a flip, and slot coloring.
     if tid == 0u {
-        // A. Surfactant-stabilized vertical coalescence: merge bubbles pressed
-        // together in a held stack for >= 3.0 s whose combined area stays within
-        // the capillary puddle scale (<= 20.0 cells^2), allowing plump horizontal
-        // cushions to form organically while preventing runaway giant blobs.
+        // A. Film-drainage coalescence (Reynolds/Stefan law): deformable bubbles
+        // (area >= 2.2 cells^2) pressed together for >= 2.5 s merge into wider flat
+        // horizontal air pockets up to 30.0 cells^2, while small rigid capillary
+        // pearls (< 2.2 cells^2) resist dimple rupture and survive as crisp spacers.
         for (var i = 0u; i < MAX_BUBBLES; i++) {
-            if foam_next[i].alive == 0u || foam_next[i].held == 0u || foam_next[i].drain_time < 3.0 { continue; }
+            if foam_next[i].alive == 0u || foam_next[i].held == 0u || foam_next[i].drain_time < 2.5 { continue; }
             let j = foam_next[i].drain_partner;
             if j >= MAX_BUBBLES || j == i || foam_next[j].alive == 0u || foam_next[j].held == 0u { continue; }
             let ai = foam_next[i].target_area;
             let aj = foam_next[j].target_area;
+            if min(ai, aj) < 2.2 { continue; }
             let tot = ai + aj;
-            if tot > 20.0 { continue; }
+            if tot > 30.0 { continue; }
             // Merge lower bubble i into upper bubble j, conserving exact combined area.
             let cent = (ai * foam_next[i].centroid + aj * foam_next[j].centroid) / max(tot, 1e-4);
             var merged: array<vec2<f32>, FOAM_VERTS>;
@@ -615,18 +638,17 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             sh_bmax[j] = bmax;
         }
 
-        // B. Rayleigh-Taylor / flip breakup: a wide freely-rising bubble (exceeding
-        // the Hele-Shaw splitting scale ~4.7 cells wide, area > 13.0 cells^2) splits
-        // cleanly into two slightly asymmetric daughter bubbles whenever a free slot
-        // exists, conserving exact total air volume and preserving a natural polydisperse
-        // mix of small capillary spacers and plump cushions across unlimited flips.
+        // B. Rayleigh-Taylor / flip breakup: an over-wide freely-rising air ribbon
+        // (exceeding the Hele-Shaw splitting scale ~6.2 cells wide, area > 18.0 cells^2)
+        // pinches off asymmetrically into unequal daughter bubbles whenever a free slot
+        // exists, preserving wide flat cushions alongside crisp smaller satellite beads.
         var splits = 0u;
         for (var j = 0u; j < MAX_BUBBLES && splits < 4u; j++) {
             if sh_alive[j] == 0u || foam_next[j].held != 0u { continue; }
             let area = foam_next[j].target_area;
             let w_bub = sh_bmax[j].x - sh_bmin[j].x;
             // Only split once rising freely below the ceiling.
-            if area <= 13.0 || w_bub <= 4.70 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
+            if area <= 18.0 || w_bub <= 6.20 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
             var free_slot = 0xffffffffu;
             for (var s = 0u; s < MAX_BUBBLES; s++) {
                 if sh_alive[s] == 0u {
@@ -635,12 +657,14 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
                 }
             }
             if free_slot == 0xffffffffu { break; }
-            // Deterministic off-center necking ratio in {0.38, 0.44, 0.50, 0.57}.
+            // Deterministic off-center necking ratio in {0.26, 0.36, 0.45, 0.62}
+            // so pinch-off continuously replenishes small round satellite pearls
+            // alongside medium cushions and wide horizontal ribbons.
             let phase = (j * 3u + splits) & 3u;
-            var frac = 0.50;
-            if phase == 0u { frac = 0.38; }
-            else if phase == 1u { frac = 0.44; }
-            else if phase == 3u { frac = 0.57; }
+            var frac = 0.45;
+            if phase == 0u { frac = 0.26; }
+            else if phase == 1u { frac = 0.36; }
+            else if phase == 3u { frac = 0.62; }
             let a_left = frac * area;
             let a_right = area - a_left;
             let cent = foam_next[j].centroid;
