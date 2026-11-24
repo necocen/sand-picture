@@ -218,11 +218,15 @@ fn foam_step(
             var cx = 0.0;
             var cy = 0.0;
             var per = 0.0;
+            var min_y = f32(ROWS);
+            var max_y = 0.0;
             var uf_sum = vec2<f32>(0.0);
             var uf_w = 0.0;
             for (var m = 0u; m < FOAM_VERTS; m++) {
                 let p0 = sh_pos[m];
                 let p1 = sh_pos[(m + 1u) % FOAM_VERTS];
+                min_y = min(min_y, p0.y);
+                max_y = max(max_y, p0.y);
                 let cr = p0.x * p1.y - p1.x * p0.y;
                 a2 += cr;
                 cx += (p0.x + p1.x) * cr;
@@ -243,6 +247,8 @@ fn foam_step(
             }
             let uf_mean = select(vec2<f32>(0.0), uf_sum / uf_w, uf_w > 0.5);
             let was_held = atomicLoad(&sh_held) >= 3u;
+            let at_ceiling = (up_dir.y > 0.5 && max_y >= f32(ROWS) - 0.35)
+                || (up_dir.y < -0.5 && min_y <= 0.35);
             var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.04 * v_rise, was_held);
             if was_held {
                 // Capillary meniscus hysteresis pins anchored bubbles under the slab so
@@ -251,6 +257,14 @@ fn foam_step(
                 v_tgt.x = 0.05 * uf_mean.x;
                 if dot(v_tgt, up_dir) > 0.0 {
                     v_tgt -= up_dir * (0.75 * dot(v_tgt, up_dir));
+                }
+            } else if at_ceiling {
+                // Impermeable top glass stops normal rise so ceiling bubbles keep 100% of
+                // their true Young-Laplace volume instead of being squashed into the glass,
+                // while retaining full lateral mobility along the smooth ceiling.
+                let v_up = dot(v_tgt, up_dir);
+                if v_up > 0.0 {
+                    v_tgt -= up_dir * v_up;
                 }
             }
             let relax = 1.0 - exp(-dt_sub / 0.012);
@@ -536,7 +550,7 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             let ai = foam_next[i].target_area;
             let aj = foam_next[j].target_area;
             let tot = ai + aj;
-            if tot > 20.0 { continue; }
+            if tot > 9.8 { continue; }
             // Merge lower bubble i into upper bubble j, conserving exact combined area.
             let cent = (ai * foam_next[i].centroid + aj * foam_next[j].centroid) / max(tot, 1e-4);
             var merged: array<vec2<f32>, FOAM_VERTS>;
@@ -602,16 +616,17 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
         }
 
         // B. Rayleigh-Taylor / flip breakup: a wide freely-rising bubble (exceeding
-        // the Hele-Shaw splitting scale ~4.2 cells wide, area > 10.5 cells^2) splits
-        // cleanly into two equal-area daughter bubbles whenever a free slot exists,
-        // conserving exact total air volume and restoring high curtain coverage after flips.
+        // the Hele-Shaw splitting scale ~3.20 cells wide, area > 6.8 cells^2) splits
+        // cleanly into two slightly asymmetric daughter bubbles whenever a free slot
+        // exists, conserving exact total air volume and preserving a natural polydisperse
+        // mix of small capillary spacers and medium cushions across unlimited flips.
         var splits = 0u;
         for (var j = 0u; j < MAX_BUBBLES && splits < 4u; j++) {
             if sh_alive[j] == 0u || foam_next[j].held != 0u { continue; }
             let area = foam_next[j].target_area;
             let w_bub = sh_bmax[j].x - sh_bmin[j].x;
-            // Only split once rising freely below the ceiling (or wide flat puddle).
-            if area <= 13.5 || w_bub <= 5.0 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
+            // Only split once rising freely below the ceiling.
+            if area <= 6.8 || w_bub <= 3.20 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
             var free_slot = 0xffffffffu;
             for (var s = 0u; s < MAX_BUBBLES; s++) {
                 if sh_alive[s] == 0u {
@@ -620,21 +635,31 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
                 }
             }
             if free_slot == 0xffffffffu { break; }
-            let half_a = 0.5 * area;
+            // Deterministic off-center necking ratio in {0.38, 0.44, 0.50, 0.57}.
+            let phase = (j * 3u + splits) & 3u;
+            var frac = 0.50;
+            if phase == 0u { frac = 0.38; }
+            else if phase == 1u { frac = 0.44; }
+            else if phase == 3u { frac = 0.57; }
+            let a_left = frac * area;
+            let a_right = area - a_left;
             let cent = foam_next[j].centroid;
-            let dx = max(0.25 * w_bub, 0.55);
-            let rx = clamp(dx - 0.08, 0.45, 2.2);
-            let ry = clamp(half_a / (3.14159265 * rx), 0.45, 2.0);
-            let rx_exact = half_a / (3.14159265 * ry);
+            let rx_l_init = clamp(0.42 * frac * w_bub, 0.45, 2.0);
+            let ry_l = clamp(a_left / (3.14159265 * rx_l_init), 0.45, 1.8);
+            let rx_l = a_left / (3.14159265 * ry_l);
+            let rx_r_init = clamp(0.42 * (1.0 - frac) * w_bub, 0.45, 2.0);
+            let ry_r = clamp(a_right / (3.14159265 * rx_r_init), 0.45, 1.8);
+            let rx_r = a_right / (3.14159265 * ry_r);
+            let sep = rx_l + rx_r + 0.12;
             let c_left = clamp(
-                cent - vec2<f32>(dx, 0.0),
-                vec2<f32>(FOAM_WALL_PAD + rx_exact, FOAM_WALL_PAD + ry),
-                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_exact, f32(ROWS) - FOAM_WALL_PAD - ry),
+                cent - vec2<f32>((1.0 - frac) * sep, 0.0),
+                vec2<f32>(FOAM_WALL_PAD + rx_l, FOAM_WALL_PAD + ry_l),
+                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_l, f32(ROWS) - FOAM_WALL_PAD - ry_l),
             );
             let c_right = clamp(
-                cent + vec2<f32>(dx, 0.0),
-                vec2<f32>(FOAM_WALL_PAD + rx_exact, FOAM_WALL_PAD + ry),
-                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_exact, f32(ROWS) - FOAM_WALL_PAD - ry),
+                cent + vec2<f32>(frac * sep, 0.0),
+                vec2<f32>(FOAM_WALL_PAD + rx_r, FOAM_WALL_PAD + ry_r),
+                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_r, f32(ROWS) - FOAM_WALL_PAD - ry_r),
             );
             var bmin_l = vec2<f32>(f32(COLUMNS), f32(ROWS));
             var bmax_l = vec2<f32>(0.0);
@@ -642,9 +667,10 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             var bmax_r = vec2<f32>(0.0);
             for (var k = 0u; k < FOAM_VERTS; k++) {
                 let theta = 2.0 * 3.14159265 * f32(k) / f32(FOAM_VERTS);
-                let off = vec2<f32>(rx_exact * cos(theta), ry * sin(theta));
-                let pl = clamp(c_left + off, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
-                let pr = clamp(c_right + off, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
+                let off_l = vec2<f32>(rx_l * cos(theta), ry_l * sin(theta));
+                let off_r = vec2<f32>(rx_r * cos(theta), ry_r * sin(theta));
+                let pl = clamp(c_left + off_l, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
+                let pr = clamp(c_right + off_r, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
                 foam_next[j].verts[k] = pl;
                 foam_next[free_slot].verts[k] = pr;
                 bmin_l = min(bmin_l, pl);
@@ -652,14 +678,14 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
                 bmin_r = min(bmin_r, pr);
                 bmax_r = max(bmax_r, pr);
             }
-            foam_next[j].target_area = half_a;
+            foam_next[j].target_area = a_left;
             foam_next[j].centroid = c_left;
             foam_next[j].bbox_min = bmin_l;
             foam_next[j].bbox_max = bmax_l;
             foam_next[j].drain_time = 0.0;
             foam_next[j].drain_partner = 0xffffffffu;
             foam_next[j].disp_vel = vec2<f32>(0.0);
-            foam_next[free_slot].target_area = half_a;
+            foam_next[free_slot].target_area = a_right;
             foam_next[free_slot].drain_time = 0.0;
             foam_next[free_slot].slot = (foam_next[j].slot + 1u) % GAS_SLOTS;
             foam_next[free_slot].alive = 1u;
