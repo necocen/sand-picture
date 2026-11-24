@@ -26,11 +26,12 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-/// Target total air area (cells^2) matching the polydisperse single-layer foam
-/// (~520 cells^2 rasterized under sand at capillary thickness ~2.25 cells -> ~86-92% span).
-const TARGET_AIR_AREA: f32 = 590.0;
+/// Target total air area (cells^2) matching the polydisperse single-layer foam:
+/// at capillary thickness ~2.35 cells, total horizontal span stays <= ~235/270 (~87%)
+/// so even a completely flat deposit cannot seal wall-to-wall and stall across flips.
+const TARGET_AIR_AREA: f32 = 500.0;
 /// Steady-state Rayleigh-Taylor breakup area threshold (cells^2), matching `foam.wgsl`.
-const STEADY_SPLIT_AREA: f32 = 22.0;
+const STEADY_SPLIT_AREA: f32 = 16.5;
 
 struct RawBubble {
     area: f32,

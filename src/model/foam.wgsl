@@ -33,7 +33,7 @@ struct FoamBubble {
 const FOAM_SUBSTEPS: u32 = 6u;
 const FOAM_JACOBI: u32 = 6u;
 const FOAM_GAMMA: f32 = 85.0;        // Meniscus normal mobility drag (Pa s / m)
-const FOAM_SIGMA: f32 = 0.0105;      // Surfactant-water interfacial tension (N/m): capillary thickness 2*l_c ≈ 3.1 cells
+const FOAM_SIGMA: f32 = 0.0135;      // Surfactant-water interfacial tension (N/m): capillary thickness ~2.4 cells under sand
 const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubbles (cells)
 const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
 const FOAM_SAND_LEVEL: f32 = 0.25;   // Packed sand outer boundary contour (avoids clipping gas in raster)
@@ -562,18 +562,21 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
     // breakup of over-wide rising ribbons after a flip, and slot coloring.
     if tid == 0u {
         // A. Film-drainage coalescence (Reynolds/Stefan law): deformable bubbles
-        // (area >= 2.2 cells^2) pressed together for >= 2.5 s merge into wider flat
-        // horizontal air pockets up to 30.0 cells^2, while small rigid capillary
-        // pearls (< 2.2 cells^2) resist dimple rupture and survive as crisp spacers.
+        // (area >= 2.0 cells^2) pressed together for >= 2.5 s merge into wider flat
+        // horizontal air pockets (up to 26.0 cells^2 vertically, 18.0 laterally so
+        // repeated flips cannot drift into a wall-to-wall ribbon seal), while small
+        // rigid capillary pearls (< 2.0 cells^2) resist rupture and remain spacers.
         for (var i = 0u; i < MAX_BUBBLES; i++) {
             if foam_next[i].alive == 0u || foam_next[i].held == 0u || foam_next[i].drain_time < 2.5 { continue; }
             let j = foam_next[i].drain_partner;
             if j >= MAX_BUBBLES || j == i || foam_next[j].alive == 0u || foam_next[j].held == 0u { continue; }
             let ai = foam_next[i].target_area;
             let aj = foam_next[j].target_area;
-            if min(ai, aj) < 2.2 { continue; }
+            if min(ai, aj) < 2.0 { continue; }
             let tot = ai + aj;
-            if tot > 30.0 { continue; }
+            let is_vert = foam_next[j].centroid.y > foam_next[i].centroid.y + 0.45;
+            let max_tot = select(18.0, 26.0, is_vert);
+            if tot > max_tot { continue; }
             // Merge lower bubble i into upper bubble j, conserving exact combined area.
             let cent = (ai * foam_next[i].centroid + aj * foam_next[j].centroid) / max(tot, 1e-4);
             var merged: array<vec2<f32>, FOAM_VERTS>;
@@ -639,7 +642,7 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
         }
 
         // B. Rayleigh-Taylor / flip breakup: an over-wide freely-rising air ribbon
-        // (exceeding the Hele-Shaw splitting scale ~6.2 cells wide, area > 18.0 cells^2)
+        // (exceeding the Hele-Shaw splitting scale ~5.8 cells wide, area > 16.5 cells^2)
         // pinches off asymmetrically into unequal daughter bubbles whenever a free slot
         // exists, preserving wide flat cushions alongside crisp smaller satellite beads.
         var splits = 0u;
@@ -648,7 +651,7 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
             let area = foam_next[j].target_area;
             let w_bub = sh_bmax[j].x - sh_bmin[j].x;
             // Only split once rising freely below the ceiling.
-            if area <= 18.0 || w_bub <= 6.20 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
+            if area <= 16.5 || w_bub <= 5.80 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
             var free_slot = 0xffffffffu;
             for (var s = 0u; s < MAX_BUBBLES; s++) {
                 if sh_alive[s] == 0u {
