@@ -32,7 +32,7 @@ mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
-use sand_picture::model::{DT, Model, Scene, Stage};
+use sand_picture::model::{DT, GridTurn, Model, Scene, Stage};
 use sand_picture::view::{Mode, REFERENCE_SIZE};
 use std::path::{Path, PathBuf};
 
@@ -120,10 +120,10 @@ fn time_stages(gpu: &GpuContext, model: &mut Model, count: u64) -> Vec<f64> {
     while done < count {
         let updates = u64::from(batch).min(count - done) as u32;
         for update in 0..updates {
-            let mirror = model.advance_motion(&gpu.queue);
+            let turn = model.advance_motion(&gpu.queue);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            if mirror {
-                model.invert(&mut encoder.begin_compute_pass(&Default::default()));
+            if turn != GridTurn::None {
+                model.apply_turn(&mut encoder.begin_compute_pass(&Default::default()), turn);
             }
             for (index, (_, range)) in stages.iter().enumerate() {
                 let first = update * marks + 2 * index as u32;
@@ -182,6 +182,7 @@ fn main() {
     let mut light = None;
     let mut loaded: Option<(PathBuf, u64)> = None;
     let mut turns: Option<Vec<u64>> = None;
+    let mut rotates: Vec<(bool, u64)> = Vec::new();
     let mut shakes: Vec<u64> = Vec::new();
     let mut resets: Vec<u64> = Vec::new();
     let mut sensor_gravity: Option<[f32; 3]> = None;
@@ -197,6 +198,16 @@ fn main() {
             "--dump" => dump = numbers(&value(), "--dump"),
             "--light" => light = Some(value().parse::<u64>().expect("--light EVERY")),
             "--turn" => turns = Some(numbers(&value(), "--turn")),
+            "--rotate" => {
+                let raw = value();
+                let (dir, step) = raw.split_once(',').expect("--rotate cw|ccw,STEP");
+                let cw = match dir {
+                    "cw" => true,
+                    "ccw" => false,
+                    _ => panic!("--rotate cw|ccw,STEP"),
+                };
+                rotates.push((cw, step.parse().expect("--rotate cw|ccw,STEP")));
+            }
             "--shake" => shakes = numbers(&value(), "--shake"),
             "--reset" => resets = numbers(&value(), "--reset"),
             "--gravity" => {
@@ -245,18 +256,19 @@ fn main() {
     };
     model.set_sensor_gravity(sensor_gravity);
     let turns = turns.unwrap_or(if loaded.is_some() { vec![] } else { vec![0] });
-    let pictures =
+    let mut pictures =
         (views || frames || timed_pictures > 0).then(|| Pictures::new(&gpu, &model, size));
     // A full dump: the views first, if asked for, then the buffers.
-    let dump_all = |model: &Model, step: u64| {
+    let dump_all = |model: &Model, pictures: &mut Option<Pictures>, step: u64| {
         let folder = output.join(format!("step-{step:05}"));
-        if let Some(pictures) = pictures.as_ref().filter(|_| views) {
+        if let Some(pictures) = pictures.as_mut().filter(|_| views) {
+            pictures.sync_grid(&gpu, model.grid(), size);
             write_pictures(&gpu, pictures, &folder);
         }
         write(&gpu, model, &folder, false);
     };
     if dump.contains(&start) {
-        dump_all(&model, start);
+        dump_all(&model, &mut pictures, start);
     }
     let running = std::time::Instant::now();
     for step in start + 1..=steps {
@@ -266,25 +278,31 @@ fn main() {
         if turns.contains(&(step - 1)) {
             model.start_turn();
         }
+        for &(cw, at) in &rotates {
+            if at == step - 1 {
+                model.start_quarter_turn(cw);
+            }
+        }
         if shakes.contains(&(step - 1)) {
             model.start_shake();
         }
-        let mirror = model.advance_motion(&gpu.queue);
+        let turn = model.advance_motion(&gpu.queue);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            if mirror {
-                model.invert(&mut pass);
+            if turn != GridTurn::None {
+                model.apply_turn(&mut pass, turn);
             }
             model.encode(&mut pass);
         }
-        if let Some(pictures) = pictures.as_ref().filter(|_| frames) {
+        if let Some(pictures) = pictures.as_mut().filter(|_| frames) {
+            pictures.sync_grid(&gpu, model.grid(), size);
             pictures.draw(&mut encoder, Mode::default());
         }
         gpu.queue.submit([encoder.finish()]);
         if dump.contains(&step) {
             wait(&gpu);
-            dump_all(&model, step);
+            dump_all(&model, &mut pictures, step);
         } else if light.is_some_and(|every| step % every == 0) {
             wait(&gpu);
             write(&gpu, &model, &output.join(format!("step-{step:05}")), true);

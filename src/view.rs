@@ -141,6 +141,17 @@ impl Views {
         queue.write_buffer(&self.config, 8, &words);
     }
 
+    /// Updates both the simulation grid `(nx, ny)` and picture size `(w, h)`
+    /// when the tank rotates 90 degrees (`270x180 <-> 180x270`).
+    pub fn set_grid_and_size(&mut self, queue: &wgpu::Queue, grid: [u32; 2], size: [u32; 2]) {
+        let words: Vec<u8> = [grid[0], grid[1], size[0], size[1]]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        queue.write_buffer(&self.config, 0, &words);
+        self.photoreal.set_grid(grid);
+    }
+
     /// Draws the view `mode` of the model's present state into `image`, a
     /// view of a texture of the views' size and of IMAGE_FORMAT.
     pub fn encode(

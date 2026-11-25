@@ -71,17 +71,17 @@ const WATER_VISCOSITY:f32=.00094;
 // Integrated gradient across the two thin sheared layers of a grain plug
 // that slides between the plates (2/b).
 const GAP_SHEAR=2./.001;
-// The grid's size is a constant of the shader (COLUMNS, ROWS: shader.rs), so
-// that the index's division and remainder compile to multiplications.
-fn point(i:u32)->vec2<i32> {return vec2<i32>(vec2<u32>(i%COLUMNS,i/COLUMNS));}
-fn valid(p:vec2<i32>)->bool {return all(p>=vec2<i32>(0)) && p.x<i32(COLUMNS) && p.y<i32(ROWS);}
-fn at(p:vec2<i32>)->u32 {return u32(p.y)*COLUMNS+u32(p.x);}
-fn cell(p:vec2<i32>)->Cell {return cells[at(clamp(p,vec2<i32>(0),vec2<i32>(i32(COLUMNS)-1,i32(ROWS)-1)))];}
+// The grid's dimensions live in cfg.nx and cfg.ny so the tank can rotate by
+// exact 90-degree quarter turns (270x180 <-> 180x270) in place.
+fn point(i:u32)->vec2<i32> {return vec2<i32>(vec2<u32>(i%cfg.nx,i/cfg.nx));}
+fn valid(p:vec2<i32>)->bool {return all(p>=vec2<i32>(0)) && p.x<i32(cfg.nx) && p.y<i32(cfg.ny);}
+fn at(p:vec2<i32>)->u32 {return u32(p.y)*cfg.nx+u32(p.x);}
+fn cell(p:vec2<i32>)->Cell {return cells[at(clamp(p,vec2<i32>(0),vec2<i32>(i32(cfg.nx)-1,i32(cfg.ny)-1)))];}
 fn axis(a:u32)->vec2<i32> {return select(vec2<i32>(1,0),vec2<i32>(0,1),a==1u);}
 // The tank's walls are rigid mirrors for the grain fields: a point outside
 // reads its mirror cell, with the velocity normal to the wall and the shear
 // stress reversed (no flow through the wall; its traction is face_friction).
-fn inside(p:vec2<i32>)->vec2<i32> {return clamp(p,vec2<i32>(0),vec2<i32>(i32(COLUMNS)-1,i32(ROWS)-1));}
+fn inside(p:vec2<i32>)->vec2<i32> {return clamp(p,vec2<i32>(0),vec2<i32>(i32(cfg.nx)-1,i32(cfg.ny)-1));}
 fn reflected(p:vec2<i32>,v:vec2<f32>)->vec2<f32> {return select(v,-v,inside(p)!=p);}
 fn grains(c:Cell)->vec2<f32> {return max(vec2<f32>(0.),vec2<f32>(c.volume.fine,c.volume.coarse));}
 // The powder shares of a cell's free white grains.

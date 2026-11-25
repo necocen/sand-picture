@@ -60,6 +60,18 @@ const SHAKE_DISPLACEMENT: f32 = 0.005;
 /// The gas identities a cell can hold: the shaders' `GAS_SLOTS`.
 pub const GAS_SLOTS: usize = 9;
 
+/// Discrete grid rotation applied at the start of an update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridTurn {
+    None,
+    /// Exact 180-degree rotation (same grid dimensions).
+    Invert180,
+    /// Exact 90-degree clockwise rotation (transposes `270x180 <-> 180x270`).
+    RotateCw90,
+    /// Exact 90-degree counter-clockwise rotation (transposes `270x180 <-> 180x270`).
+    RotateCcw90,
+}
+
 pub struct Model {
     /// The picture at rest that a reset returns to.
     scene: Scene,
@@ -70,12 +82,18 @@ pub struct Model {
     steps: Vec<Step>,
     /// The kernels that prepare the first update from the scene.
     prepare: Vec<usize>,
-    /// The kernels that mirror the grid when a turn begins.
+    /// The kernels that rotate the grid 180 deg when a turn begins.
     invert: Vec<usize>,
+    /// The kernels that rotate the grid 90 deg CW (old right wall -> new floor).
+    rotate_cw: Vec<usize>,
+    /// The kernels that rotate the grid 90 deg CCW (old left wall -> new floor).
+    rotate_ccw: Vec<usize>,
     /// The kernels that adjust live air volume and refresh grid gas/apertures.
     adjust_air_steps: Vec<usize>,
     /// The kernel that writes summary sand/air metrics for auto-flip detection.
     measure_kernel: usize,
+    /// True when the simulation grid is currently transposed (`180x270`).
+    transposed: bool,
     /// What the person's hands are doing to the picture, if anything.
     motion: Option<Motion>,
     /// Live apparent gravity `[gx (+right), gy (+down), gz (out of glass)]`
@@ -92,9 +110,13 @@ pub struct Model {
 enum Motion {
     /// The picture is shaken left and right.
     Shake { elapsed: f32 },
-    /// The picture is turned over; `mirrored` once the grid has been mirrored
-    /// (when the picture lay flat).
-    Turn { elapsed: f32, mirrored: bool },
+    /// The picture is turned over (`Invert180` ramps gravity over `TURN_SECONDS`;
+    /// `RotateCw90` / `RotateCcw90` apply immediately on the next update).
+    Turn {
+        elapsed: f32,
+        kind: GridTurn,
+        applied: bool,
+    },
 }
 
 /// A model being built, piece by piece: its materials' table takes seconds
@@ -116,6 +138,8 @@ struct Assembly {
     steps: Vec<Step>,
     prepare: Vec<usize>,
     invert: Vec<usize>,
+    rotate_cw: Vec<usize>,
+    rotate_ccw: Vec<usize>,
     adjust_air_steps: Vec<usize>,
     measure_kernel: usize,
 }
@@ -178,8 +202,11 @@ impl Building {
             steps: assembly.steps,
             prepare: assembly.prepare,
             invert: assembly.invert,
+            rotate_cw: assembly.rotate_cw,
+            rotate_ccw: assembly.rotate_ccw,
             adjust_air_steps: assembly.adjust_air_steps,
             measure_kernel: assembly.measure_kernel,
+            transposed: false,
             motion: None,
             sensor_gravity: None,
             sensor_applied: false,
@@ -198,6 +225,8 @@ struct Layout {
     steps: Vec<Step>,
     prepare: Vec<usize>,
     invert: Vec<usize>,
+    rotate_cw: Vec<usize>,
+    rotate_ccw: Vec<usize>,
     adjust_air_steps: Vec<usize>,
     measure_kernel: usize,
 }
@@ -211,6 +240,8 @@ fn layout() -> Layout {
     let foam = Foam::new(&mut plans);
     let interface = Interface::new(&mut plans);
     let [nx, ny] = CELLS.map(|v| v as u32);
+    let cell_groups = (nx * ny).div_ceil(128);
+    let vertex_groups = ((nx + 1) * (ny + 1)).div_ceil(128);
     let invert = vec![
         plans.add(Plan::new(
             Program::Invert,
@@ -223,6 +254,44 @@ fn layout() -> Layout {
             ((nx + 1) * (ny + 1)).div_ceil(2).div_ceil(128),
         )),
         foam.invert,
+        foam.raster,
+        interface.apertures,
+        bed.clear_strata,
+    ];
+    let cells_commit = plans.add(Plan::new(
+        Program::Invert,
+        "rotate_cells_commit",
+        cell_groups,
+    ));
+    let stream_commit = plans.add(Plan::new(
+        Program::Invert,
+        "rotate_stream_commit",
+        vertex_groups,
+    ));
+    let rotate_cw = vec![
+        plans.add(Plan::new(Program::Invert, "rotate_cells_cw", cell_groups)),
+        cells_commit,
+        plans.add(Plan::new(
+            Program::Invert,
+            "rotate_stream_cw",
+            vertex_groups,
+        )),
+        stream_commit,
+        foam.rotate_cw,
+        foam.raster,
+        interface.apertures,
+        bed.clear_strata,
+    ];
+    let rotate_ccw = vec![
+        plans.add(Plan::new(Program::Invert, "rotate_cells_ccw", cell_groups)),
+        cells_commit,
+        plans.add(Plan::new(
+            Program::Invert,
+            "rotate_stream_ccw",
+            vertex_groups,
+        )),
+        stream_commit,
+        foam.rotate_ccw,
         foam.raster,
         interface.apertures,
         bed.clear_strata,
@@ -255,6 +324,8 @@ fn layout() -> Layout {
         steps,
         prepare,
         invert,
+        rotate_cw,
+        rotate_ccw,
         adjust_air_steps,
         measure_kernel,
     }
@@ -272,6 +343,8 @@ impl Assembly {
             steps: layout.steps,
             prepare: layout.prepare,
             invert: layout.invert,
+            rotate_cw: layout.rotate_cw,
+            rotate_ccw: layout.rotate_ccw,
             adjust_air_steps: layout.adjust_air_steps,
             measure_kernel: layout.measure_kernel,
         }
@@ -307,10 +380,35 @@ impl Model {
     pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.motion = None;
         self.sensor_applied = false;
+        if self.transposed {
+            self.set_transposed(queue, false);
+        }
         self.write_gravity(queue, STANDARD_GRAVITY, 0., 0.);
         self.buffers
             .restore(device, queue, &self.scene, self.air_area);
         self.prepare(device, queue);
+    }
+
+    /// Current active grid dimensions `[nx, ny]` (`[270, 180]` or `[180, 270]`).
+    pub fn grid(&self) -> [u32; 2] {
+        let [nx, ny] = CELLS.map(|v| v as u32);
+        if self.transposed { [ny, nx] } else { [nx, ny] }
+    }
+
+    /// True when the grid is currently rotated 90 or 270 degrees (`180x270`).
+    pub fn is_transposed(&self) -> bool {
+        self.transposed
+    }
+
+    fn set_transposed(&mut self, queue: &wgpu::Queue, transposed: bool) {
+        self.transposed = transposed;
+        let [nx, ny] = self.grid();
+        let dims: Vec<u8> = [nx, ny].into_iter().flat_map(u32::to_le_bytes).collect();
+        queue.write_buffer(&self.buffers.config, 0, &dims);
+        self.buffers.stream.set_transposed(queue, transposed);
+        for kernel in &self.kernels {
+            kernel.set_transposed(queue, transposed);
+        }
     }
 
     /// Sets or clears live 3D apparent gravity `[gx (+right), gy (+down), gz]`
@@ -373,21 +471,41 @@ impl Model {
         &self.steps
     }
 
-    /// Begin turning the picture over, and tell whether a turn began: one in
-    /// progress goes on unchanged. Hands that were shaking the picture stop
-    /// shaking it.
+    /// Begin turning the picture over by 180 degrees, and tell whether a turn
+    /// began: one in progress goes on unchanged. Hands that were shaking the
+    /// picture stop shaking it.
     pub fn start_turn(&mut self) -> bool {
         let begins = !matches!(self.motion, Some(Motion::Turn { .. }));
         if begins {
             self.motion = Some(Motion::Turn {
                 elapsed: 0.,
-                mirrored: false,
+                kind: GridTurn::Invert180,
+                applied: false,
             });
         }
         begins
     }
 
-    /// True while a turn is currently ramping gravity.
+    /// Begin a 90-degree quarter-turn of the simulation grid (`cw == true`
+    /// moves the old right wall to the new floor `y = 0`; `cw == false` moves
+    /// the old left wall to the new floor).
+    pub fn start_quarter_turn(&mut self, cw: bool) -> bool {
+        let begins = !matches!(self.motion, Some(Motion::Turn { .. }));
+        if begins {
+            self.motion = Some(Motion::Turn {
+                elapsed: 0.,
+                kind: if cw {
+                    GridTurn::RotateCw90
+                } else {
+                    GridTurn::RotateCcw90
+                },
+                applied: false,
+            });
+        }
+        begins
+    }
+
+    /// True while a turn is currently in progress.
     pub fn is_turning(&self) -> bool {
         matches!(self.motion, Some(Motion::Turn { .. }))
     }
@@ -432,12 +550,13 @@ impl Model {
     /// g cos(theta), zero when the picture lies flat, where the grid is
     /// mirrored so that it points down the rows again; the model sees
     /// g |cos(theta)|.
-    pub fn advance_motion(&mut self, queue: &wgpu::Queue) -> bool {
+    pub fn advance_motion(&mut self, queue: &wgpu::Queue) -> GridTurn {
         use std::f32::consts::PI;
         let mut lateral = 0.;
         let mut gravity = STANDARD_GRAVITY;
         let mut plate = 0.;
-        let mut mirror = false;
+        let mut turn = GridTurn::None;
+        let mut transpose_now = false;
         let ended = match self.motion.as_mut() {
             None => {
                 if let Some(raw) = self.sensor_gravity {
@@ -448,7 +567,7 @@ impl Model {
                     self.write_gravity(queue, STANDARD_GRAVITY, 0., 0.);
                     self.sensor_applied = false;
                 }
-                return false;
+                return GridTurn::None;
             }
             Some(Motion::Shake { elapsed }) => {
                 *elapsed += DT;
@@ -458,28 +577,53 @@ impl Model {
                 }
                 *elapsed >= SHAKE_SECONDS
             }
-            Some(Motion::Turn { elapsed, mirrored }) => {
-                // Mirror immediately on the first update (eliminating the dead
-                // 1 s wait before horizontal), then ramp in-plane gravity from
-                // 0 -> g over TURN_SECONDS while plate_gravity eases g -> 0.
-                mirror = !*mirrored;
-                *mirrored = true;
-                *elapsed += DT;
-                let t = (*elapsed / TURN_SECONDS).min(1.);
-                if t < 1. {
-                    gravity = STANDARD_GRAVITY * (0.5 * PI * t).sin();
-                    plate = (STANDARD_GRAVITY * STANDARD_GRAVITY - gravity * gravity)
-                        .max(0.)
-                        .sqrt();
+            Some(Motion::Turn {
+                elapsed,
+                kind,
+                applied,
+            }) => match *kind {
+                GridTurn::Invert180 => {
+                    // Rotate 180 deg immediately on the first update, then ramp
+                    // in-plane gravity 0 -> g over TURN_SECONDS while
+                    // plate_gravity eases g -> 0.
+                    if !*applied {
+                        turn = GridTurn::Invert180;
+                        *applied = true;
+                    }
+                    *elapsed += DT;
+                    let t = (*elapsed / TURN_SECONDS).min(1.);
+                    if t < 1. {
+                        gravity = STANDARD_GRAVITY * (0.5 * PI * t).sin();
+                        plate = (STANDARD_GRAVITY * STANDARD_GRAVITY - gravity * gravity)
+                            .max(0.)
+                            .sqrt();
+                    }
+                    t >= 1.
                 }
-                t >= 1.
-            }
+                GridTurn::RotateCw90 | GridTurn::RotateCcw90 => {
+                    turn = *kind;
+                    *applied = true;
+                    transpose_now = true;
+                    if let Some(raw) = self.sensor_gravity {
+                        let (g, lat, pl) = map_sensor_gravity(raw);
+                        gravity = g;
+                        lateral = lat;
+                        plate = pl;
+                        self.sensor_applied = true;
+                    }
+                    true
+                }
+                GridTurn::None => true,
+            },
         };
+        if transpose_now {
+            self.set_transposed(queue, !self.transposed);
+        }
         if ended {
             self.motion = None;
         }
         self.write_gravity(queue, gravity, lateral, plate);
-        mirror
+        turn
     }
 
     /// Writes an update's apparent gravity: downward along the rows
@@ -491,10 +635,16 @@ impl Model {
         queue.write_buffer(&self.buffers.config, 44, &plate.to_le_bytes());
     }
 
-    /// Turn the current material configuration without advancing physical time.
-    /// Face and transport caches are regenerated by the next regular update.
-    pub fn invert(&self, pass: &mut wgpu::ComputePass<'_>) {
-        for &kernel in &self.invert {
+    /// Apply a discrete 180-degree or 90-degree rotation of the simulation
+    /// state without advancing physical time.
+    pub fn apply_turn(&self, pass: &mut wgpu::ComputePass<'_>, turn: GridTurn) {
+        let kernels = match turn {
+            GridTurn::None => return,
+            GridTurn::Invert180 => &self.invert,
+            GridTurn::RotateCw90 => &self.rotate_cw,
+            GridTurn::RotateCcw90 => &self.rotate_ccw,
+        };
+        for &kernel in kernels {
             self.kernels[kernel].record(pass);
         }
     }

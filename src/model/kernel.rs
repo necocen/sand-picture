@@ -49,6 +49,9 @@ pub struct Kernel {
     pipeline: wgpu::ComputePipeline,
     bindings: wgpu::BindGroup,
     groups: u32,
+    /// Per-kernel level uniform (for `Program::Stream`) and its normal words,
+    /// allowing instant `(x, y) <-> (y, x)` swap on 90-degree rotations.
+    own_config: Option<(wgpu::Buffer, Vec<u32>)>,
 }
 impl Kernel {
     /// Records this dispatch in a compute pass.
@@ -56,6 +59,22 @@ impl Kernel {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bindings, &[]);
         pass.dispatch_workgroups(self.groups, 1, 1);
+    }
+
+    /// Swaps `(x, y)`, `(cx, cy)` and `(nx, ny)` in a stream kernel's own
+    /// level configuration when the tank is transposed by 90 degrees.
+    pub fn set_transposed(&self, queue: &wgpu::Queue, transposed: bool) {
+        let Some((buffer, base)) = &self.own_config else {
+            return;
+        };
+        let mut words = base.clone();
+        if transposed && words.len() >= 8 {
+            words.swap(0, 1);
+            words.swap(3, 4);
+            words.swap(6, 7);
+        }
+        let bytes: Vec<u8> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+        queue.write_buffer(buffer, 0, &bytes);
     }
 }
 
@@ -147,14 +166,15 @@ impl Pipelines {
             .or_insert_with(|| compile(device, module, plan.entry, &places));
         // The kernel's own configuration, where it has one.
         let own = plan.config.as_ref().map(|words| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(plan.entry),
                 contents: &words
                     .iter()
                     .flat_map(|word| word.to_le_bytes())
                     .collect::<Vec<_>>(),
-                usage: wgpu::BufferUsages::UNIFORM,
-            })
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+            (buffer, words.clone())
         });
         let entries: Vec<wgpu::BindGroupEntry<'_>> = fields
             .iter()
@@ -162,7 +182,7 @@ impl Pipelines {
             .map(|(name, place)| wgpu::BindGroupEntry {
                 binding: place.binding,
                 resource: match &own {
-                    Some(own) if place.uniform => own.as_entire_binding(),
+                    Some((buffer, _)) if place.uniform => buffer.as_entire_binding(),
                     _ => buffers.get(name).as_entire_binding(),
                 },
             })
@@ -177,6 +197,7 @@ impl Pipelines {
             groups: match plan.groups {
                 Groups::Fixed(groups) => groups,
             },
+            own_config: own,
         }
     }
 }

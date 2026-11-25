@@ -83,10 +83,10 @@ fn plug_scaled(m:vec2<f32>,old:f32,now:f32)->vec2<f32>{
     if old<=0.{return vec2<f32>(0.);}
     return m*(now/old);
 }
-// The most rows of a grid. plug_linked: the rows that hold a link. The
-// other arrays: the steps of the last PLUG_KEPT cells of the walk, a cell's
-// at its raster index modulo PLUG_KEPT.
-const PLUG_ROWS:u32=256u;
+// The most rows of a grid (covers both 270x180 and 180x270). plug_linked: the
+// rows that hold a link. The other arrays: the steps of the last PLUG_KEPT
+// cells of the walk, a cell's at its raster index modulo PLUG_KEPT.
+const PLUG_ROWS:u32=272u;
 var<workgroup> plug_marks:array<atomic<u32>,PLUG_ROWS>;
 var<workgroup> plug_linked:array<u32,PLUG_ROWS>;
 var<workgroup> plug_ask:array<f32,PLUG_KEPT>;

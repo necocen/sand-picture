@@ -276,6 +276,8 @@ pub struct Foam {
     pub coalesce: usize,
     pub raster: usize,
     pub invert: usize,
+    pub rotate_cw: usize,
+    pub rotate_ccw: usize,
     pub adjust_air: usize,
     pub measure: usize,
 }
@@ -288,6 +290,8 @@ impl Foam {
             coalesce: plans.add(Plan::new(Program::Model, "foam_coalesce", 1)),
             raster: plans.add(Plan::new(Program::Model, "foam_raster", cells)),
             invert: plans.add(Plan::new(Program::Model, "invert_foam", 1)),
+            rotate_cw: plans.add(Plan::new(Program::Model, "rotate_foam_cw", 1)),
+            rotate_ccw: plans.add(Plan::new(Program::Model, "rotate_foam_ccw", 1)),
             adjust_air: plans.add(Plan::new(Program::Model, "foam_adjust_air", 1)),
             measure: plans.add(Plan::new(Program::Model, "measure_sand", 1)),
         }

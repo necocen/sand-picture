@@ -63,17 +63,17 @@ var<workgroup> sh_bmax: array<vec2<f32>, MAX_BUBBLES>;
 var<workgroup> sh_alive: array<u32, MAX_BUBBLES>;
 
 fn foam_solid_cell(cx: i32, cy: i32) -> f32 {
-    let p = clamp(vec2<i32>(cx, cy), vec2<i32>(0), vec2<i32>(i32(COLUMNS) - 1, i32(ROWS) - 1));
+    let p = clamp(vec2<i32>(cx, cy), vec2<i32>(0), vec2<i32>(i32(cfg.nx) - 1, i32(cfg.ny) - 1));
     let c = cells[at(p)];
     return max(c.volume.fine, 0.) + max(c.volume.coarse, 0.) + max(c.bed.x, 0.) + max(c.bed.y, 0.);
 }
 
 fn foam_solid_at(pos: vec2<f32>) -> f32 {
-    let g = clamp(pos - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(f32(COLUMNS - 1u), f32(ROWS - 1u)));
+    let g = clamp(pos - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(f32(cfg.nx - 1u), f32(cfg.ny - 1u)));
     let x0 = i32(floor(g.x));
     let y0 = i32(floor(g.y));
-    let x1 = min(x0 + 1, i32(COLUMNS) - 1);
-    let y1 = min(y0 + 1, i32(ROWS) - 1);
+    let x1 = min(x0 + 1, i32(cfg.nx) - 1);
+    let y1 = min(y0 + 1, i32(cfg.ny) - 1);
     let tx = g.x - f32(x0);
     let ty = g.y - f32(y0);
     let s00 = foam_solid_cell(x0, y0);
@@ -86,17 +86,17 @@ fn foam_solid_at(pos: vec2<f32>) -> f32 {
 // Sample ambient open-water velocity outside the bubble so the ring average
 // recovers U_inf with zero self-induced dipole feedback (2D harmonic mean-value theorem).
 fn foam_ambient_flow(pos: vec2<f32>) -> vec3<f32> {
-    let cx = clamp(i32(floor(pos.x)), 0, i32(COLUMNS) - 1);
-    let cy = clamp(i32(floor(pos.y)), 0, i32(ROWS) - 1);
+    let cx = clamp(i32(floor(pos.x)), 0, i32(cfg.nx) - 1);
+    let cy = clamp(i32(floor(pos.y)), 0, i32(cfg.ny) - 1);
     let i = at(vec2<i32>(cx, cy));
     let c = cells[i];
     let solid = max(c.volume.fine, 0.) + max(c.volume.coarse, 0.) + max(c.bed.x, 0.) + max(c.bed.y, 0.);
     if c.volume.gas > 0.35 || solid > 0.35 {
         return vec3<f32>(0.0, 0.0, 0.0);
     }
-    let vr = select(0., faces[2u * i].volume.w, cx < i32(COLUMNS) - 1);
+    let vr = select(0., faces[2u * i].volume.w, cx < i32(cfg.nx) - 1);
     let vl = select(0., faces[2u * at(vec2<i32>(cx - 1, cy))].volume.w, cx > 0);
-    let vu = select(0., faces[2u * i + 1u].volume.w, cy < i32(ROWS) - 1);
+    let vu = select(0., faces[2u * i + 1u].volume.w, cy < i32(cfg.ny) - 1);
     let vd = select(0., faces[2u * at(vec2<i32>(cx, cy - 1)) + 1u].volume.w, cy > 0);
     return vec3<f32>(0.5 * (vl + vr), 0.5 * (vd + vu), 1.0);
 }
@@ -226,7 +226,7 @@ fn foam_step(
             var cx = 0.0;
             var cy = 0.0;
             var per = 0.0;
-            var min_y = f32(ROWS);
+            var min_y = f32(cfg.ny);
             var max_y = 0.0;
             var uf_sum = vec2<f32>(0.0);
             var uf_w = 0.0;
@@ -255,7 +255,7 @@ fn foam_step(
             }
             let uf_mean = select(vec2<f32>(0.0), uf_sum / uf_w, uf_w > 0.5);
             let was_held = atomicLoad(&sh_held) >= 3u;
-            let at_ceiling = (up_dir.y > 0.5 && max_y >= f32(ROWS) - 0.35)
+            let at_ceiling = (up_dir.y > 0.5 && max_y >= f32(cfg.ny) - 0.35)
                 || (up_dir.y < -0.5 && min_y <= 0.35);
             var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.16 * v_rise, was_held);
             if was_held {
@@ -347,7 +347,7 @@ fn foam_step(
                 if gplen > 0.03 && dot(gp / gplen, up_dir) > 0.30 {
                     for (var step_u = 1; step_u <= 4; step_u++) {
                         let probe = p + up_dir * f32(step_u);
-                        if probe.y >= f32(ROWS) - 1.5 || probe.y <= 1.5 { break; }
+                        if probe.y >= f32(cfg.ny) - 1.5 || probe.y <= 1.5 { break; }
                         if foam_solid_at(probe) < 0.15 {
                             thin_crust = true;
                             break;
@@ -364,9 +364,9 @@ fn foam_step(
                         if phi_s > 0.35 && dot(gp / gplen, up_dir) > 0.45 { held_k += 1u; }
                     } else {
                         // Deep inside uniform sand (e.g. mid-drainage flip): escape toward open water.
-                        let esc = select(up_dir, -up_dir, p.y > 0.5 * f32(ROWS));
+                        let esc = select(up_dir, -up_dir, p.y > 0.5 * f32(cfg.ny));
                         p += esc * 0.35;
-                        if p.y > 0.5 * f32(ROWS) { held_k += 1u; }
+                        if p.y > 0.5 * f32(cfg.ny) { held_k += 1u; }
                     }
                     contact = 1.0;
                 }
@@ -396,7 +396,7 @@ fn foam_step(
             // Smooth top glass stops upward rise without pinning bubbles laterally,
             // so post-flip clusters spread evenly along the ceiling instead of bunching.
             let min_p = vec2<f32>(FOAM_WALL_PAD, FOAM_WALL_PAD);
-            let max_p = vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD);
+            let max_p = vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD);
             if p.x < min_p.x || p.x > max_p.x || p.y < min_p.y || p.y > max_p.y {
                 p = clamp(p, min_p, max_p);
                 contact = 1.0;
@@ -444,7 +444,7 @@ fn foam_step(
                 let delta = clamp((target_area - sh_area) / sh_free_perim, -0.25, 0.25);
                 p = p + (delta * w) * n_out;
             }
-            p = clamp(p, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
+            p = clamp(p, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD));
             sh_pos[k] = p;
         }
         workgroupBarrier();
@@ -455,7 +455,7 @@ fn foam_step(
         foam_next[bi].verts[k] = sh_pos[k];
     }
     if k == 0u {
-        var bmin = vec2<f32>(f32(COLUMNS), f32(ROWS));
+        var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
         var bmax = vec2<f32>(0.0, 0.0);
         var a2 = 0.0;
         var cx = 0.0;
@@ -609,7 +609,7 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
                 merged[k] = clamp(
                     cent + dir * max_r,
                     vec2<f32>(FOAM_WALL_PAD),
-                    vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD),
+                    vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
                 );
             }
             var a2 = 0.0;
@@ -620,13 +620,13 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             }
             let cur_a = max(0.5 * a2, 1e-4);
             let scale = clamp(sqrt(tot / cur_a), 0.7, 1.4);
-            var bmin = vec2<f32>(f32(COLUMNS), f32(ROWS));
+            var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
             var bmax = vec2<f32>(0.0, 0.0);
             for (var k = 0u; k < FOAM_VERTS; k++) {
                 let p = clamp(
                     cent + (merged[k] - cent) * scale,
                     vec2<f32>(FOAM_WALL_PAD),
-                    vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD),
+                    vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
                 );
                 foam_next[j].verts[k] = p;
                 bmin = min(bmin, p);
@@ -659,7 +659,7 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             let area = foam_next[j].target_area;
             let w_bub = sh_bmax[j].x - sh_bmin[j].x;
             // Only split once rising freely below the ceiling.
-            if area <= 16.5 || w_bub <= 5.80 || sh_bmax[j].y >= f32(ROWS) - 1.2 { continue; }
+            if area <= 16.5 || w_bub <= 5.80 || sh_bmax[j].y >= f32(cfg.ny) - 1.2 { continue; }
             var free_slot = 0xffffffffu;
             for (var s = 0u; s < MAX_BUBBLES; s++) {
                 if sh_alive[s] == 0u {
@@ -689,23 +689,23 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             let c_left = clamp(
                 cent - vec2<f32>((1.0 - frac) * sep, 0.0),
                 vec2<f32>(FOAM_WALL_PAD + rx_l, FOAM_WALL_PAD + ry_l),
-                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_l, f32(ROWS) - FOAM_WALL_PAD - ry_l),
+                vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD - rx_l, f32(cfg.ny) - FOAM_WALL_PAD - ry_l),
             );
             let c_right = clamp(
                 cent + vec2<f32>(frac * sep, 0.0),
                 vec2<f32>(FOAM_WALL_PAD + rx_r, FOAM_WALL_PAD + ry_r),
-                vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD - rx_r, f32(ROWS) - FOAM_WALL_PAD - ry_r),
+                vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD - rx_r, f32(cfg.ny) - FOAM_WALL_PAD - ry_r),
             );
-            var bmin_l = vec2<f32>(f32(COLUMNS), f32(ROWS));
+            var bmin_l = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
             var bmax_l = vec2<f32>(0.0);
-            var bmin_r = vec2<f32>(f32(COLUMNS), f32(ROWS));
+            var bmin_r = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
             var bmax_r = vec2<f32>(0.0);
             for (var k = 0u; k < FOAM_VERTS; k++) {
                 let theta = 2.0 * 3.14159265 * f32(k) / f32(FOAM_VERTS);
                 let off_l = vec2<f32>(rx_l * cos(theta), ry_l * sin(theta));
                 let off_r = vec2<f32>(rx_r * cos(theta), ry_r * sin(theta));
-                let pl = clamp(c_left + off_l, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
-                let pr = clamp(c_right + off_r, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD));
+                let pl = clamp(c_left + off_l, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD));
+                let pr = clamp(c_right + off_r, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD));
                 foam_next[j].verts[k] = pl;
                 foam_next[free_slot].verts[k] = pr;
                 bmin_l = min(bmin_l, pl);
@@ -919,7 +919,7 @@ fn invert_foam(@builtin(global_invocation_id) id: vec3<u32>) {
     let bi = id.x;
     if bi >= MAX_BUBBLES { return; }
     if foam[bi].alive == 0u { return; }
-    let box_sz = vec2<f32>(f32(COLUMNS), f32(ROWS));
+    let box_sz = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
     var bmin = box_sz;
     var bmax = vec2<f32>(0.0);
     for (var k = 0u; k < FOAM_VERTS; k++) {
@@ -939,6 +939,45 @@ fn invert_foam(@builtin(global_invocation_id) id: vec3<u32>) {
     foam_next[bi] = foam[bi];
 }
 
+// 4b. Exact 90-degree CW/CCW rotation of all closed curves when the grid
+// transposes (270x180 <-> 180x270). `cfg.nx, cfg.ny` hold the NEW dimensions.
+fn rotate_foam_quarter(bi: u32, cw: bool) {
+    if bi >= MAX_BUBBLES { return; }
+    if foam[bi].alive == 0u { return; }
+    let old_nx = f32(cfg.ny);
+    let old_ny = f32(cfg.nx);
+    var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
+    var bmax = vec2<f32>(0.0);
+    for (var k = 0u; k < FOAM_VERTS; k++) {
+        let p = foam[bi].verts[k];
+        let v = select(vec2<f32>(old_ny - p.y, p.x), vec2<f32>(p.y, old_nx - p.x), cw);
+        foam[bi].verts[k] = v;
+        bmin = min(bmin, v);
+        bmax = max(bmax, v);
+    }
+    let c = foam[bi].centroid;
+    foam[bi].centroid = select(vec2<f32>(old_ny - c.y, c.x), vec2<f32>(c.y, old_nx - c.x), cw);
+    let vel = foam[bi].vel;
+    foam[bi].vel = select(vec2<f32>(-vel.y, vel.x), vec2<f32>(vel.y, -vel.x), cw);
+    foam[bi].disp_vel = vec2<f32>(0.0);
+    foam[bi].bbox_min = bmin;
+    foam[bi].bbox_max = bmax;
+    foam[bi].drain_time = 0.0;
+    foam[bi].drain_partner = 0xffffffffu;
+    foam[bi].held = 0u;
+    foam_next[bi] = foam[bi];
+}
+
+@compute @workgroup_size(128)
+fn rotate_foam_cw(@builtin(global_invocation_id) id: vec3<u32>) {
+    rotate_foam_quarter(id.x, true);
+}
+
+@compute @workgroup_size(128)
+fn rotate_foam_ccw(@builtin(global_invocation_id) id: vec3<u32>) {
+    rotate_foam_quarter(id.x, false);
+}
+
 // Shared scratch for `foam_adjust_air` and `measure_sand`.
 var<workgroup> sh_air_scale: f32;
 var<workgroup> sh_sum_total: array<f32, 256>;
@@ -947,7 +986,7 @@ var<workgroup> sh_sum_above: array<f32, 256>;
 var<workgroup> sh_sum_gas: array<f32, 256>;
 
 fn foam_open_water_spot(cx: i32, cy: i32) -> bool {
-    if cx < 3 || cx > i32(COLUMNS) - 4 || cy < 3 || cy > i32(ROWS) - 4 {
+    if cx < 3 || cx > i32(cfg.nx) - 4 || cy < 3 || cy > i32(cfg.ny) - 4 {
         return false;
     }
     for (var dy = -2; dy <= 2; dy++) {
@@ -1003,12 +1042,13 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
                 }
                 // Scan candidate columns across the tank for the lowest clear open-water
                 // pocket above the bottom deposit (`terrain[x].y`).
-                let base_x = 22 + i32((cfg.air_seed * 73u + k * 83u) % 226u);
+                let span_x = max(i32(cfg.nx) - 24, 1);
+                let base_x = 12 + i32((cfg.air_seed * 73u + k * 83u) % u32(span_x));
                 var best_x = -1;
-                var best_y = i32(ROWS);
+                var best_y = i32(cfg.ny);
                 for (var attempt = 0; attempt < 18; attempt++) {
                     let off = select(-(attempt / 2), (attempt + 1) / 2, (attempt & 1) == 1) * 11;
-                    let cx = 12 + ((base_x - 12 + off) % 246 + 246) % 246;
+                    let cx = 12 + ((base_x - 12 + off) % span_x + span_x) % span_x;
                     var too_close = false;
                     for (var s = 0u; s < spawned; s++) {
                         if abs(cx - spawned_x[s]) < 7 {
@@ -1019,7 +1059,7 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
                     let tcol = terrain[u32(cx)];
                     let bed_top = select(0, i32(ceil(tcol.y)) + 1, tcol.x > 0.0);
                     let y_start = max(bed_top + 6, 6);
-                    for (var cy = y_start; cy <= i32(ROWS) - 10; cy += 2) {
+                    for (var cy = y_start; cy <= i32(cfg.ny) - 10; cy += 2) {
                         if foam_open_water_spot(cx, cy) {
                             if cy < best_y {
                                 best_x = cx;
@@ -1038,14 +1078,14 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
                 let area = min(rem, per_bub);
                 let r = sqrt(area / 3.14159265);
                 let cent = vec2<f32>(f32(best_x) + 0.5, f32(best_y) + 0.5);
-                var bmin = vec2<f32>(f32(COLUMNS), f32(ROWS));
+                var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
                 var bmax = vec2<f32>(0.0);
                 for (var m = 0u; m < FOAM_VERTS; m++) {
                     let th = 2.0 * 3.14159265 * f32(m) / f32(FOAM_VERTS);
                     let p = clamp(
                         cent + r * vec2<f32>(cos(th), sin(th)),
                         vec2<f32>(FOAM_WALL_PAD),
-                        vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD),
+                        vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
                     );
                     foam[free_slot].verts[m] = p;
                     bmin = min(bmin, p);
@@ -1086,13 +1126,13 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
             } else {
                 let cent = foam[tid].centroid;
                 let rs = sqrt(scale);
-                var bmin = vec2<f32>(f32(COLUMNS), f32(ROWS));
+                var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
                 var bmax = vec2<f32>(0.0);
                 for (var m = 0u; m < FOAM_VERTS; m++) {
                     let p = clamp(
                         cent + (foam[tid].verts[m] - cent) * rs,
                         vec2<f32>(FOAM_WALL_PAD),
-                        vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD),
+                        vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
                     );
                     foam[tid].verts[m] = p;
                     bmin = min(bmin, p);

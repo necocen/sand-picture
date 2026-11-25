@@ -102,10 +102,23 @@ fn surface_normal(x:i32)->vec2<f32>{
     return normalize(vec2<f32>(-(r-l)/width,1.));
 }
 // Bed without connection to the floor returns to the mobile inventory: a
-// lifted column's, and what lies above a column's top row.
+// lifted column's, what lies above a column's top row, and any steep vertical
+// cliff face (> 3 cells above an adjacent column's bed) directly exposed to
+// open water (e.g. right after a 90-degree rotation).
+fn cliff_exposed(x:i32,y:i32)->bool{
+    for(var dx=-1;dx<=1;dx+=2){
+        let nx_i=x+dx;
+        if nx_i<0||nx_i>=i32(cfg.nx){continue;}
+        if f32(y)<=terrain[u32(nx_i)].x+3.{continue;}
+        let c=cells[u32(y)*cfg.nx+u32(nx_i)];
+        let solid=max(c.volume.fine,0.)+max(c.volume.coarse,0.)+max(c.bed.x,0.)+max(c.bed.y,0.);
+        if c.volume.gas<.25&&solid<.25{return true;}
+    }
+    return false;
+}
 @compute @workgroup_size(128) fn bed_release(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}let p=point(i);
-    if terrain[u32(p.x)].x<=0.||f32(p.y)>terrain[u32(p.x)].y{release_bed(i);}
+    if terrain[u32(p.x)].x<=0.||f32(p.y)>terrain[u32(p.x)].y||cliff_exposed(p.x,p.y){release_bed(i);}
 }
 // `height`: the bed's surface in cells from the floor; `top`: its highest
 // row; `open`: the row where it ends, whose free part takes the next sand

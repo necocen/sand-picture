@@ -25,7 +25,7 @@ mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
-use sand_picture::model::{Model, Scene};
+use sand_picture::model::{GridTurn, Model, Scene};
 use sand_picture::view::{Mode, REFERENCE_SIZE, Views};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -96,18 +96,18 @@ fn differences(what: &str, fields: &Fields, before: &Fields) -> usize {
 fn advance(gpu: &GpuContext, model: &mut Model, update: &mut u64, to: u64) -> Option<u64> {
     let mut mirrored = None;
     while *update < to {
-        let mirror = model.advance_motion(&gpu.queue);
+        let turn = model.advance_motion(&gpu.queue);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            if mirror {
-                model.invert(&mut pass);
+            if turn != GridTurn::None {
+                model.apply_turn(&mut pass, turn);
             }
             model.encode(&mut pass);
         }
         gpu.queue.submit([encoder.finish()]);
         *update += 1;
-        if mirror {
+        if turn != GridTurn::None {
             mirrored = Some(*update);
         }
         if update.is_multiple_of(8) {

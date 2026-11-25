@@ -14,9 +14,9 @@ fn rectangle(p: vec2<f32>, half_size: vec2<f32>, softness: f32) -> f32 {
 const BACKING_DISTANCE: f32 = .3;
 fn backing(q: vec2<f32>) -> vec3<f32> {
     // Grazing rays see the bright diffuser around the finite dark backing.
-    // The bubble centres still transmit the same quiet background as the
-    // water.
-    let card = rectangle(q, vec2<f32>(.19, .14), .008);
+    // Keep the same 4 cm margin around the tank whether landscape or portrait.
+    let half_tank = .5 * vec2<f32>(cfg.size) * cfg.cell_width;
+    let card = rectangle(q, half_tank + vec2<f32>(.04, .04), .008);
     return mix(vec3<f32>(1.8, 1.85, 1.9), vec3<f32>(.004, .012, .035), card);
 }
 fn backdrop(p: vec2<f32>) -> vec3<f32> {

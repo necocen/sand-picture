@@ -6,6 +6,8 @@
 //! screen orientation, and delivers smoothed screen-frame apparent gravity
 //! `[gx (+right), gy (+down), gz (out of glass)]` in m/s^2.
 
+use sand_picture::model::GridTurn;
+
 /// Lifecycle state of the device gravity sensor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
@@ -30,79 +32,139 @@ impl SensorState {
     }
 }
 
-/// Action emitted by [`FlipDetector`] when the device rotates 180 degrees.
+/// Action emitted by [`QuarterTurnDetector`] when the device rotates into a
+/// new 90-degree wall sector (or the OS auto-rotates by 180 degrees).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlipAction {
+pub enum QuarterAction {
     None,
-    /// Gravity inverted while the OS screen did not auto-rotate 180 deg:
-    /// invert the simulation grid AND toggle the 180-deg display rotation.
-    InvertAndToggleView,
-    /// The OS screen auto-rotated 180 deg while `view_flipped == false`:
-    /// invert the simulation grid so sand stays physically at the top.
-    InvertKeepView,
-    /// The OS screen auto-rotated 180 deg while `view_flipped == true`:
-    /// clear `view_flipped` without inverting so sand stays physically put.
-    ClearViewFlip,
+    /// Apply `grid_turn` to the simulation grid and atomically update the
+    /// rendered view rotation to `next_view_quarter` (`0..4`).
+    Turn {
+        grid_turn: GridTurn,
+        next_view_quarter: u8,
+    },
+    /// Update the rendered view rotation without rotating the simulation grid
+    /// (e.g., OS 180-deg auto-rotation canceling an existing display flip).
+    SetViewQuarter(u8),
 }
 
-/// Apparent downward gravity (m/s^2) below which the device is considered
-/// upside-down relative to the current model frame (~124 deg from upright).
-const UPSIDE_DOWN_GY: f32 = -5.5;
-/// Sustained upside-down duration (s) before triggering a 180-deg invert.
-const UPSIDE_DOWN_HOLD_SECS: f32 = 0.25;
+/// Minimum in-plane gravity (m/s^2) required before switching the active floor
+/// wall (prevents spurious quarter turns when the device lies flat on a table).
+const MIN_IN_PLANE_FOR_SWITCH: f32 = 4.5;
+/// Tilt angle (rad) from the current floor's downward normal beyond which a
+/// quarter-turn (90 deg) or half-turn (180 deg) begins (`55 deg` gives a
+/// `20 deg` hysteresis band around each 45-deg diagonal).
+const SWITCH_ANGLE_RAD: f32 = 55.0_f32 * std::f32::consts::PI / 180.0;
+/// Angle beyond which a direct 180-deg flip is chosen over a 90-deg turn.
+const HALF_TURN_ANGLE_RAD: f32 = 135.0_f32 * std::f32::consts::PI / 180.0;
+/// Sustained duration (s) in the new sector before applying the rotation.
+const SWITCH_HOLD_SECS: f32 = 0.25;
 
-/// Tracks sustained upside-down gravity and OS 180-deg orientation flips,
-/// transforming raw screen-frame gravity into the model's current frame.
+/// Rotates screen-frame apparent gravity `[gx (+right), gy (+down), gz]` into
+/// the model's current rotated frame (`quarter * 90 deg` CW, `quarter` in `0..4`).
+pub fn rotate_gravity_cw(raw: [f32; 3], quarter: u8) -> [f32; 3] {
+    let [gx, gy, gz] = raw;
+    match quarter & 3 {
+        1 => [-gy, gx, gz],
+        2 => [-gx, -gy, gz],
+        3 => [gy, -gx, gz],
+        _ => [gx, gy, gz],
+    }
+}
+
+/// Tracks 360-degree orientation across all four tank walls (`Z_4`) with
+/// hysteresis and debounce, transforming raw screen-frame gravity into the
+/// model's current frame.
 #[derive(Default)]
-pub struct FlipDetector {
-    upside_down_secs: f32,
+pub struct QuarterTurnDetector {
+    pending_delta: u8,
+    hold_secs: f32,
 }
 
-impl FlipDetector {
+impl QuarterTurnDetector {
     pub fn reset(&mut self) {
-        self.upside_down_secs = 0.0;
+        self.pending_delta = 0;
+        self.hold_secs = 0.0;
     }
 
     pub fn step(
         &mut self,
         raw: Option<[f32; 3]>,
         os_flipped_180: bool,
-        view_flipped: bool,
+        view_quarter: u8,
         turning: bool,
         dt: f32,
-    ) -> (Option<[f32; 3]>, FlipAction) {
+    ) -> (Option<[f32; 3]>, QuarterAction) {
+        let q = view_quarter & 3;
         if os_flipped_180 {
-            self.upside_down_secs = 0.0;
-            let action = if view_flipped {
-                FlipAction::ClearViewFlip
-            } else {
-                FlipAction::InvertKeepView
-            };
-            return (raw, action);
-        }
-        let Some([gx, gy, gz]) = raw else {
-            self.upside_down_secs = 0.0;
-            return (None, FlipAction::None);
-        };
-        let eff = if view_flipped {
-            [-gx, -gy, gz]
-        } else {
-            [gx, gy, gz]
-        };
-        if turning {
-            self.upside_down_secs = 0.0;
-            return (Some(eff), FlipAction::None);
-        }
-        if eff[1] < UPSIDE_DOWN_GY {
-            self.upside_down_secs += dt;
-            if self.upside_down_secs >= UPSIDE_DOWN_HOLD_SECS {
-                self.upside_down_secs = 0.0;
-                return (Some(eff), FlipAction::InvertAndToggleView);
+            self.reset();
+            if q == 0 {
+                return (
+                    raw.map(|r| rotate_gravity_cw(r, 0)),
+                    QuarterAction::Turn {
+                        grid_turn: GridTurn::Invert180,
+                        next_view_quarter: 0,
+                    },
+                );
             }
-        } else {
-            self.upside_down_secs = 0.0;
+            let next_q = (q + 2) & 3;
+            return (
+                raw.map(|r| rotate_gravity_cw(r, next_q)),
+                QuarterAction::SetViewQuarter(next_q),
+            );
         }
-        (Some(eff), FlipAction::None)
+        let Some(raw_vec) = raw else {
+            self.reset();
+            return (None, QuarterAction::None);
+        };
+        let eff = rotate_gravity_cw(raw_vec, q);
+        if turning {
+            self.reset();
+            return (Some(eff), QuarterAction::None);
+        }
+        let in_plane = eff[0].hypot(eff[1]);
+        let desired_delta = if in_plane < MIN_IN_PLANE_FOR_SWITCH {
+            0
+        } else {
+            let angle = eff[0].atan2(eff[1]);
+            if angle.abs() <= SWITCH_ANGLE_RAD {
+                0
+            } else if angle.abs() > HALF_TURN_ANGLE_RAD {
+                2
+            } else if angle > 0.0 {
+                1
+            } else {
+                3
+            }
+        };
+        if desired_delta == 0 {
+            self.reset();
+            return (Some(eff), QuarterAction::None);
+        }
+        if desired_delta == self.pending_delta {
+            self.hold_secs += dt;
+        } else {
+            self.pending_delta = desired_delta;
+            self.hold_secs = dt;
+        }
+        if self.hold_secs >= SWITCH_HOLD_SECS {
+            self.reset();
+            let next_q = (q + desired_delta) & 3;
+            let grid_turn = match desired_delta {
+                1 => GridTurn::RotateCw90,
+                2 => GridTurn::Invert180,
+                3 => GridTurn::RotateCcw90,
+                _ => GridTurn::None,
+            };
+            return (
+                Some(rotate_gravity_cw(raw_vec, next_q)),
+                QuarterAction::Turn {
+                    grid_turn,
+                    next_view_quarter: next_q,
+                },
+            );
+        }
+        (Some(eff), QuarterAction::None)
     }
 }
 
@@ -513,69 +575,120 @@ fn start_or_request(shared: &std::rc::Rc<std::cell::RefCell<WasmSensor>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{FlipAction, FlipDetector, proper_to_apparent_gravity};
+    use super::{
+        QuarterAction, QuarterTurnDetector, proper_to_apparent_gravity, rotate_gravity_cw,
+    };
+    use sand_picture::model::GridTurn;
 
     #[test]
     fn screen_orientation_maps_proper_acceleration_to_apparent_gravity() {
         let g = 9.81_f32;
-        // Portrait upright: proper (0, +g, 0) -> apparent [0, +g (down), 0].
         let v = proper_to_apparent_gravity([0.0, g, 0.0], 0);
         assert!(v[0].abs() < 1e-5 && (v[1] - g).abs() < 1e-5 && v[2].abs() < 1e-5);
 
-        // Portrait tilted 30 deg CW (right edge down): proper (-g sin 30, +g cos 30, 0)
-        // -> apparent [+g sin 30 (right), +g cos 30 (down), 0].
         let rad = 30.0_f32.to_radians();
         let v = proper_to_apparent_gravity([-g * rad.sin(), g * rad.cos(), 0.0], 0);
         assert!((v[0] - g * rad.sin()).abs() < 1e-4 && (v[1] - g * rad.cos()).abs() < 1e-4);
 
-        // Landscape-primary (90 deg CCW, top on left) upright: proper (+g, 0, 0) -> down.
         let v = proper_to_apparent_gravity([g, 0.0, 0.0], 90);
         assert!(v[0].abs() < 1e-5 && (v[1] - g).abs() < 1e-5);
 
-        // Landscape-secondary (270 / -90 deg) upright: proper (-g, 0, 0) -> down.
         let v = proper_to_apparent_gravity([-g, 0.0, 0.0], -90);
         assert!(v[0].abs() < 1e-5 && (v[1] - g).abs() < 1e-5);
 
-        // Lying flat screen-up: proper (0, 0, +g) -> plate gravity +g.
         let v = proper_to_apparent_gravity([0.0, 0.0, g], 0);
         assert!(v[0].abs() < 1e-5 && v[1].abs() < 1e-5 && (v[2] - g).abs() < 1e-5);
     }
 
     #[test]
-    fn flip_detector_handles_upside_down_debounce_and_os_rotation() {
-        let mut det = FlipDetector::default();
-        // Brief 0.1 s spike upside-down does not trigger.
-        for _ in 0..12 {
-            let (_, act) = det.step(Some([0.0, -9.81, 0.0]), false, false, false, 0.008);
-            assert_eq!(act, FlipAction::None);
-        }
-        // Returning upright resets timer.
-        let (_, act) = det.step(Some([0.0, 9.81, 0.0]), false, false, false, 0.008);
-        assert_eq!(act, FlipAction::None);
+    fn quarter_turn_detector_covers_all_four_walls_with_hysteresis() {
+        let g = 9.81_f32;
+        let mut det = QuarterTurnDetector::default();
 
-        // Sustained 0.25 s upside-down triggers InvertAndToggleView once.
-        let mut triggered = false;
+        // 45 deg CW stays inside +-55 deg hysteresis band (no rotation).
+        let r45 = 45.0_f32.to_radians();
+        for _ in 0..50 {
+            let (_, act) = det.step(
+                Some([g * r45.sin(), g * r45.cos(), 0.0]),
+                false,
+                0,
+                false,
+                0.008,
+            );
+            assert_eq!(act, QuarterAction::None);
+        }
+
+        // 75 deg CW sustained for 0.25 s rotates CW 90 deg (0 -> 1).
+        let r75 = 75.0_f32.to_radians();
+        let raw75 = [g * r75.sin(), g * r75.cos(), 0.0];
+        let mut turned = None;
         for _ in 0..35 {
-            let (_, act) = det.step(Some([0.0, -9.81, 0.0]), false, false, false, 0.008);
-            if act == FlipAction::InvertAndToggleView {
-                triggered = true;
+            let (eff, act) = det.step(Some(raw75), false, 0, false, 0.008);
+            if act != QuarterAction::None {
+                turned = Some((eff, act));
                 break;
             }
         }
-        assert!(triggered);
+        let (eff, act) = turned.expect("should trigger 90 deg CW");
+        assert_eq!(
+            act,
+            QuarterAction::Turn {
+                grid_turn: GridTurn::RotateCw90,
+                next_view_quarter: 1,
+            }
+        );
+        // Immediately after q -> 1, the returned effective gravity is in the new frame
+        // (15 deg CCW from straight down).
+        let expected = rotate_gravity_cw(raw75, 1);
+        assert_eq!(eff, Some(expected));
+        assert!(expected[1] > 9.0);
 
-        // Once view_flipped is true, same upside-down reading maps to +9.81 down
-        // and does not re-trigger.
-        let (eff, act) = det.step(Some([2.0, -9.81, 0.0]), false, true, false, 0.008);
-        assert_eq!(act, FlipAction::None);
-        assert_eq!(eff, Some([-2.0, 9.81, 0.0]));
+        // Tilting back to 45 deg CW while in q = 1 (-45 deg relative to q=1) stays in q=1.
+        for _ in 0..50 {
+            let (_, act) = det.step(
+                Some([g * r45.sin(), g * r45.cos(), 0.0]),
+                false,
+                1,
+                false,
+                0.008,
+            );
+            assert_eq!(act, QuarterAction::None);
+        }
 
-        // OS 180-deg rotation while view_flipped == false triggers InvertKeepView.
-        let (_, act) = det.step(Some([0.0, 9.81, 0.0]), true, false, false, 0.008);
-        assert_eq!(act, FlipAction::InvertKeepView);
+        // Flat on a table never triggers a quarter turn.
+        for _ in 0..50 {
+            let (_, act) = det.step(Some([0.0, 0.0, g]), false, 1, false, 0.008);
+            assert_eq!(act, QuarterAction::None);
+        }
 
-        // OS 180-deg rotation while view_flipped == true clears view flip without invert.
-        let (_, act) = det.step(Some([0.0, 9.81, 0.0]), true, true, false, 0.008);
-        assert_eq!(act, FlipAction::ClearViewFlip);
+        // Direct upside-down from q = 0 triggers Invert180 (0 -> 2).
+        let mut flipped = false;
+        for _ in 0..35 {
+            let (_, act) = det.step(Some([0.0, -g, 0.0]), false, 0, false, 0.008);
+            if act
+                == (QuarterAction::Turn {
+                    grid_turn: GridTurn::Invert180,
+                    next_view_quarter: 2,
+                })
+            {
+                flipped = true;
+                break;
+            }
+        }
+        assert!(flipped);
+
+        // OS 180-deg flip at q = 0 triggers Invert180 keeping q = 0.
+        let (_, act) = det.step(Some([0.0, g, 0.0]), true, 0, false, 0.008);
+        assert_eq!(
+            act,
+            QuarterAction::Turn {
+                grid_turn: GridTurn::Invert180,
+                next_view_quarter: 0,
+            }
+        );
+
+        // OS 180-deg flip at q = 2 clears view rotation back to q = 0 without invert.
+        let (_, act) = det.step(Some([0.0, g, 0.0]), true, 2, false, 0.008);
+        assert_eq!(act, QuarterAction::SetViewQuarter(0));
     }
 }

@@ -1,8 +1,8 @@
 //! The picture as it runs in the window: the model, its views, the count of
 //! its updates and what the person has asked of it.
-use super::sensor::{FlipAction, FlipDetector};
+use super::sensor::{QuarterAction, QuarterTurnDetector};
 use mikage::{GpuContext, SubmissionToken, TickContext};
-use sand_picture::model::{DEFAULT_AIR_AREA, DT, Model};
+use sand_picture::model::{DEFAULT_AIR_AREA, DT, GridTurn, Model};
 use sand_picture::view::{Mode, Views};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -67,12 +67,12 @@ pub struct Product {
     turn_pending: bool,
     shake_pending: bool,
     air_delta_pending: f32,
-    /// True when the tank quad is drawn rotated 180 deg to match an
-    /// upside-down device whose OS did not auto-rotate the viewport.
-    view_flipped: bool,
-    /// Toggle `view_flipped` atomically on the next `mirror` (invert) update.
-    flip_view_on_mirror: bool,
-    flip_detector: FlipDetector,
+    /// Quarter-turns CW (`0..4`) the simulation grid has rotated relative to
+    /// the display rectangle; `Screen` applies the inverse rotation to UVs.
+    view_quarter: u8,
+    /// Next `view_quarter` to commit atomically on the next discrete grid turn.
+    pending_view_quarter: Option<u8>,
+    quarter_detector: QuarterTurnDetector,
 }
 impl Product {
     /// The picture rests with its sand on the floor; the person turns it over
@@ -105,9 +105,9 @@ impl Product {
             turn_pending: false,
             shake_pending: false,
             air_delta_pending: 0.0,
-            view_flipped: false,
-            flip_view_on_mirror: false,
-            flip_detector: FlipDetector::default(),
+            view_quarter: 0,
+            pending_view_quarter: None,
+            quarter_detector: QuarterTurnDetector::default(),
         }
     }
 
@@ -154,50 +154,66 @@ impl Product {
         self.model.shake_pose()
     }
 
-    /// Whether the rendered tank should be rotated 180 deg on screen.
-    pub fn view_flipped(&self) -> bool {
-        self.view_flipped
+    /// Quarter-turns CW (`0..4`) the simulation grid is rotated relative to the display.
+    pub fn view_quarter(&self) -> u8 {
+        self.view_quarter
+    }
+
+    /// True when the simulation grid is currently transposed (`180x270`).
+    pub fn is_transposed(&self) -> bool {
+        self.model.is_transposed()
     }
 
     /// Feeds live 3D apparent gravity and OS 180-deg orientation flips from a
-    /// device motion sensor, handling upside-down auto-inversion seamlessly.
+    /// device motion sensor, handling full 360-deg four-wall rotation seamlessly.
     pub fn update_sensor(&mut self, raw: Option<[f32; 3]>, os_flipped_180: bool) {
         if raw.is_none() && !os_flipped_180 {
-            if self.view_flipped {
-                self.view_flipped = false;
-            }
-            self.flip_view_on_mirror = false;
-            self.flip_detector.reset();
+            self.quarter_detector.reset();
             self.model.set_sensor_gravity(None);
+            match self.view_quarter & 3 {
+                2 => {
+                    self.view_quarter = 0;
+                    self.pending_view_quarter = None;
+                }
+                1 if self.model.start_quarter_turn(false) => {
+                    self.pending_view_quarter = Some(0);
+                }
+                3 if self.model.start_quarter_turn(true) => {
+                    self.pending_view_quarter = Some(0);
+                }
+                _ => {}
+            }
             return;
         }
-        let (eff, action) = self.flip_detector.step(
+        let (eff, action) = self.quarter_detector.step(
             raw,
             os_flipped_180,
-            self.view_flipped,
+            self.view_quarter,
             self.model.is_turning(),
             DT,
         );
         self.model.set_sensor_gravity(eff);
         match action {
-            FlipAction::None => {}
-            FlipAction::InvertAndToggleView => {
-                if self.model.start_turn() {
-                    self.flip_view_on_mirror = true;
+            QuarterAction::None => {}
+            QuarterAction::Turn {
+                grid_turn,
+                next_view_quarter,
+            } => {
+                let started = match grid_turn {
+                    GridTurn::Invert180 => self.model.start_turn(),
+                    GridTurn::RotateCw90 => self.model.start_quarter_turn(true),
+                    GridTurn::RotateCcw90 => self.model.start_quarter_turn(false),
+                    GridTurn::None => false,
+                };
+                if started {
+                    self.pending_view_quarter = Some(next_view_quarter & 3);
                     self.turned = (Instant::now(), self.updates);
                     self.reset_auto_tracker();
                 }
             }
-            FlipAction::InvertKeepView => {
-                if self.model.start_turn() {
-                    self.flip_view_on_mirror = false;
-                    self.turned = (Instant::now(), self.updates);
-                    self.reset_auto_tracker();
-                }
-            }
-            FlipAction::ClearViewFlip => {
-                self.view_flipped = false;
-                self.flip_view_on_mirror = false;
+            QuarterAction::SetViewQuarter(q) => {
+                self.view_quarter = q & 3;
+                self.pending_view_quarter = None;
             }
         }
     }
@@ -304,9 +320,9 @@ impl Product {
             self.turn_pending = false;
             self.shake_pending = false;
             self.air_delta_pending = 0.0;
-            self.view_flipped = false;
-            self.flip_view_on_mirror = false;
-            self.flip_detector.reset();
+            self.view_quarter = 0;
+            self.pending_view_quarter = None;
+            self.quarter_detector.reset();
             self.reset_auto_tracker();
             self.play_begins();
             changed = true;
@@ -316,7 +332,7 @@ impl Product {
             changed = true;
         }
         if std::mem::take(&mut self.turn_pending) && self.model.start_turn() {
-            self.flip_view_on_mirror = false;
+            self.pending_view_quarter = None;
             self.turned = (Instant::now(), self.updates);
             self.reset_auto_tracker();
         }
@@ -329,17 +345,19 @@ impl Product {
     /// One update, in the tick's encoder.
     pub fn tick(&mut self, ctx: &mut TickContext<'_>) {
         self.apply_pending(ctx.gpu);
-        let mirror = self.model.advance_motion(&ctx.gpu.queue);
-        if mirror && std::mem::take(&mut self.flip_view_on_mirror) {
-            self.view_flipped = !self.view_flipped;
+        let grid_turn = self.model.advance_motion(&ctx.gpu.queue);
+        if grid_turn != GridTurn::None
+            && let Some(next_q) = self.pending_view_quarter.take()
+        {
+            self.view_quarter = next_q;
         }
         let want_measure = self.auto_flip
             && self.updates.is_multiple_of(MEASURE_INTERVAL)
             && matches!(self.readback, ReadbackState::Idle);
         {
             let mut pass = ctx.encoder.begin_compute_pass(&Default::default());
-            if mirror {
-                self.model.invert(&mut pass);
+            if grid_turn != GridTurn::None {
+                self.model.apply_turn(&mut pass, grid_turn);
             }
             self.model.encode(&mut pass);
             if want_measure {
@@ -433,9 +451,10 @@ impl Product {
         [picture, at.elapsed().as_secs_f64()]
     }
 
-    /// From now on the kept picture is `size` pixels.
-    pub fn resize(&self, gpu: &GpuContext, size: [u32; 2]) {
-        self.views.resize(&gpu.queue, size);
+    /// From now on the kept picture is `size` pixels for the current grid orientation.
+    pub fn sync_views(&mut self, gpu: &GpuContext, size: [u32; 2]) {
+        self.views
+            .set_grid_and_size(&gpu.queue, self.model.grid(), size);
     }
 
     /// Draws the view `mode` of the present state into the kept picture.

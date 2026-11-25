@@ -73,6 +73,7 @@ impl Program {
 /// `material`, their single source.
 fn model(grains: &Grains) -> String {
     let [columns, rows] = CELLS;
+    let max_side = columns.max(rows);
     let omega = pressure_omega();
     let [fine, coarse] = grains.diameters.map(|d| d as f32);
     let [slow, fast] = grains.terminal_speeds().map(|v| v as f32);
@@ -94,7 +95,7 @@ fn model(grains: &Grains) -> String {
         .join(",");
     [
         format!(
-            "const COLUMNS:u32={columns}u;const ROWS:u32={rows}u;const OMEGA:f32={omega:?};\
+            "const MAX_SIDE:u32={max_side}u;const OMEGA:f32={omega:?};\
              const GRAIN_DIAMETER=vec2<f32>({fine:?},{coarse:?});\
              const TERMINAL_SPEED=vec2<f32>({slow:?},{fast:?});\
              const POWDER_SPEED:f32={powder:?};\

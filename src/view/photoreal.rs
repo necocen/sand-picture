@@ -132,6 +132,10 @@ impl Photoreal {
         }
     }
 
+    pub fn set_grid(&mut self, grid: [u32; 2]) {
+        self.groups = [grid[0].div_ceil(8), grid[1].div_ceil(8)];
+    }
+
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, image: &wgpu::TextureView) {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

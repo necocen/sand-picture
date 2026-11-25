@@ -17,7 +17,7 @@ const FIT_WGSL: &str = r"
 struct Fit {
     // (center_x, center_y, half_w, half_h) in NDC.
     rect: vec4<f32>,
-    // (border_strength, inv_quad_w, inv_quad_h, flipped_180).
+    // (border_strength, inv_quad_w, inv_quad_h, view_quarter 0..3).
     frame: vec4<f32>,
 }
 
@@ -45,7 +45,15 @@ fn vertex(@builtin(vertex_index) index: u32) -> Corner {
         fit.rect.x + (2.0 * uv.x - 1.0) * fit.rect.z,
         fit.rect.y + (1.0 - 2.0 * uv.y) * fit.rect.w,
     );
-    let tex_uv = select(uv, vec2<f32>(1.0) - uv, fit.frame.w > 0.5);
+    let q = u32(round(fit.frame.w)) & 3u;
+    var tex_uv = uv;
+    if q == 1u {
+        tex_uv = vec2<f32>(1.0 - uv.y, uv.x);
+    } else if q == 2u {
+        tex_uv = vec2<f32>(1.0 - uv.x, 1.0 - uv.y);
+    } else if q == 3u {
+        tex_uv = vec2<f32>(uv.y, 1.0 - uv.x);
+    }
     return Corner(vec4<f32>(pos, 0.0, 1.0), tex_uv);
 }
 
@@ -65,7 +73,10 @@ fn fragment(in: Corner) -> @location(0) vec4<f32> {
 ";
 
 pub struct Screen {
-    size: [u32; 2],
+    /// Landscape 3:2 display size in pixels (the on-screen tank shape).
+    base_size: [u32; 2],
+    /// True when the kept texture is transposed `[base_size[1], base_size[0]]`.
+    transposed: bool,
     texture: wgpu::Texture,
     image: wgpu::TextureView,
     fit_params: wgpu::Buffer,
@@ -123,7 +134,8 @@ impl Screen {
         });
         let (texture, image, bindings) = kept(device, &pipeline, &sampler, &fit_params, size);
         Self {
-            size,
+            base_size: size,
+            transposed: false,
             texture,
             image,
             fit_params,
@@ -133,21 +145,49 @@ impl Screen {
         }
     }
 
-    /// The kept picture's size in pixels.
+    /// The landscape display size in pixels (before any 90-deg transposition).
     pub fn size(&self) -> [u32; 2] {
-        self.size
+        self.base_size
     }
 
-    /// A kept picture of another size; what it showed is gone.
+    /// The current kept texture dimensions (`[w, h]` or transposed `[h, w]`).
+    pub fn texture_size(&self) -> [u32; 2] {
+        if self.transposed {
+            [self.base_size[1], self.base_size[0]]
+        } else {
+            self.base_size
+        }
+    }
+
+    /// A kept picture of another base size; what it showed is gone.
     pub fn resize(&mut self, gpu: &GpuContext, size: [u32; 2]) {
+        self.base_size = size;
+        let tex_size = self.texture_size();
         (self.texture, self.image, self.bindings) = kept(
             &gpu.device,
             &self.pipeline,
             &self.sampler,
             &self.fit_params,
-            size,
+            tex_size,
         );
-        self.size = size;
+    }
+
+    /// Switches the kept texture between `[w, h]` (`270x180`) and `[h, w]`
+    /// (`180x270`) when the simulation grid rotates by 90 degrees.
+    pub fn set_transposed(&mut self, gpu: &GpuContext, transposed: bool) -> bool {
+        if self.transposed == transposed {
+            return false;
+        }
+        self.transposed = transposed;
+        let tex_size = self.texture_size();
+        (self.texture, self.image, self.bindings) = kept(
+            &gpu.device,
+            &self.pipeline,
+            &self.sampler,
+            &self.fit_params,
+            tex_size,
+        );
+        true
     }
 
     /// What the views draw into.
@@ -161,15 +201,15 @@ impl Screen {
     }
 
     /// The window's frame: its surround and, when there is one, the kept
-    /// picture at the largest size of its shape that fits, displaced by
-    /// `shake = (offset_frac, envelope)` while shaken and optionally rotated
-    /// 180 degrees (`flipped`) when an upside-down device did not auto-rotate.
+    /// picture at the largest size of its 3:2 shape that fits, displaced by
+    /// `shake = (offset_frac, envelope)` while shaken and rotated by
+    /// `view_quarter * 90` degrees (`0..4`) to match the simulation grid.
     pub fn encode(
         &self,
         ctx: &mut RenderContext<'_, ()>,
         picture: bool,
         shake: (f32, f32),
-        flipped: bool,
+        view_quarter: u8,
     ) {
         let attachment = ctx.color_attachment(wgpu::Operations {
             load: wgpu::LoadOp::Clear(SURROUND),
@@ -177,7 +217,7 @@ impl Screen {
         });
         let window = [ctx.target.size.width, ctx.target.size.height].map(|v| v.max(1) as f32);
         if picture {
-            let image = self.size.map(|v| v as f32);
+            let image = self.base_size.map(|v| v as f32);
             let scale = (window[0] / image[0]).min(window[1] / image[1]);
             let quad = image.map(|v| (v * scale).max(1.0));
             let (disp, env) = shake;
@@ -190,7 +230,7 @@ impl Screen {
                 env,
                 1.0 / quad[0],
                 1.0 / quad[1],
-                if flipped { 1.0 } else { 0.0 },
+                f32::from(view_quarter & 3),
             ];
             let bytes: Vec<u8> = params.into_iter().flat_map(f32::to_le_bytes).collect();
             ctx.gpu.queue.write_buffer(&self.fit_params, 0, &bytes);

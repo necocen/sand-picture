@@ -73,6 +73,20 @@ impl Pictures {
         self.size
     }
 
+    #[allow(dead_code)]
+    pub fn sync_grid(&mut self, gpu: &GpuContext, grid: [u32; 2], base_size: [u32; 2]) {
+        let size = if grid[0] < grid[1] {
+            [base_size[1], base_size[0]]
+        } else {
+            base_size
+        };
+        if size != self.size {
+            self.size = size;
+            self.image = image(gpu, size);
+        }
+        self.views.set_grid_and_size(&gpu.queue, grid, self.size);
+    }
+
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, mode: Mode) {
         self.views
             .encode(encoder, &self.image.create_view(&Default::default()), mode);

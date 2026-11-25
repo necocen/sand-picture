@@ -37,7 +37,7 @@ enum State {
 struct Shown {
     updates: u64,
     mode: Mode,
-    flipped: bool,
+    quarter: u8,
     at: Instant,
 }
 
@@ -231,31 +231,35 @@ impl App for SandPicture {
         let size = picture_size([ctx.target.size.width, ctx.target.size.height]);
         if size != self.screen.size() {
             self.screen.resize(ctx.gpu, size);
-            if let State::Running(product) = &self.state {
-                product.resize(ctx.gpu, size);
+            if let State::Running(product) = &mut self.state {
+                product.sync_views(ctx.gpu, self.screen.texture_size());
             }
             self.shown = None;
         }
         let State::Running(product) = &mut self.state else {
-            self.screen.encode(ctx, false, (0.0, 0.0), false);
+            self.screen.encode(ctx, false, (0.0, 0.0), 0);
             return;
         };
         // A reset asked for while the time is stopped shows at once.
         if product.apply_pending(ctx.gpu) {
             self.shown = None;
         }
-        let flipped = product.view_flipped();
+        if self.screen.set_transposed(ctx.gpu, product.is_transposed()) {
+            product.sync_views(ctx.gpu, self.screen.texture_size());
+            self.shown = None;
+        }
+        let quarter = product.view_quarter();
         let stale = self.shown.as_ref().is_none_or(|shown| {
             shown.updates != product.updates()
                 || shown.mode != self.mode
-                || shown.flipped != flipped
+                || shown.quarter != quarter
         });
-        let flip_changed = self
+        let quarter_changed = self
             .shown
             .as_ref()
-            .is_some_and(|shown| shown.flipped != flipped);
+            .is_some_and(|shown| shown.quarter != quarter);
         let now = Instant::now();
-        let due = flip_changed
+        let due = quarter_changed
             || self
                 .shown
                 .as_ref()
@@ -266,7 +270,7 @@ impl App for SandPicture {
             self.shown = Some(Shown {
                 updates: product.updates(),
                 mode: self.mode,
-                flipped,
+                quarter,
                 at: now,
             });
         } else if stale {
@@ -274,8 +278,8 @@ impl App for SandPicture {
             // if no further update asks for a frame.
             self.request_redraw();
         }
-        let shown_flipped = self.shown.as_ref().is_some_and(|shown| shown.flipped);
-        self.screen.encode(ctx, true, shake, shown_flipped);
+        let shown_quarter = self.shown.as_ref().map_or(0, |shown| shown.quarter);
+        self.screen.encode(ctx, true, shake, shown_quarter);
     }
 
     fn gui(&mut self, root: &mut egui::Ui) {

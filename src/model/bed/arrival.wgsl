@@ -164,9 +164,9 @@ fn exchange_from_source(x:u32){
     }else if !rests&&!gap&&dot(required_support(i,m/solid,0.),normal)<=0.{return;}
     let amount=dot(fraction,m);
     if amount<=0.{return;}
-    // The captured share of each species in each row (ROWS, the grid's).
-    var captured:array<vec2<f32>,ROWS>;captured[first]=fraction;
-    var captured_powder:array<vec2<f32>,ROWS>;captured_powder[first]=powder_fraction;
+    // The captured share of each species in each row (up to MAX_SIDE).
+    var captured:array<vec2<f32>,MAX_SIDE>;captured[first]=fraction;
+    var captured_powder:array<vec2<f32>,MAX_SIDE>;captured_powder[first]=powder_fraction;
     var last=first;var overflow=0.;if !whole{overflow=amount/BED_PACKING-free_wet(c);}
     // A front that fills its cell goes on into the rows above and takes the
     // suspension it sweeps. Where gas closes a face to the coarse grain, or

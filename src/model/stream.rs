@@ -43,6 +43,21 @@ fn cycled(sizes: &[(u32, u32, u32)]) -> usize {
         .unwrap_or(sizes.len() - 1)
 }
 
+fn hierarchy_bytes(sizes: &[(u32, u32, u32)], transposed: bool) -> Vec<u8> {
+    sizes[cycled(sizes)..]
+        .iter()
+        .flat_map(|&(x, y, offset)| {
+            if transposed {
+                [y, x, offset, 0]
+            } else {
+                [x, y, offset, 0]
+            }
+        })
+        .chain([0; 4])
+        .flat_map(u32::to_le_bytes)
+        .collect()
+}
+
 /// The flow solver's fields.
 pub struct Fields {
     /// The streamfunction, coarse levels included: the finest level is the
@@ -98,15 +113,17 @@ impl Fields {
             ),
             hierarchy: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("levels of the coarse cycle"),
-                contents: &sizes[cycled(&sizes)..]
-                    .iter()
-                    .flat_map(|&(x, y, offset)| [x, y, offset, 0])
-                    .chain([0; 4])
-                    .flat_map(u32::to_le_bytes)
-                    .collect::<Vec<_>>(),
-                usage: wgpu::BufferUsages::STORAGE,
+                contents: &hierarchy_bytes(&sizes, false),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             }),
         }
+    }
+
+    /// Updates the coarse-cycle level dimensions for normal (`270x180`) or
+    /// transposed (`180x270`) grid orientation.
+    pub fn set_transposed(&self, queue: &wgpu::Queue, transposed: bool) {
+        let sizes = levels();
+        queue.write_buffer(&self.hierarchy, 0, &hierarchy_bytes(&sizes, transposed));
     }
 
     /// The field that the flow solver's program calls `name`.
