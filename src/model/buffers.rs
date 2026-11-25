@@ -195,7 +195,7 @@ impl Buffers {
     /// is a constant of the model or is written by an update before the
     /// update reads it. Two runs agree bit for bit in all of the state but
     /// parts of the labels (`agreeing_labels`).
-    pub fn state(&self) -> [(&'static str, &wgpu::Buffer); 7] {
+    pub fn state(&self) -> [(&'static str, &wgpu::Buffer); 8] {
         [
             ("cells", &self.cells),
             ("geometry", &self.geometry),
@@ -204,6 +204,7 @@ impl Buffers {
             ("terrain", &self.terrain),
             ("strata", &self.strata),
             ("labels", &self.labels),
+            ("foam", &self.foam),
         ]
     }
 

@@ -200,11 +200,12 @@ fn transfer_surface(xa:u32,xb:u32,requested:vec2<f32>)->vec2<f32>{
     }return moved;
 }
 // The depth (m) of the layer that a flow of depth `depth` moves: at least a
-// grain. While the hands shake the picture the lateral load pushes the
-// surface to and fro without reworking it: the yield depth under that load
-// (tens of millimetres at a steep face) is no moving layer.
+// grain. While the hands shake the picture, keep the physical Jop wall-friction
+// yield depth up to 2.5 plate gaps (2.5 mm) so bottom dunes visibly slump and
+// level under lateral acceleration without reworking deep buried strata on a
+// vertical face in a single step.
 fn moving_depth(depth:f32)->f32{
-    if cfg.lateral!=0.{return GRAIN_LAYER;}return max(depth,GRAIN_LAYER);
+    if cfg.lateral!=0.{return clamp(depth,GRAIN_LAYER,2.5*PLATE_GAP);}return max(depth,GRAIN_LAYER);
 }
 // The surface flow of the columns `left` and left+1 in one update. Its
 // depth and the flux it moved are kept in terrain[nx+left].

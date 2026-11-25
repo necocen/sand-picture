@@ -52,10 +52,11 @@ const TURN_SECONDS: f32 = 0.5;
 /// A person can shake the picture left and right for a moment, which slides
 /// the top of the sand on the floor toward the level (some makers advise it
 /// before a turn; no turn does it by itself): seconds of shaking, its
-/// frequency (Hz) and the tank's displacement amplitude (m), a hand's motion.
+/// frequency (Hz) and the tank's displacement amplitude (m), a brisk wrist
+/// motion (5 mm at 6 Hz = 7.1 m/s^2 ~ 0.72 g lateral peak acceleration).
 const SHAKE_SECONDS: f32 = 3.;
-const SHAKE_FREQUENCY: f32 = 3.;
-const SHAKE_DISPLACEMENT: f32 = 0.02;
+const SHAKE_FREQUENCY: f32 = 6.;
+const SHAKE_DISPLACEMENT: f32 = 0.005;
 /// The gas identities a cell can hold: the shaders' `GAS_SLOTS`.
 pub const GAS_SLOTS: usize = 9;
 
