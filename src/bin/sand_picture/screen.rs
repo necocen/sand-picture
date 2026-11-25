@@ -63,9 +63,6 @@ fn fragment(in: Corner) -> @location(0) vec4<f32> {
 }
 ";
 
-/// Maximum horizontal shake amplitude as a fraction of tank width (0.02 m / 0.30 m).
-const MAX_SHAKE_FRAC: f32 = 0.02 / 0.30;
-
 pub struct Screen {
     size: [u32; 2],
     texture: wgpu::Texture,
@@ -173,15 +170,9 @@ impl Screen {
         let window = [ctx.target.size.width, ctx.target.size.height].map(|v| v.max(1) as f32);
         if picture {
             let image = self.size.map(|v| v as f32);
-            let base_scale = (window[0] / image[0]).min(window[1] / image[1]);
-            let base = image.map(|v| v * base_scale);
+            let scale = (window[0] / image[0]).min(window[1] / image[1]);
+            let quad = image.map(|v| (v * scale).max(1.0));
             let (disp, env) = shake;
-            let room_scale = ((window[0] - 20.0).max(1.0)
-                / (base[0] * (1.0 + 2.0 * MAX_SHAKE_FRAC)))
-                .min(0.95)
-                .clamp(0.80, 1.0);
-            let zoom = 1.0 + (room_scale - 1.0) * env;
-            let quad = base.map(|v| (v * zoom).max(1.0));
             let dx_px = disp * quad[0];
             let params: [f32; 8] = [
                 2.0 * dx_px / window[0],
