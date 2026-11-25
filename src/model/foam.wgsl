@@ -56,6 +56,7 @@ var<workgroup> sh_area: f32;
 var<workgroup> sh_perim: f32;
 var<workgroup> sh_free_perim: f32;
 var<workgroup> sh_held: atomic<u32>;
+var<workgroup> sh_step_alive: u32;
 // Shared bounding boxes for fast foam_raster culling (128 threads load 128 bubbles once).
 var<workgroup> sh_bmin: array<vec2<f32>, MAX_BUBBLES>;
 var<workgroup> sh_bmax: array<vec2<f32>, MAX_BUBBLES>;
@@ -166,8 +167,10 @@ fn foam_step(
     let k = lid.x;
     if bi >= MAX_BUBBLES { return; }
 
-    let alive = foam[bi].alive;
-    if alive == 0u {
+    if k == 0u {
+        sh_step_alive = foam[bi].alive;
+    }
+    if workgroupUniformLoad(&sh_step_alive) == 0u {
         if k == 0u {
             foam_next[bi] = foam[bi];
         }
@@ -498,20 +501,21 @@ fn foam_step(
 // 2. Vertical-stack film drainage coalescence (2.0 s) and conflict-free slot coloring,
 // then commit foam_next -> foam.
 @compute @workgroup_size(128)
-fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
-    let tid = id.x;
-    if tid >= MAX_BUBBLES { return; }
+fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
+    let tid = lid.x;
 
     // Load all bubble bboxes into workgroup shared memory once for fast pair checks & coloring.
-    sh_alive[tid] = foam_next[tid].alive;
-    sh_bmin[tid] = foam_next[tid].bbox_min;
-    sh_bmax[tid] = foam_next[tid].bbox_max;
+    if tid < MAX_BUBBLES {
+        sh_alive[tid] = foam_next[tid].alive;
+        sh_bmin[tid] = foam_next[tid].bbox_min;
+        sh_bmax[tid] = foam_next[tid].bbox_max;
+    }
     workgroupBarrier();
 
     // Each thread detects whether bubble `tid` is pressed tightly against a coalescence
     // partner: either vertically underneath an upper partner (fast buoyancy film drainage)
     // or strongly compressed laterally against a right-hand neighbor (slower lateral fusion).
-    if sh_alive[tid] != 0u {
+    if tid < MAX_BUBBLES && sh_alive[tid] != 0u {
         let a_min = sh_bmin[tid];
         let a_max = sh_bmax[tid];
         let a_cent = foam_next[tid].centroid;
@@ -765,10 +769,12 @@ fn foam_coalesce(@builtin(global_invocation_id) id: vec3<u32>) {
     workgroupBarrier();
 
     // Commit ping-ponged bubbles to `foam` and record component areas in `labels`.
-    foam[tid] = foam_next[tid];
-    let area_u = select(0u, u32(round(foam_next[tid].target_area * LABEL_AREA_UNIT)), foam_next[tid].alive != 0u);
-    atomicStore(&labels[label_compact(tid)], tid);
-    atomicStore(&labels[label_field(tid, 2u)], area_u);
+    if tid < MAX_BUBBLES {
+        foam[tid] = foam_next[tid];
+        let area_u = select(0u, u32(round(foam_next[tid].target_area * LABEL_AREA_UNIT)), foam_next[tid].alive != 0u);
+        atomicStore(&labels[label_compact(tid)], tid);
+        atomicStore(&labels[label_field(tid, 2u)], area_u);
+    }
 }
 
 // 3. Rasterize closed-curve bubbles into main's grid buffers (`cells`, `geometry`, `labels`)

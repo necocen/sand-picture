@@ -2861,12 +2861,15 @@ name = "sand-picture"
 version = "0.1.0"
 dependencies = [
  "faer",
+ "js-sys",
  "mikage",
  "naga",
  "png",
  "pollster",
  "serde_json",
  "sha2",
+ "wasm-bindgen",
+ "web-sys",
  "web-time",
  "wgpu",
 ]
