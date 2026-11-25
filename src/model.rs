@@ -24,7 +24,7 @@ mod uses;
 use bed::Bed;
 pub use buffers::Buffers;
 use foam::Foam;
-pub use foam::{FOAM_VERTS, MAX_BUBBLES};
+pub use foam::{DEFAULT_AIR_AREA, FOAM_VERTS, MAX_AIR_AREA, MAX_BUBBLES, MIN_AIR_AREA};
 pub use grid::{CELLS, TANK, cell_width};
 use interface::Interface;
 use kernel::{Kernel, Pipelines, Plan};
@@ -45,9 +45,10 @@ pub const DT: f32 = 0.008;
 /// The gravity at which the material table's settling speeds are taken: the
 /// in-plane gravity while the picture stands.
 const STANDARD_GRAVITY: f32 = 9.80665;
-/// Seconds a person takes to turn the picture over, tipping it front to back
-/// about its horizontal axis as on a pivot stand.
-const TURN_SECONDS: f32 = 2.;
+/// Seconds over which gravity ramps from flat (90 deg) to upright (180 deg)
+/// immediately after the picture mirrors, giving bubbles a smooth upward start
+/// while glass-plate friction briefly steadies the sand.
+const TURN_SECONDS: f32 = 0.5;
 /// A person can shake the picture left and right for a moment, which slides
 /// the top of the sand on the floor toward the level (some makers advise it
 /// before a turn; no turn does it by itself): seconds of shaking, its
@@ -68,10 +69,18 @@ pub struct Model {
     steps: Vec<Step>,
     /// The kernels that prepare the first update from the scene.
     prepare: Vec<usize>,
-    /// The kernels that mirror the grid when a turn passes the flat.
+    /// The kernels that mirror the grid when a turn begins.
     invert: Vec<usize>,
+    /// The kernels that adjust live air volume and refresh grid gas/apertures.
+    adjust_air_steps: Vec<usize>,
+    /// The kernel that writes summary sand/air metrics for auto-flip detection.
+    measure_kernel: usize,
     /// What the person's hands are doing to the picture, if anything.
     motion: Option<Motion>,
+    /// Target total air area (cells^2), persisted across resets.
+    air_area: f32,
+    /// Monotonic counter diversifying injection columns across clicks.
+    air_seed: u32,
 }
 /// A motion of the hands in progress, with the seconds since it began.
 enum Motion {
@@ -101,6 +110,8 @@ struct Assembly {
     steps: Vec<Step>,
     prepare: Vec<usize>,
     invert: Vec<usize>,
+    adjust_air_steps: Vec<usize>,
+    measure_kernel: usize,
 }
 /// What a piece of the work leaves: more work, or the model.
 pub enum Build {
@@ -161,7 +172,11 @@ impl Building {
             steps: assembly.steps,
             prepare: assembly.prepare,
             invert: assembly.invert,
+            adjust_air_steps: assembly.adjust_air_steps,
+            measure_kernel: assembly.measure_kernel,
             motion: None,
+            air_area: DEFAULT_AIR_AREA,
+            air_seed: 1,
         };
         model.prepare(device, queue);
         Build::Finished(model)
@@ -175,6 +190,8 @@ struct Layout {
     steps: Vec<Step>,
     prepare: Vec<usize>,
     invert: Vec<usize>,
+    adjust_air_steps: Vec<usize>,
+    measure_kernel: usize,
 }
 fn layout() -> Layout {
     let mut plans = Plans::default();
@@ -223,11 +240,15 @@ fn layout() -> Layout {
     let steps = update::steps(
         &slab, &bed, &mechanics, &stream, &transport, &foam, &interface,
     );
+    let adjust_air_steps = vec![foam.adjust_air, foam.raster, interface.apertures];
+    let measure_kernel = foam.measure;
     Layout {
         plans: plans.take(),
         steps,
         prepare,
         invert,
+        adjust_air_steps,
+        measure_kernel,
     }
 }
 impl Assembly {
@@ -243,6 +264,8 @@ impl Assembly {
             steps: layout.steps,
             prepare: layout.prepare,
             invert: layout.invert,
+            adjust_air_steps: layout.adjust_air_steps,
+            measure_kernel: layout.measure_kernel,
         }
     }
 }
@@ -276,8 +299,43 @@ impl Model {
     pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.motion = None;
         self.write_gravity(queue, STANDARD_GRAVITY, 0.);
-        self.buffers.restore(device, queue, &self.scene);
+        self.buffers
+            .restore(device, queue, &self.scene, self.air_area);
         self.prepare(device, queue);
+    }
+
+    /// Current target total air area (cells^2).
+    pub fn air_area(&self) -> f32 {
+        self.air_area
+    }
+
+    /// Dynamically adjust live air volume by `delta` cells^2 (clamped to
+    /// `[MIN_AIR_AREA, MAX_AIR_AREA]`), updating foam curves and grid gas
+    /// immediately without modifying sand.
+    pub fn adjust_air(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, delta: f32) -> bool {
+        let next = (self.air_area + delta).clamp(MIN_AIR_AREA, MAX_AIR_AREA);
+        let applied = next - self.air_area;
+        if applied.abs() < 0.5 {
+            return false;
+        }
+        self.air_area = next;
+        self.air_seed = self.air_seed.wrapping_add(1);
+        queue.write_buffer(&self.buffers.config, 36, &applied.to_le_bytes());
+        queue.write_buffer(&self.buffers.config, 40, &self.air_seed.to_le_bytes());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            for &kernel in &self.adjust_air_steps {
+                self.kernels[kernel].record(&mut pass);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        true
+    }
+
+    /// Record the single-workgroup sand/air summary kernel into `pass`.
+    pub fn measure(&self, pass: &mut wgpu::ComputePass<'_>) {
+        self.kernels[self.measure_kernel].record(pass);
     }
 
     /// One complete 8 ms update: every step, in order, in the caller's pass.
@@ -349,13 +407,15 @@ impl Model {
                 *elapsed >= SHAKE_SECONDS
             }
             Some(Motion::Turn { elapsed, mirrored }) => {
+                // Mirror immediately on the first update (eliminating the dead
+                // 1 s wait before horizontal), then ramp in-plane gravity from
+                // 0 -> g over TURN_SECONDS while plate_gravity eases g -> 0.
+                mirror = !*mirrored;
+                *mirrored = true;
                 *elapsed += DT;
                 let t = (*elapsed / TURN_SECONDS).min(1.);
-                let theta = 0.5 * PI * (1. - (PI * t).cos());
-                mirror = !*mirrored && theta >= 0.5 * PI;
-                *mirrored |= mirror;
                 if t < 1. {
-                    gravity = STANDARD_GRAVITY * theta.cos().abs();
+                    gravity = STANDARD_GRAVITY * (0.5 * PI * t).sin();
                 }
                 t >= 1.
             }

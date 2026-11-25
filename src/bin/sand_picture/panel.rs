@@ -18,12 +18,18 @@ enum Side {
 pub enum Command {
     /// Turn the picture over.
     Turn,
+    /// Toggle automatic turning once sand finishes falling.
+    ToggleAuto,
     /// Shake the picture left and right for a moment.
     Shake,
     /// Stop the picture's time, or let it run again.
     Pause,
     /// Back to the scene at rest, turned over at once.
     Reset,
+    /// Remove a step of air (uniform shrink across bubbles).
+    AirLess,
+    /// Inject a step of air (spawn bubbles in open water above the bed).
+    AirMore,
 }
 
 /// What the panel shows of the running picture.
@@ -31,6 +37,10 @@ pub struct Readout {
     /// The picture's own time (s).
     pub seconds: f64,
     pub paused: bool,
+    pub auto_flip: bool,
+    /// Target total air area (cells^2) and percentage of default.
+    pub air_area: f32,
+    pub air_percent: u32,
     /// Seconds of the picture per second of the clock over the last two
     /// seconds.
     pub speed: Option<f64>,
@@ -159,6 +169,16 @@ impl Panel {
                     {
                         command = Some(Command::Turn);
                     }
+                    let mut auto = readout.auto_flip;
+                    if ui
+                        .toggle_value(&mut auto, "Auto")
+                        .on_hover_text(
+                            "Automatically turn the picture over once sand finishes falling (A)",
+                        )
+                        .changed()
+                    {
+                        command = Some(Command::ToggleAuto);
+                    }
                     if ui
                         .button("Shake")
                         .on_hover_text("Shake the picture left and right for a moment (S)")
@@ -180,6 +200,26 @@ impl Panel {
                         .clicked()
                     {
                         command = Some(Command::Reset);
+                    }
+                    if ui
+                        .button("Air -")
+                        .on_hover_text(format!(
+                            "Reduce air volume ({:.0} cells^2, {}%) (-)",
+                            readout.air_area, readout.air_percent
+                        ))
+                        .clicked()
+                    {
+                        command = Some(Command::AirLess);
+                    }
+                    if ui
+                        .button("Air +")
+                        .on_hover_text(format!(
+                            "Inject air bubbles above the bed ({:.0} cells^2, {}%) (=)",
+                            readout.air_area, readout.air_percent
+                        ))
+                        .clicked()
+                    {
+                        command = Some(Command::AirMore);
                     }
                     egui::ComboBox::from_id_salt("view")
                         .selected_text(mode.label())

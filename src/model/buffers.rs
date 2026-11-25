@@ -38,6 +38,9 @@ pub struct Buffers {
     /// Prototype A: 2D Lagrangian closed-curve deformable foam bubbles (ping-pong).
     pub foam: wgpu::Buffer,
     pub foam_next: wgpu::Buffer,
+    /// Fixed-point (1/1024 cell) summary metrics written on demand by `measure_sand`:
+    /// [total_sand, bed_sand, above_bed_sand, total_air_area].
+    pub metrics: wgpu::Buffer,
 
     // An update's own work: it writes these before it reads them, and
     // nothing in them lasts into the next update.
@@ -131,6 +134,7 @@ impl Buffers {
                 "lagrangian foam bubbles next",
                 (foam::MAX_BUBBLES * foam::FOAM_BUBBLE_BYTES) as u64,
             ),
+            metrics: blank("sand and air summary metrics", 16),
             scratch: blank(
                 "an update's scratch rows",
                 cells * 16 * rows::count(rows::SCRATCH),
@@ -152,7 +156,7 @@ impl Buffers {
             }),
             stream: stream::Fields::new(device),
         };
-        buffers.fill(queue, scene);
+        buffers.fill(queue, scene, foam::DEFAULT_AIR_AREA);
         buffers
     }
 
@@ -175,6 +179,7 @@ impl Buffers {
             "labels" => &self.labels,
             "foam" => &self.foam,
             "foam_next" => &self.foam_next,
+            "metrics" => &self.metrics,
             "carry_plan" | "plan" => &self.schedule,
             "gaps" => &self.gaps,
             "contact_work" => &self.contact_list,
@@ -210,7 +215,7 @@ impl Buffers {
     /// Writes the picture at rest in `scene` into buffers that hold zeros:
     /// the cells, each cell's gas by identity, and the labels of a picture
     /// whose films drained long ago.
-    fn fill(&self, queue: &wgpu::Queue, scene: &Scene) {
+    fn fill(&self, queue: &wgpu::Queue, scene: &Scene, air_area: f32) {
         queue.write_buffer(&self.cells, 0, &floats(scene.cell_records()));
         // Each cell's gas by identity, as (volume, identity, 0, 0).
         let layers = scene
@@ -224,7 +229,7 @@ impl Buffers {
             &floats(layers),
         );
         queue.write_buffer(&self.labels, 0, &labels::initial(self.n));
-        let foam_bytes = foam::initial(scene);
+        let foam_bytes = foam::initial(scene, air_area);
         queue.write_buffer(&self.foam, 0, &foam_bytes);
         queue.write_buffer(&self.foam_next, 0, &foam_bytes);
     }
@@ -233,7 +238,13 @@ impl Buffers {
     /// everything a run has written is cleared, the standing gravity is
     /// restored and the scene is written again. The pipelines and the
     /// materials' table stay.
-    pub fn restore(&self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
+    pub fn restore(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        air_area: f32,
+    ) {
         let mut encoder = device.create_command_encoder(&Default::default());
         for buffer in [
             &self.cells,
@@ -249,6 +260,7 @@ impl Buffers {
             &self.labels,
             &self.foam,
             &self.foam_next,
+            &self.metrics,
             &self.schedule,
             &self.gaps,
             &self.contact_list,
@@ -264,7 +276,8 @@ impl Buffers {
         queue.submit([encoder.finish()]);
         queue.write_buffer(&self.config, 24, &STANDARD_GRAVITY.to_le_bytes());
         queue.write_buffer(&self.config, 32, &0f32.to_le_bytes());
-        self.fill(queue, scene);
+        queue.write_buffer(&self.config, 36, &0f32.to_le_bytes());
+        self.fill(queue, scene, air_area);
     }
 }
 

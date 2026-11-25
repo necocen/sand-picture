@@ -7,7 +7,7 @@
 // |sin(theta)|, presses the grains on the lower plate (plate_gravity).
 // cfg.lateral is the apparent gravity along x while the tank is shaken, minus
 // its acceleration. The material table's speeds are at the standard gravity.
-struct Config { nx:u32, ny:u32, n:u32, table_side:u32, dt:f32, h:f32, gravity:f32,substeps:u32, lateral:f32, pad0:f32, pad1:f32, pad2:f32 }
+struct Config { nx:u32, ny:u32, n:u32, table_side:u32, dt:f32, h:f32, gravity:f32,substeps:u32, lateral:f32, air_delta:f32, air_seed:u32, pad2:u32 }
 const STANDARD_GRAVITY:f32=9.80665;
 // The white is its grit and powder (material.rs). Of its volume `total` is
 // powder and `free` is free powder, single grains dispersed in the water.

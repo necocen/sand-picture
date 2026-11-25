@@ -1,7 +1,7 @@
 //! The sand picture's window.
-//! Keys: F turns the picture over, Space stops and runs its time, R resets
-//! it, V cycles the views, H hides or shows the panel, P moves the panel
-//! between the window's top and bottom.
+//! Keys: F turns the picture over, A toggles auto-turn, S shakes, Space stops
+//! and runs its time, R resets it, - / = removes or injects air, V cycles the
+//! views, H hides or shows the panel, P moves the panel between top and bottom.
 #[path = "sand_picture/app.rs"]
 mod app;
 #[path = "sand_picture/panel.rs"]

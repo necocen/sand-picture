@@ -29,6 +29,10 @@ struct FoamBubble {
 
 @group(0) @binding(17) var<storage, read_write> foam: array<FoamBubble>;
 @group(0) @binding(18) var<storage, read_write> foam_next: array<FoamBubble>;
+// Fixed-point (1/1024 cell) summary metrics written on demand by `measure_sand`:
+// [0] total sand, [1] floor-connected bed sand, [2] mobile sand > 6 cells above bed,
+// [3] total alive foam target area.
+@group(0) @binding(19) var<storage, read_write> metrics: array<u32, 4>;
 
 const FOAM_SUBSTEPS: u32 = 6u;
 const FOAM_JACOBI: u32 = 6u;
@@ -927,4 +931,220 @@ fn invert_foam(@builtin(global_invocation_id) id: vec3<u32>) {
     foam[bi].drain_partner = 0xffffffffu;
     foam[bi].held = 0u;
     foam_next[bi] = foam[bi];
+}
+
+// Shared scratch for `foam_adjust_air` and `measure_sand`.
+var<workgroup> sh_air_scale: f32;
+var<workgroup> sh_sum_total: array<f32, 256>;
+var<workgroup> sh_sum_bed: array<f32, 256>;
+var<workgroup> sh_sum_above: array<f32, 256>;
+var<workgroup> sh_sum_gas: array<f32, 256>;
+
+fn foam_open_water_spot(cx: i32, cy: i32) -> bool {
+    if cx < 3 || cx > i32(COLUMNS) - 4 || cy < 3 || cy > i32(ROWS) - 4 {
+        return false;
+    }
+    for (var dy = -2; dy <= 2; dy++) {
+        for (var dx = -2; dx <= 2; dx++) {
+            let c = cells[at(vec2<i32>(cx + dx, cy + dy))];
+            let solid = max(c.volume.fine, 0.0) + max(c.volume.coarse, 0.0)
+                      + max(c.bed.x, 0.0) + max(c.bed.y, 0.0);
+            if solid > 0.06 || c.volume.gas > 0.05 || c.bed.z > 0.0 {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// 5. Dynamic air adjustment:
+// - `cfg.air_delta < 0`: uniformly shrink every alive bubble's target_area (and vertices
+//   toward its centroid), retiring tiny bubbles (< 0.70 cells^2).
+// - `cfg.air_delta > 0`: inject fresh round bubbles into clear open water above the
+//   deposited sand (`terrain[x].y + 6`) so they rise and join the raft; fall back to
+//   proportional scaling if no free slots or open water pockets are available.
+@compute @workgroup_size(128)
+fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
+    let tid = lid.x;
+    if tid == 0u {
+        var total = 0.0;
+        for (var bi = 0u; bi < MAX_BUBBLES; bi++) {
+            if foam[bi].alive != 0u {
+                total += foam[bi].target_area;
+            }
+        }
+        var scale = 1.0;
+        if cfg.air_delta < 0.0 && total > 1.0 {
+            let goal = max(total + cfg.air_delta, 120.0);
+            scale = clamp(goal / total, 0.25, 1.0);
+        } else if cfg.air_delta > 0.0 {
+            var rem = cfg.air_delta;
+            let count = 3u;
+            let per_bub = max(rem / f32(count), 4.0);
+            var spawned_x: array<i32, 3>;
+            var spawned = 0u;
+            for (var k = 0u; k < count && rem >= 2.0; k++) {
+                // Find an unused bubble slot.
+                var free_slot = 0xffffffffu;
+                for (var bi = 0u; bi < MAX_BUBBLES; bi++) {
+                    if foam[bi].alive == 0u {
+                        free_slot = bi;
+                        break;
+                    }
+                }
+                if free_slot == 0xffffffffu {
+                    break;
+                }
+                // Scan candidate columns across the tank for the lowest clear open-water
+                // pocket above the bottom deposit (`terrain[x].y`).
+                let base_x = 22 + i32((cfg.air_seed * 73u + k * 83u) % 226u);
+                var best_x = -1;
+                var best_y = i32(ROWS);
+                for (var attempt = 0; attempt < 18; attempt++) {
+                    let off = select(-(attempt / 2), (attempt + 1) / 2, (attempt & 1) == 1) * 11;
+                    let cx = 12 + ((base_x - 12 + off) % 246 + 246) % 246;
+                    var too_close = false;
+                    for (var s = 0u; s < spawned; s++) {
+                        if abs(cx - spawned_x[s]) < 7 {
+                            too_close = true;
+                        }
+                    }
+                    if too_close { continue; }
+                    let tcol = terrain[u32(cx)];
+                    let bed_top = select(0, i32(ceil(tcol.y)) + 1, tcol.x > 0.0);
+                    let y_start = max(bed_top + 6, 6);
+                    for (var cy = y_start; cy <= i32(ROWS) - 10; cy += 2) {
+                        if foam_open_water_spot(cx, cy) {
+                            if cy < best_y {
+                                best_x = cx;
+                                best_y = cy;
+                            }
+                            break;
+                        }
+                    }
+                    if best_x >= 0 && best_y <= y_start + 8 {
+                        break;
+                    }
+                }
+                if best_x < 0 {
+                    break;
+                }
+                let area = min(rem, per_bub);
+                let r = sqrt(area / 3.14159265);
+                let cent = vec2<f32>(f32(best_x) + 0.5, f32(best_y) + 0.5);
+                var bmin = vec2<f32>(f32(COLUMNS), f32(ROWS));
+                var bmax = vec2<f32>(0.0);
+                for (var m = 0u; m < FOAM_VERTS; m++) {
+                    let th = 2.0 * 3.14159265 * f32(m) / f32(FOAM_VERTS);
+                    let p = clamp(
+                        cent + r * vec2<f32>(cos(th), sin(th)),
+                        vec2<f32>(FOAM_WALL_PAD),
+                        vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD),
+                    );
+                    foam[free_slot].verts[m] = p;
+                    bmin = min(bmin, p);
+                    bmax = max(bmax, p);
+                }
+                foam[free_slot].target_area = area;
+                foam[free_slot].drain_time = 0.0;
+                foam[free_slot].slot = (free_slot + k) % GAS_SLOTS;
+                foam[free_slot].alive = 1u;
+                foam[free_slot].centroid = cent;
+                foam[free_slot].vel = vec2<f32>(0.0, 0.04);
+                foam[free_slot].bbox_min = bmin;
+                foam[free_slot].bbox_max = bmax;
+                foam[free_slot].drain_partner = 0xffffffffu;
+                foam[free_slot].held = 0u;
+                foam[free_slot].disp_vel = vec2<f32>(0.0);
+                spawned_x[spawned] = best_x;
+                spawned += 1u;
+                rem -= area;
+            }
+            // Fallback: if slots or open water were scarce, scale existing bubbles slightly.
+            if rem > 0.5 && total > 1.0 {
+                scale = clamp((total + rem) / total, 1.0, 1.35);
+            }
+        }
+        sh_air_scale = scale;
+    }
+    workgroupBarrier();
+
+    if tid < MAX_BUBBLES {
+        let scale = sh_air_scale;
+        if foam[tid].alive != 0u && abs(scale - 1.0) > 1e-5 {
+            let new_a = foam[tid].target_area * scale;
+            if new_a < 0.70 {
+                foam[tid].alive = 0u;
+                foam[tid].target_area = 0.0;
+                foam[tid].disp_vel = vec2<f32>(0.0);
+            } else {
+                let cent = foam[tid].centroid;
+                let rs = sqrt(scale);
+                var bmin = vec2<f32>(f32(COLUMNS), f32(ROWS));
+                var bmax = vec2<f32>(0.0);
+                for (var m = 0u; m < FOAM_VERTS; m++) {
+                    let p = clamp(
+                        cent + (foam[tid].verts[m] - cent) * rs,
+                        vec2<f32>(FOAM_WALL_PAD),
+                        vec2<f32>(f32(COLUMNS) - FOAM_WALL_PAD, f32(ROWS) - FOAM_WALL_PAD),
+                    );
+                    foam[tid].verts[m] = p;
+                    bmin = min(bmin, p);
+                    bmax = max(bmax, p);
+                }
+                foam[tid].target_area = new_a;
+                foam[tid].bbox_min = bmin;
+                foam[tid].bbox_max = bmax;
+            }
+        }
+        foam_next[tid] = foam[tid];
+    }
+}
+
+// 6. Single-workgroup summary metrics for auto-flip completion detection and live air readout.
+@compute @workgroup_size(256)
+fn measure_sand(@builtin(local_invocation_id) lid: vec3<u32>) {
+    let tid = lid.x;
+    var s_tot = 0.0;
+    var s_bed = 0.0;
+    var s_above = 0.0;
+    for (var i = tid; i < cfg.n; i += 256u) {
+        let c = cells[i];
+        let mob = max(c.volume.fine, 0.0) + max(c.volume.coarse, 0.0);
+        let bed = max(c.bed.x, 0.0) + max(c.bed.y, 0.0);
+        s_tot += mob + bed;
+        s_bed += bed;
+        let x = i % cfg.nx;
+        let y = i / cfg.nx;
+        let tcol = terrain[x];
+        let bed_top = select(0.0, tcol.y + 1.0, tcol.x > 0.0);
+        if f32(y) > bed_top + 6.0 {
+            s_above += mob;
+        }
+    }
+    var g_tot = 0.0;
+    if tid < MAX_BUBBLES && foam[tid].alive != 0u {
+        g_tot = foam[tid].target_area;
+    }
+    sh_sum_total[tid] = s_tot;
+    sh_sum_bed[tid] = s_bed;
+    sh_sum_above[tid] = s_above;
+    sh_sum_gas[tid] = g_tot;
+    workgroupBarrier();
+
+    for (var stride = 128u; stride > 0u; stride >>= 1u) {
+        if tid < stride {
+            sh_sum_total[tid] += sh_sum_total[tid + stride];
+            sh_sum_bed[tid] += sh_sum_bed[tid + stride];
+            sh_sum_above[tid] += sh_sum_above[tid + stride];
+            sh_sum_gas[tid] += sh_sum_gas[tid + stride];
+        }
+        workgroupBarrier();
+    }
+    if tid == 0u {
+        metrics[0] = u32(round(sh_sum_total[0] * 1024.0));
+        metrics[1] = u32(round(sh_sum_bed[0] * 1024.0));
+        metrics[2] = u32(round(sh_sum_above[0] * 1024.0));
+        metrics[3] = u32(round(sh_sum_gas[0] * 1024.0));
+    }
 }

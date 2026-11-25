@@ -26,11 +26,14 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-/// Target total air area (cells^2) matching the polydisperse single-layer foam:
+/// Default target total air area (cells^2) matching the polydisperse single-layer foam:
 /// at capillary thickness ~2.1 cells (`FOAM_SIGMA = 0.0170`), worst-case flat
 /// horizontal span stays <= ~218/270 (~81%), guaranteeing open shifting throats
 /// above granular arching width even on a flat sand underside or across flips.
-const TARGET_AIR_AREA: f32 = 435.0;
+pub const DEFAULT_AIR_AREA: f32 = 435.0;
+/// Bounds for dynamic user air adjustment (cells^2).
+pub const MIN_AIR_AREA: f32 = 150.0;
+pub const MAX_AIR_AREA: f32 = 720.0;
 /// Steady-state Rayleigh-Taylor breakup area threshold (cells^2), matching `foam.wgsl`.
 const STEADY_SPLIT_AREA: f32 = 16.5;
 
@@ -47,7 +50,7 @@ struct RawBubble {
 /// Extract the initial ceiling bubbles from `scene.gas_layers` and match them to
 /// the natural single-layer steady-state population (~105-110 bubbles, varied sizes
 /// up to the Rayleigh-Taylor splitting scale, exact conserved total air).
-pub fn initial(scene: &Scene) -> Vec<u8> {
+pub fn initial(scene: &Scene, target_air_area: f32) -> Vec<u8> {
     let [nx, ny] = CELLS;
     let mut visited = vec![false; nx * ny * GAS_SLOTS];
     let mut seeds: Vec<(f32, f32)> = Vec::new(); // (cx, area)
@@ -93,12 +96,12 @@ pub fn initial(scene: &Scene) -> Vec<u8> {
 
     seeds.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    // Scale extracted air cleanly to TARGET_AIR_AREA and split any oversized blobs
+    // Scale extracted air cleanly to `target_air_area` and split any oversized blobs
     // asymmetrically (matching foam_coalesce's Rayleigh-Taylor breakup) so the
     // initial population starts in the natural steady-state size distribution.
     let extracted_gas: f64 = seeds.iter().map(|&(_, a)| f64::from(a)).sum();
     let scale = if extracted_gas > 1.0 {
-        (f64::from(TARGET_AIR_AREA) / extracted_gas) as f32
+        (f64::from(target_air_area.clamp(MIN_AIR_AREA, MAX_AIR_AREA)) / extracted_gas) as f32
     } else {
         1.0
     };
@@ -274,6 +277,8 @@ pub struct Foam {
     pub coalesce: usize,
     pub raster: usize,
     pub invert: usize,
+    pub adjust_air: usize,
+    pub measure: usize,
 }
 
 impl Foam {
@@ -284,6 +289,8 @@ impl Foam {
             coalesce: plans.add(Plan::new(Program::Model, "foam_coalesce", 1)),
             raster: plans.add(Plan::new(Program::Model, "foam_raster", cells)),
             invert: plans.add(Plan::new(Program::Model, "invert_foam", 1)),
+            adjust_air: plans.add(Plan::new(Program::Model, "foam_adjust_air", 1)),
+            measure: plans.add(Plan::new(Program::Model, "measure_sand", 1)),
         }
     }
 

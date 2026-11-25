@@ -133,6 +133,11 @@ impl SandPicture {
                     product.turn();
                 }
             }
+            Command::ToggleAuto => {
+                if let State::Running(product) = &mut self.state {
+                    product.toggle_auto_flip();
+                }
+            }
             Command::Shake => {
                 if let State::Running(product) = &mut self.state {
                     product.shake();
@@ -141,6 +146,16 @@ impl SandPicture {
             Command::Reset => {
                 if let State::Running(product) = &mut self.state {
                     product.reset();
+                }
+            }
+            Command::AirLess => {
+                if let State::Running(product) = &mut self.state {
+                    product.adjust_air_steps(-1);
+                }
+            }
+            Command::AirMore => {
+                if let State::Running(product) = &mut self.state {
+                    product.adjust_air_steps(1);
                 }
             }
         }
@@ -163,9 +178,12 @@ impl App for SandPicture {
     fn on_input(&mut self, ctx: &mut WindowInputContext<'_, ()>) {
         for (key, command) in [
             (KeyCode::KeyF, Command::Turn),
+            (KeyCode::KeyA, Command::ToggleAuto),
             (KeyCode::KeyS, Command::Shake),
             (KeyCode::Space, Command::Pause),
             (KeyCode::KeyR, Command::Reset),
+            (KeyCode::Minus, Command::AirLess),
+            (KeyCode::Equal, Command::AirMore),
         ] {
             if ctx.input.is_key_pressed(key) {
                 self.command(command);
@@ -246,6 +264,9 @@ impl App for SandPicture {
             State::Running(product) => Readout {
                 seconds: product.seconds(),
                 paused: self.paused,
+                auto_flip: product.auto_flip(),
+                air_area: product.air_area(),
+                air_percent: product.air_percent(),
                 speed: product.speed(),
                 since_turn: product.since_turn(),
             },
@@ -271,6 +292,8 @@ impl App for SandPicture {
             "state": "running",
             "view": self.mode.label(),
             "paused": self.paused,
+            "auto_flip": product.auto_flip(),
+            "air_area": product.air_area(),
             "updates": product.updates(),
             "completed_updates": product.completed_updates(),
             "seconds": product.seconds(),
@@ -279,9 +302,9 @@ impl App for SandPicture {
         })
     }
 
-    /// `{"action": "turn" | "shake" | "pause" | "reset" | "view" | "panel" |
-    /// "details"}`; a view is named by `"value"`, `panel` hides or shows the
-    /// panel and `details` folds or unfolds its times since the turn.
+    /// `{"action": "turn" | "auto" | "shake" | "pause" | "reset" | "air_less" |
+    /// "air_more" | "view" | "panel" | "details"}`; a view is named by `"value"`,
+    /// `panel` hides or shows the panel and `details` folds or unfolds its times.
     #[cfg(not(target_family = "wasm"))]
     fn on_agent_command(
         &mut self,
@@ -290,9 +313,12 @@ impl App for SandPicture {
         let action = payload.get("action").and_then(serde_json::Value::as_str);
         match action.ok_or("an action is needed")? {
             "turn" => self.command(Command::Turn),
+            "auto" => self.command(Command::ToggleAuto),
             "shake" => self.command(Command::Shake),
             "pause" => self.command(Command::Pause),
             "reset" => self.command(Command::Reset),
+            "air_less" => self.command(Command::AirLess),
+            "air_more" => self.command(Command::AirMore),
             "panel" => self.panel.toggle(),
             "details" => self.panel.toggle_details(),
             "view" => {
