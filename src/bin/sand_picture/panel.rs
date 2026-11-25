@@ -87,17 +87,6 @@ fn line(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> std::sync::Arc<egu
         .layout_no_wrap(text.to_owned(), font, ui.visuals().text_color())
 }
 
-/// A number of the picture in a cell as high as the buttons: a bare label
-/// that starts a row of a wrapped panel would sit at the row's top.
-fn number(ui: &mut egui::Ui, text: std::sync::Arc<egui::Galley>) -> egui::Response {
-    let buttons =
-        ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
-    let size = egui::vec2(text.size().x, buttons.max(ui.spacing().interact_size.y));
-    let centred = egui::Layout::left_to_right(egui::Align::Center);
-    ui.allocate_ui_with_layout(size, centred, |ui| ui.label(text))
-        .inner
-}
-
 /// A span of time as minutes and seconds, with hours from the first.
 fn span(seconds: f64) -> String {
     let seconds = seconds as u64;
@@ -169,16 +158,6 @@ impl Panel {
                     {
                         command = Some(Command::Turn);
                     }
-                    let mut auto = readout.auto_flip;
-                    if ui
-                        .toggle_value(&mut auto, "Auto")
-                        .on_hover_text(
-                            "Automatically turn the picture over once sand finishes falling (A)",
-                        )
-                        .changed()
-                    {
-                        command = Some(Command::ToggleAuto);
-                    }
                     if ui
                         .button("Shake")
                         .on_hover_text("Shake the picture left and right for a moment (S)")
@@ -201,59 +180,23 @@ impl Panel {
                     {
                         command = Some(Command::Reset);
                     }
+                    let mut auto = readout.auto_flip;
+                    let auto_w = line(ui, "Auto", egui::TextStyle::Button).size().x + 28.0;
+                    divider(ui, auto_w);
                     if ui
-                        .button("Air -")
-                        .on_hover_text(format!(
-                            "Reduce air volume ({:.0} cells^2, {}%) (-)",
-                            readout.air_area, readout.air_percent
-                        ))
-                        .clicked()
+                        .checkbox(&mut auto, "Auto")
+                        .on_hover_text(
+                            "Automatically turn the picture over once sand finishes falling (A)",
+                        )
+                        .changed()
                     {
-                        command = Some(Command::AirLess);
+                        command = Some(Command::ToggleAuto);
                     }
-                    if ui
-                        .button("Air +")
-                        .on_hover_text(format!(
-                            "Inject air bubbles above the bed ({:.0} cells^2, {}%) (=)",
-                            readout.air_area, readout.air_percent
-                        ))
-                        .clicked()
-                    {
-                        command = Some(Command::AirMore);
-                    }
-                    egui::ComboBox::from_id_salt("view")
-                        .selected_text(mode.label())
-                        .width(96.0)
-                        .show_ui(ui, |ui| {
-                            for view in Mode::ALL {
-                                ui.selectable_value(mode, view, view.label());
-                            }
-                        })
-                        .response
-                        .on_hover_text("View (V)");
-                    let seconds = format!("{:7.1} s", readout.seconds);
-                    let seconds = line(ui, &seconds, egui::TextStyle::Monospace);
-                    divider(ui, seconds.size().x);
-                    number(ui, seconds).on_hover_text("The picture's own time");
-                    let speed = match (readout.paused, readout.speed) {
-                        (true, _) => " paused".to_owned(),
-                        (false, Some(speed)) => format!("{speed:5.2} x"),
-                        (false, None) => "   -  x".to_owned(),
-                    };
-                    number(ui, line(ui, &speed, egui::TextStyle::Monospace))
-                        .on_hover_text("Seconds of the picture per second, over the last 2 s");
                     let details = line(ui, "Details", egui::TextStyle::Button).size().x
                         + 2.0 * ui.spacing().button_padding.x;
                     divider(ui, details);
                     ui.toggle_value(&mut self.details, "Details")
-                        .on_hover_text("The times since the picture was turned over");
-                    if ui
-                        .button(other)
-                        .on_hover_text("Move the panel (P)")
-                        .clicked()
-                    {
-                        self.change_side();
-                    }
+                        .on_hover_text("Air, view, panel position, and timings");
                     if ui
                         .button("Hide")
                         .on_hover_text("Hide the panel; a click on the picture or H shows it again")
@@ -268,26 +211,68 @@ impl Panel {
                     // and no picture asks for a frame.
                     ui.ctx()
                         .request_repaint_after(std::time::Duration::from_secs(1));
-                    let lead = "since the turn  ";
-                    let picture = format!("{lead}{:>7} of the picture", span(picture));
-                    let clock = format!("{:>7} by the clock", span(clock));
-                    let whole = format!("{picture}  {clock}");
-                    // The times are as wide as the row above them, not as
-                    // the window - or as the picture's time needs, where a
-                    // wrapped row is narrower than that.
+                    let speed = match (readout.paused, readout.speed) {
+                        (true, _) => "paused".to_owned(),
+                        (false, Some(speed)) => format!("{speed:.2}x"),
+                        (false, None) => "-x".to_owned(),
+                    };
+                    let stats = format!(
+                        "{:.1} s ({speed})  turn {} / clock {}",
+                        readout.seconds,
+                        span(picture),
+                        span(clock)
+                    );
                     let style = egui::TextStyle::Monospace;
-                    let least = line(ui, &picture, style.clone()).size().x;
-                    ui.set_max_width(row.response.rect.width().max(least).min(room));
+                    let stats_w = line(ui, &stats, style).size().x;
+                    ui.set_max_width(row.response.rect.width().max(stats_w).min(room));
                     ui.separator();
-                    let fits = line(ui, &whole, style).size().x <= ui.available_width();
-                    if fits {
-                        ui.monospace(whole);
-                    } else {
-                        // Too wide for the window: the clock's time goes
-                        // under the picture's.
-                        ui.monospace(picture);
-                        ui.monospace(format!("{:1$}{clock}", "", lead.len()));
-                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("View");
+                        egui::ComboBox::from_id_salt("view")
+                            .selected_text(mode.label())
+                            .width(92.0)
+                            .show_ui(ui, |ui| {
+                                for view in Mode::ALL {
+                                    ui.selectable_value(mode, view, view.label());
+                                }
+                            })
+                            .response
+                            .on_hover_text("View (V)");
+                        divider(ui, 110.0);
+                        ui.label("Air");
+                        if ui
+                            .button("-")
+                            .on_hover_text(format!(
+                                "Reduce air volume ({:.0} cells^2) (-)",
+                                readout.air_area
+                            ))
+                            .clicked()
+                        {
+                            command = Some(Command::AirLess);
+                        }
+                        ui.monospace(format!("{:3}%", readout.air_percent))
+                            .on_hover_text(format!("{:.0} cells^2", readout.air_area));
+                        if ui
+                            .button("+")
+                            .on_hover_text(format!(
+                                "Inject air bubbles above the bed ({:.0} cells^2) (=)",
+                                readout.air_area
+                            ))
+                            .clicked()
+                        {
+                            command = Some(Command::AirMore);
+                        }
+                        divider(ui, 72.0);
+                        if ui
+                            .button(other)
+                            .on_hover_text("Move the panel (P)")
+                            .clicked()
+                        {
+                            self.change_side();
+                        }
+                    });
+                    ui.monospace(stats)
+                        .on_hover_text("Picture time, speed, and time since last turn");
                 }
             });
         command
