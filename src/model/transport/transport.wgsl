@@ -26,10 +26,9 @@ fn capacity_ratio(amount:f32,increase:f32)->f32 {
 // carry kernel: the dispatch is direct, since wgpu validates each indirect
 // one in a pass of its own.
 @compute @workgroup_size(128) fn reconstruct_common(@builtin(global_invocation_id) id:vec3<u32>) {
-    let running=carry_plan.current<carry_plan.steps;
-    paired_reconstruct(id.x,running);
-    let i=id.x/2u;
-    if running&&id.x%2u==1u&&i<cfg.n&&group_owner(i)==i{cache_group(i);}
+    if carry_plan.current>=carry_plan.steps{return;}
+    let i=id.x;
+    if i<cfg.n&&group_owner(i)==i{cache_group(i);}
 }
 
 // The first words of the schedule's Plan (carry_schedule.wgsl).

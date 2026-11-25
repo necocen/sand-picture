@@ -11,9 +11,8 @@ use super::update::Plans;
 
 pub struct Transport {
     groups: [usize; 4],
-    carry: [usize; 6],
+    carry: [usize; 4],
     common_reconstruct: usize,
-    trace: usize,
     /// Before the carry: the powder freed where water runs through touching
     /// sand faster than its grains settle (free_powder).
     release: usize,
@@ -41,22 +40,15 @@ impl Transport {
                 plans.add(model("accept_groups", groups)),
             ],
             carry: [
-                plans.add(model("layer_flux", edges)),
-                plans.add(model("gas_capacity", groups)),
                 plans.add(model("compose_layer_flux", edges)),
                 plans.add(model("material_capacity", groups)),
                 plans.add(model("limit_layer_flux", edges)),
                 plans.add(model("advect_groups", groups)),
             ],
-            trace: plans.add(model("clear_trace_gas", groups)),
             release: plans.add(model("free_powder", groups)),
             record: plans.add(model("plug_record", groups)),
             plug: plans.add(model("plug_descent", 1)),
-            common_reconstruct: plans.add(Plan::new(
-                Program::Model,
-                "reconstruct_common",
-                n.div_ceil(64),
-            )),
+            common_reconstruct: plans.add(Plan::new(Program::Model, "reconstruct_common", groups)),
             schedule: [
                 plans.add(scheduled("reset", 1)),
                 plans.add(scheduled("reduce", n.div_ceil(128))),
@@ -88,9 +80,8 @@ impl Transport {
         kernels
     }
 
-    /// Once per update: return trace gas identities to the liquid, then let
-    /// the voids the carry left in packed bodies rise (the plug descent).
-    pub fn clear_trace(&self) -> Vec<usize> {
-        vec![self.trace, self.plug]
+    /// Once per update: let the voids the carry left in packed bodies rise.
+    pub fn plug_descent(&self) -> Vec<usize> {
+        vec![self.plug]
     }
 }

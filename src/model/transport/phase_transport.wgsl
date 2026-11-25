@@ -17,32 +17,7 @@ fn upwind_label_flux(upwind:bool,amount:f32,inventory:vec4<f32>,label:f32)->f32{
 @compute @workgroup_size(128) fn compose_layer_flux(@builtin(global_invocation_id) id:vec3<u32>){
     if carry_plan.current>=carry_plan.steps{return;}
     let f=id.x;if f>=2u*cfg.n{return;}let i=f/2u;let a=f%2u;let q=point(i)+axis(a);if !valid(q)||internal_face(f){return;}
-    let j=at(q);let amount=common_carrier(f);var gas=0.;let upwind=select(1u,0u,amount>=0.);
-    for(var origin=0u;origin<2u;origin++){
-        let donor=select(j,i,origin==0u);var candidate:array<f32,GAS_SLOTS>;var total=0.;var low_total=0.;
-        let inventory=group_payload(donor).volume;
-        if inventory.w<=0.{continue;}
-        let labels=group_label_index(donor,0u);var lows:array<f32,GAS_SLOTS>;
-        // Gas that is held back (layer_flux) or refused (gas_sieved) has no
-        // candidate.
-        let receiver=select(i,j,origin==0u);
-        let closed=teeth_shadow(point(donor),point(receiver))||plug_wall(donor,receiver)||close_drained(cells[receiver])||(border_cell(receiver)&&!border_cell(donor))||gas_sieved(f,donor);
-        for(var l=0u;l<GAS_SLOTS;l++){
-            let entry=scratch[labels+l];let low=upwind_label_flux(origin==upwind,amount,inventory,entry.x);
-            lows[l]=low;
-            candidate[l]=select(mix(low,source_gas_flux(f,l,origin),entry.z),0.,closed||spacer_channel_closed(l,receiver));total+=candidate[l];low_total+=low;
-        }
-        var blend=1.;
-        // Gas that moves with the common flow carries no more than the
-        // carrier; a relative sweep is bounded by the stocks alone.
-        if gas_carrier(f)==amount&&abs(total)>abs(amount)&&abs(total)>abs(low_total){
-            blend=clamp((abs(amount)-abs(low_total))/(abs(total)-abs(low_total)),0.,1.);
-        }
-        for(var l=0u;l<GAS_SLOTS;l++){
-            let value=select(mix(lows[l],candidate[l],blend),0.,closed||spacer_channel_closed(l,receiver));
-            put_source_gas_flux(f,l,origin,value);gas+=value;
-        }
-    }
+    let j=at(q);let amount=common_carrier(f);let gas=0.;
     let interval=cfg.dt/(carry_divisions()*cfg.h);let face=faces[f];var flux=vec4<f32>(0.);
     // On a chain's face (a joint's mouth, a column's exit) the sand crosses
     // at the chain's allowance (joint_mouth), neither less nor more,
@@ -135,21 +110,8 @@ fn side_payload(first:GroupPayload,second:GroupPayload,forward:bool)->GroupPaylo
             if high[phase]-low[phase]<0.{blend=min(blend,receive_i);}
         }
     }
-    var out:Transport;out.volume=mix(low,high,blend);var gas=0.;
-    let upwind=select(1u,0u,amount>=0.);
-    // Gas that is held back has a zero candidate and crosses only as far as
-    // the blend keeps to the low flux: where the water's budget cannot take
-    // its share, the bubble passes. Refused gas has no low flux either.
-    for(var origin=0u;origin<2u;origin++){
-      let inventory=select(payload_j.volume,payload_i.volume,origin==0u);let source_cell=select(j,i,origin==0u);
-      if inventory.w<=0.{continue;}let labels=group_label_index(source_cell,0u);
-      let sieved=gas_sieved(f,source_cell);
-      for(var l=0u;l<GAS_SLOTS;l++){
-        let low=select(upwind_label_flux(origin==upwind,amount,inventory,scratch[labels+l].x),0.,sieved);
-        let value=mix(low,source_gas_flux(f,l,origin),blend);
-        put_source_gas_flux(f,l,origin,value);gas+=value;
-    }}
-    out.volume.w=gas;out.volume.x=amount-gas-out.volume.y-out.volume.z;
+    var out:Transport;out.volume=mix(low,high,blend);
+    out.volume.w=0.;out.volume.x=amount-out.volume.y-out.volume.z;
     out.momentum[0]=payload_momentum(side_payload(payload_i,payload_j,out.volume.x>=0.),out.volume.x,0u);
     out.momentum[1]=payload_momentum(side_payload(payload_i,payload_j,out.volume.y>=0.),out.volume.y,1u);
     out.momentum[2]=payload_momentum(side_payload(payload_i,payload_j,out.volume.z>=0.),out.volume.z,2u);
@@ -157,10 +119,8 @@ fn side_payload(first:GroupPayload,second:GroupPayload,forward:bool)->GroupPaylo
     // by the high flux's drift as far as the blend keeps it.
     let lag=blend*drift;let carried=out.volume.y-lag;
     out.powder=payload_powder(side_payload(payload_i,payload_j,carried>=0.),carried)+vec2<f32>(lag);
-    var swept=vec2<f32>(max(gas,0.),max(-gas,0.));
-    if faces[f].velocity.w!=faces[f].volume.w{swept=gas_sweeps(f);}
-    out.momentum[3]=payload_momentum(payload_i,swept.x,3u);
-    out.gas_reverse=payload_momentum(payload_j,-swept.y,3u);
+    out.momentum[3]=vec2<f32>(0.);
+    out.gas_reverse=vec2<f32>(0.);
     let grain_flux=out.volume.yz;
     for(var phase=0u;phase<2u;phase++){
         let source=side_payload(payload_i,payload_j,grain_flux[phase]>=0.);let amount=abs(grain_flux[phase]);

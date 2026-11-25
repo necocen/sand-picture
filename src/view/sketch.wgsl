@@ -64,8 +64,14 @@ struct Sketch {
 const EXPOSURE: f32 = 1. / 60.;
 // The packing of sand at rest, the deposit's (material.rs).
 const REST_PACKING: f32 = .585;
-// The most cells over a body that the layer on it takes up in the model.
-const SURFACE_LAYER: i32 = 8;
+// The most cells over a body that the thin avalanching surface layer takes up
+// in the model (three to five cells). Sand higher than this smoothly fades out
+// tucking by integrated overhead sand mass rather than popping on a hard cell
+// count threshold.
+const SURFACE_LAYER: i32 = 5;
+// How many cells above SURFACE_LAYER are integrated to distinguish a genuine
+// falling stream/plume from a thin surface layer.
+const STREAM_PROBE: i32 = 7;
 // The least sand (of a cell's volume) with which the water over a body
 // bears the layer on: less shows a grain in one pixel of a thousand.
 const LAYER_SAND: f32 = 1.e-4;
@@ -105,25 +111,27 @@ fn survey_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     if white > 0. { powder = clamp(max(c.powder.free, 0.) / white, 0., 1.); }
     facts[i] = Facts(
         vec4<f32>(total, first.x, second.x, first.y + 16. * second.y),
-        vec4<f32>(grains, still * min((grains.x + grains.y) / REST_PACKING, 1.), still),
+        vec4<f32>(grains, min((grains.x + grains.y) / REST_PACKING, 1.), still),
         vec4<f32>(velocity, powder, 0.));
 }
 
-// A cell of a body is more than half packed sand at rest.
+// A cell of a body is more than half packed sand (regardless of speed; moving
+// packed sand blurs by `still` rather than turning into thin water-borne sand).
 fn body(q: vec2<i32>) -> bool { return facts[cell_index(q)].grains.z > .5; }
-// Water that bears a layer's sand: a cell of the grid outside the bodies and
-// the bubbles, with sand enough to show.
+// Water that bears a thin surface layer's sand: a cell of the grid outside the
+// bodies and the bubbles, with sand enough to show.
 fn bears(q: vec2<i32>) -> bool {
     if q.y >= i32(cfg.size.y) { return false; }
     let fact = facts[cell_index(q)];
     return fact.gas.x <= .5 && fact.grains.z <= .5 && fact.grains.x + fact.grains.y >= LAYER_SAND;
 }
-// The cells from a body's surface up to the cell q, if q's sand is of the
-// layer on the body: 1 on the surface itself, 0 for no layer. The layer is
-// the run of cells that bear sand from the surface up, if it ends within
-// SURFACE_LAYER cells.
-fn layer_height(q: vec2<i32>) -> i32 {
-    if !bears(q) { return 0; }
+// For a `bears` cell `q` within SURFACE_LAYER cells above a `body`, returns
+// (height above the body in 1..=SURFACE_LAYER, smooth tuck weight in [0, 1]).
+// Returns (0, 0) if `q` is not part of a body's thin surface layer.
+// Weight fades continuously to 0 as overhead sand mass above SURFACE_LAYER grows,
+// eliminating single-frame binary popping of vertical column flames.
+fn surface_layer(q: vec2<i32>) -> vec2<f32> {
+    if !bears(q) { return vec2<f32>(0.); }
     var height = 0;
     for (var d = 1; d <= SURFACE_LAYER && d <= q.y; d++) {
         let below = q - vec2<i32>(0, d);
@@ -131,17 +139,27 @@ fn layer_height(q: vec2<i32>) -> i32 {
             height = d;
             break;
         }
-        if !bears(below) { return 0; }
+        if !bears(below) { return vec2<f32>(0.); }
     }
-    if height == 0 { return 0; }
-    for (var above = 1; height + above <= SURFACE_LAYER + 1; above++) {
-        if !bears(q + vec2<i32>(0, above)) { return height; }
+    if height == 0 { return vec2<f32>(0.); }
+    let surf_y = q.y - (height - 1);
+    var above_mass = 0.;
+    for (var k = SURFACE_LAYER; k < SURFACE_LAYER + STREAM_PROBE; k++) {
+        let p = vec2<i32>(q.x, surf_y + k);
+        if p.y >= i32(cfg.size.y) { break; }
+        let fact = facts[cell_index(p)];
+        if fact.gas.x > .5 || fact.grains.z > .5 { break; }
+        let s = fact.grains.x + fact.grains.y;
+        if s < LAYER_SAND { break; }
+        above_mass += s;
     }
-    return 0;
+    let tuck = 1. - smoothstep(.002, .025, above_mass);
+    return vec2<f32>(f32(height), tuck);
 }
 
-// After survey_cells: a body holds a cell's sand at rest if the cell or one
-// beside it is the body's, and the cell on its surface holds its layer.
+// After survey_cells: a body holds dense packed sand at any speed (blurring it
+// with `still`) and stationary boundary sand beside a body; its surface cell
+// smoothly tucks thin avalanching surface smears into the body.
 @compute @workgroup_size(8, 8)
 fn sketch_cells(@builtin(global_invocation_id) id: vec3<u32>) {
     if any(id.xy >= cfg.size) { return; }
@@ -161,24 +179,33 @@ fn sketch_cells(@builtin(global_invocation_id) id: vec3<u32>) {
             sand_around += around.grains.x + around.grains.y;
         }
     }
-    // The body's sand in this cell (fine, coarse), the part of it that
-    // slides a grain's width in a frame, and the other sand.
-    var held = own.grains.w * smoothstep(.5, .75, beside) * own.grains.xy;
+    // Dense packed sand stays part of its body even while sliding (> 3.3 mm/s)
+    // and motion-blurs via `slid`; dilute moving sand brushing past a wall keeps
+    // `other` so falling streams stay visible grain by grain.
+    let dense = smoothstep(.45, .65, own.grains.z);
+    let keep = max(own.grains.w, dense);
+    var held = keep * smoothstep(.5, .75, beside) * own.grains.xy;
     var slid = (1. - own.grains.w) * (held.x + held.y);
     var other = own.grains.xy - held;
-    let height = layer_height(q);
-    if height == 1 {
-        held = vec2<f32>(0.);
-        slid = 0.;
-        other = vec2<f32>(0.);
-        for (var above = 0; above < SURFACE_LAYER && bears(q + vec2<i32>(0, above)); above++) {
+    let layer = surface_layer(q);
+    let height = i32(layer.x);
+    let tuck = layer.y;
+    if height == 1 && tuck > 0. {
+        let moved_own = tuck * other;
+        held += moved_own;
+        slid += (1. - own.grains.w) * (moved_own.x + moved_own.y);
+        other -= moved_own;
+        for (var above = 1; above < SURFACE_LAYER && bears(q + vec2<i32>(0, above)); above++) {
             let lying = facts[cell_index(q + vec2<i32>(0, above))].grains;
-            held += lying.xy;
-            slid += (1. - lying.w) * (lying.x + lying.y);
+            let moved = tuck * lying.xy;
+            held += moved;
+            slid += (1. - lying.w) * (moved.x + moved.y);
         }
-    } else if height > 1 {
-        held = vec2<f32>(0.);
-        other = vec2<f32>(0.);
+    } else if height > 1 && tuck > 0. {
+        let remain = 1. - tuck;
+        held *= remain;
+        slid *= remain;
+        other *= remain;
     }
     // A floor-connected bed cell right beside a packed mobile body (for
     // example, while bubbles delay capture of an adjacent column after a

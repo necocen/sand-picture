@@ -1,5 +1,6 @@
 //! Every buffer of the model and its exact GPU layout, created once and
 //! filled from the scene. Sizes are bytes; `n` is the number of cells.
+use super::foam;
 use super::grid::{CELLS, cell_width, subdivisions};
 use super::material;
 use super::scene::Scene;
@@ -34,6 +35,9 @@ pub struct Buffers {
     pub strata: wgpu::Buffer,
     /// The bubbles' relabelling: components, films' counts, cells' words.
     pub labels: wgpu::Buffer,
+    /// Prototype A: 2D Lagrangian closed-curve deformable foam bubbles (ping-pong).
+    pub foam: wgpu::Buffer,
+    pub foam_next: wgpu::Buffer,
 
     // An update's own work: it writes these before it reads them, and
     // nothing in them lasts into the next update.
@@ -119,6 +123,14 @@ impl Buffers {
             // Eight slices per cell height and a three-entry header per column.
             strata: blank("bed strata", u64::from(nx) * u64::from(3 + 8 * ny) * 8),
             labels: blank("gas components", labels::initial(n).len() as u64),
+            foam: blank(
+                "lagrangian foam bubbles",
+                (foam::MAX_BUBBLES * foam::FOAM_BUBBLE_BYTES) as u64,
+            ),
+            foam_next: blank(
+                "lagrangian foam bubbles next",
+                (foam::MAX_BUBBLES * foam::FOAM_BUBBLE_BYTES) as u64,
+            ),
             scratch: blank(
                 "an update's scratch rows",
                 cells * 16 * rows::count(rows::SCRATCH),
@@ -161,6 +173,8 @@ impl Buffers {
             "strata" => &self.strata,
             "arrival" => &self.arrival,
             "labels" => &self.labels,
+            "foam" => &self.foam,
+            "foam_next" => &self.foam_next,
             "carry_plan" | "plan" => &self.schedule,
             "gaps" => &self.gaps,
             "contact_work" => &self.contact_list,
@@ -210,6 +224,9 @@ impl Buffers {
             &floats(layers),
         );
         queue.write_buffer(&self.labels, 0, &labels::initial(self.n));
+        let foam_bytes = foam::initial(scene);
+        queue.write_buffer(&self.foam, 0, &foam_bytes);
+        queue.write_buffer(&self.foam_next, 0, &foam_bytes);
     }
 
     /// Back to the picture at rest in `scene`, as `new` leaves the buffers:
@@ -230,6 +247,8 @@ impl Buffers {
             &self.strata,
             &self.arrival,
             &self.labels,
+            &self.foam,
+            &self.foam_next,
             &self.schedule,
             &self.gaps,
             &self.contact_list,

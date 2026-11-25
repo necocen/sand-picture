@@ -2,9 +2,9 @@
 //! their only valid order. The product records the list into one compute
 //! pass; a tool can walk the same list stage by stage.
 use super::bed::Bed;
+use super::foam::Foam;
 use super::interface::Interface;
 use super::kernel::Plan;
-use super::labels::Labels;
 use super::mechanics::Mechanics;
 use super::slab::Slab;
 use super::stream::{Solve, Stream};
@@ -35,11 +35,9 @@ pub enum Stage {
     SecondReturn,
     TransportPrepare,
     TransportCarry,
-    TraceGas,
-    /// Bubbles that split keep apart: identities by connected component.
-    Labels,
-    InterfacePlanes,
-    InterfaceContacts,
+    PlugDescent,
+    /// Prototype A: Lagrangian closed-curve deformable foam bubbles.
+    Foam,
     InterfaceApertures,
 }
 impl Stage {
@@ -64,10 +62,8 @@ impl Stage {
             Self::SecondReturn => "second return",
             Self::TransportPrepare => "transport prepare",
             Self::TransportCarry => "transport carry",
-            Self::TraceGas => "trace gas",
-            Self::Labels => "labels",
-            Self::InterfacePlanes => "interface planes",
-            Self::InterfaceContacts => "interface contacts",
+            Self::PlugDescent => "plug descent",
+            Self::Foam => "foam",
             Self::InterfaceApertures => "interface apertures",
         }
     }
@@ -108,7 +104,7 @@ pub fn steps(
     mechanics: &Mechanics,
     stream: &Stream,
     transport: &Transport,
-    labels: &Labels,
+    foam: &Foam,
     interface: &Interface,
 ) -> Vec<Step> {
     let mut steps = Vec::new();
@@ -185,10 +181,8 @@ pub fn steps(
     );
     stage(Stage::TransportPrepare, transport.prepare());
     stage(Stage::TransportCarry, transport.carry());
-    stage(Stage::TraceGas, transport.clear_trace());
-    stage(Stage::Labels, labels.kernels());
-    stage(Stage::InterfacePlanes, vec![interface.planes]);
-    stage(Stage::InterfaceContacts, interface.contacts());
+    stage(Stage::PlugDescent, transport.plug_descent());
+    stage(Stage::Foam, foam.kernels());
     stage(Stage::InterfaceApertures, vec![interface.apertures]);
     steps
 }

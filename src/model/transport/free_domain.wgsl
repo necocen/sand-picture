@@ -152,7 +152,8 @@ fn gas_refused(f:u32,donor:u32)->bool{
 // The donor's film water crosses in the refused gas's place, while its
 // group has the water for all it sends out.
 fn gas_sieved(f:u32,donor:u32)->bool{
-    return gas_refused(f,donor)&&group_payload(donor).volume.x>=group_outgoing(donor);
+    // Prototype A: gas is owned and transported by the Lagrangian closed-curve foam network.
+    return true;
 }
 // The drag coefficient (Pa s/m^2) of the free liquid on the deposit's
 // surface in cell i: linear shear to the still bed across the free layer,

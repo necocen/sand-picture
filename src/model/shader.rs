@@ -1,6 +1,7 @@
 //! Shader assembly: the four programs of the model as text. A program is its
 //! constants and its fragments in a fixed order.
 use super::DT;
+use super::foam::{FOAM_VERTS, MAX_BUBBLES};
 use super::grid::{CELLS, pressure_omega};
 use super::labels::{MAX_COMPONENTS, cell_words};
 use super::material::{
@@ -107,6 +108,8 @@ fn model(grains: &Grains) -> String {
              const POWDER_DIAMETER:f32={powder_diameter:?};\
              const POWDER_LEVELS:u32={POWDER_LEVELS}u;\
              const MAX_COMPONENTS:u32={MAX_COMPONENTS}u;\
+             const MAX_BUBBLES:u32={MAX_BUBBLES}u;\
+             const FOAM_VERTS:u32={FOAM_VERTS}u;\
              const CAPILLARY_LENGTH:f32={capillary:?};\
              const BUBBLE_LEVELS:u32={BUBBLE_LEVELS}u;\
              const BUBBLE_RISE=array<f32,{}>({rise});",
@@ -147,6 +150,7 @@ fn model(grains: &Grains) -> String {
         include_str!("slab/joints.wgsl"),
         include_str!("transport/plug.wgsl"),
         include_str!("labels.wgsl"),
+        include_str!("foam.wgsl"),
     ]
     .join("\n")
 }

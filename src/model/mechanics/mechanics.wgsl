@@ -106,10 +106,33 @@ fn overburden_stress(i:u32)->f32{
     if wet<=0.||solid<CRITICAL_PACKING*wet{return 0.;}
     let saturation=dot(g,RHO.yz-vec2<f32>(RHO.x))*cfg.gravity*PLATE_GAP/(2.*KINETIC_FRICTION*LATERAL_STRESS_RATIO);
     var weight=0.;
+    var open_above=false;
+    var above_rows=0;
     for(var y=p.y+1;y<i32(cfg.ny)&&weight<saturation;y++){
         let cj=cells[at(vec2<i32>(p.x,y))];let gj=grains(cj);let sj=gj.x+gj.y;let wj=max(cj.volume.water,0.)+sj;
-        if wj<=0.||sj<CRITICAL_PACKING*wj{break;}
+        if wj<=0.||sj<CRITICAL_PACKING*wj{
+            if open_water(cj){open_above=true;}
+            break;
+        }
         weight+=dot(gj,RHO.yz-vec2<f32>(RHO.x))*cfg.gravity*cfg.h;
+        above_rows+=1;
+    }
+    // A thin unsupported sand bridge with open water both above (free top surface)
+    // and below (>= 2 cells of empty water, no bubble or bed supporting it) has
+    // zero vertical bearing stress at its free underside and cannot arch across
+    // a cavern via Janssen wall friction.
+    if open_above&&above_rows<=16{
+        var open_run=0;
+        for(var d=1;d<=16&&p.y-d>=0;d++){
+            let cb=cells[at(vec2<i32>(p.x,p.y-d))];
+            if cb.volume.gas>.15||cb.bed.z>0.{break;}
+            if open_water(cb){
+                open_run+=1;
+                if open_run>=2{return 0.;}
+            }else if open_run>0{
+                break;
+            }
+        }
     }
     return LATERAL_STRESS_RATIO*min(weight,saturation);
 }
@@ -118,6 +141,23 @@ fn overburden_stress(i:u32)->f32{
 fn friction_limit(i:u32,c:Cell,mu:f32)->f32{
     let wet=dense_volume(i);let g=grains(c);
     if wet<=.01||g.x+g.y<=.005{return 0.;}
+    // An isolated 1-3 cell speck floating in open water or clinging to the top
+    // glass (no bed, bubble, or packed body of >= 3 neighbors around it) cannot
+    // arch against the glass plates and must fall under gravity.
+    let p=point(i);
+    if p.x>0&&p.x<i32(cfg.nx)-1&&p.y>0{
+        var supported=false;var packed_nbrs=0u;
+        for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
+            if dx==0&&dy==0{continue;}
+            let q=p+vec2<i32>(dx,dy);
+            if !valid(q){continue;}
+            let cj=cells[at(q)];
+            let gj=grains(cj);let sj=gj.x+gj.y;let wj=max(cj.volume.water,0.)+sj;
+            if cj.bed.z>0.||cj.volume.gas>0.10{supported=true;}
+            if wj>0.&&sj>=FREEZING_PACKING*wj{packed_nbrs+=1u;}
+        }}
+        if !supported&&packed_nbrs<3u{return 0.;}
+    }
     // A layer whose support flows away slides to fill the voids on its load
     // alone: the suction resists the shear of a packing that must dilate,
     // not a filling the kinematic model imposes. Only in the slow flow an
@@ -461,24 +501,20 @@ fn entry_resistance(f:u32)->f32{
     faces[f].coarse_momentum.w=shear.bound;
     var force=load.w;let gas_fraction=face_gas(f);var gas_weight=0.;var gas_force=0.;
     if gas_fraction>0. {
-        // Air shares the common flow: no gas pressure wave, no gas unknown.
-        let rho=1.1767;let mu=.00001846;let resistance=rho/cfg.dt+12.*mu/(.001*.001);
-        let old=face_history(p,a,3u);let lap=viscous_laplacian(p,a,3u);
-        // Its weight relative to the water's, as the wet phases' (predict).
-        let air_force=rho*old/cfg.dt-(rho-RHO.x)*select(-cfg.lateral,cfg.gravity,a==1u)+mu*lap/(cfg.h*cfg.h);
-        gas_weight=gas_fraction*resistance;gas_force=gas_fraction*air_force;
-    }
-    // A gas interface crossing the face drags its menisci over the plates: a
-    // moving meniscus in a gap b needs the extra pressure jump
-    // 3.8 (2 sigma/b) Ca^(2/3), Ca = mu U/sigma (Park and Homsy 1984). Each
-    // identity's change across the face is one interface (a lamella between
-    // two bubbles is two, cf. Cantat 2013), its area per volume the jump over
-    // h; the drag is the secant at the gas's previous speed, at least 1 mm/s.
-    let j=at(p+axis(a));var jumps=0.;
-    for(var l=0u;l<GAS_SLOTS;l++){jumps+=abs(geometry[layer_index(f/2u,l)].x-geometry[layer_index(j,l)].x);}
-    if jumps>0.{
-        let speed=max(abs(face_history(p,a,3u)),.001);
-        gas_weight+=7.6*pow(SURFACE_TENSION,1./3.)*pow(9.4e-4,2./3.)/(.001*pow(speed,1./3.))*jumps/cfg.h;
+        // Prototype A: Lagrangian closed-curve bubbles (`foam_step`) already solve
+        // buoyancy, Young-Laplace surface tension, and plate meniscus drag. Stationary
+        // bubbles act as impermeable Brinkman obstacles (`5e6`) so water flows cleanly
+        // around them through wet throats; moving bubbles couple with water-inertia
+        // added mass (`RHO.x / dt`) bounded by true hydrostatic buoyancy (`RHO.x * g`),
+        // so a bubble hitting a sand roof never acts as a high-pressure piston driving
+        // pore-water jets through packed sand.
+        let u_gas=face_history(p,a,3u);
+        let block=smoothstep(.55,.90,gas_fraction);
+        let moving=smoothstep(.0005,.004,abs(u_gas));
+        let impedance=mix(mix(RHO.x/cfg.dt,5e6,block),RHO.x/cfg.dt,moving);
+        let max_force=gas_fraction*RHO.x*STANDARD_GRAVITY;
+        gas_weight=gas_fraction*impedance;
+        gas_force=clamp(gas_weight*u_gas,-max_force,max_force);
     }
     // On a gliding face the sand strip stands and the gas strip moves at the
     // face's mean velocity times glide_ratio: seen by the mean, its weight

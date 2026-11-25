@@ -8,11 +8,12 @@
 // these.
 
 // Water a released grain can fall through: no deposit, no bubble a grain
-// layer thick, and less sand than LOOSE_PACKING of its wet part.
+// layer thick, and uncaged sand (below FREEZING_PACKING of its wet part;
+// from FREEZING_PACKING up grains are caged in contact and block falling grains).
 fn open_water(c:Cell)->bool{
     if plug_deposit(c)||c.volume.gas*cfg.h>=GRAIN_LAYER{return false;}
     let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
-    return wet>0.&&solid<LOOSE_PACKING*wet;
+    return wet>0.&&solid<FREEZING_PACKING*wet;
 }
 // Sand that can shed grains from a face: sandy (teeth_sandy), no deposit.
 fn breach_donor(c:Cell)->bool{return !plug_deposit(c)&&teeth_sandy(c);}
@@ -23,16 +24,36 @@ fn breach_donor(c:Cell)->bool{return !plug_deposit(c)&&teeth_sandy(c);}
 // while a turbidity current carries its grains off; grains that come to
 // rest on the upper sand (a funnel's floor, a pocket) bury its foot.
 fn falls_away(start:vec2<i32>,away:i32)->bool{
+    // A steep vertical cliff (>= 2 open-water cells directly below `start`)
+    // facing free open water reaching the ceiling cannot stand at 90 deg:
+    // its grains breach into the open water beside it and slump into a natural
+    // talus slope at its foot until the face retreats to the angle of repose.
+    // Enclosed interior cavities do not reach the ceiling and stay sealed.
+    var open_top=true;
+    for(var y=start.y+1;y<i32(cfg.ny);y++){
+        if !open_water(cells[at(vec2<i32>(start.x,y))]){open_top=false;break;}
+    }
+    if open_top&&start.y>=2
+        &&open_water(cells[at(start-axis(1u))])
+        &&open_water(cells[at(start-2*axis(1u))]){
+        return true;
+    }
     var p=start;
+    var horiz=0;
     for(var step=0;step<4*i32(cfg.ny);step++){
         let below=p-axis(1u);
         if !valid(below){return true;}
         let cb=cells[at(below)];
         if plug_deposit(cb){return true;}
-        if open_water(cb){p=below;continue;}
+        if open_water(cb){p=below;horiz=0;continue;}
+        // Grains shed from a side wall cannot march horizontally across a flat
+        // shelf of bubbles or settled sand to reach a distant slot: require a
+        // downhill slope of at least 45 deg (at most 1 horizontal step per drop).
+        if horiz>=1{return false;}
         let ahead=p+vec2<i32>(away,0);
         if !valid(ahead)||!open_water(cells[at(ahead)]){return false;}
         p=ahead;
+        horiz+=1;
     }
     return false;
 }
@@ -112,8 +133,22 @@ fn roof_share(start:vec2<i32>,roof:u32)->f32{
         let cb=cells[at(below)];
         if plug_deposit(cb){return 1.;}
         if !open_water(cb){
-            if cb.volume.gas*cfg.h>=GRAIN_LAYER{return 0.;}
-            return geometry[SET_IN_ROW*cfg.n+roof_body(roof)].y;
+            let gas_below=cb.volume.gas*cfg.h>=GRAIN_LAYER;
+            if !gas_below{
+                let sup=geometry[SET_IN_ROW*cfg.n+roof_body(roof)].y;
+                if sup>0.{return sup;}
+            }
+            // Only breach a roof over a distant bubble or sand when it is a thin
+            // hanging bridge with open water BOTH above (within 18 cells) and below
+            // (>= 2 open-water cells), so displaced water can escape upward and the
+            // bridge collapses instead of hovering over an empty cavern.
+            if step>=2{
+                let rp=point(roof);
+                for(var up=1;up<=18&&rp.y+up<i32(cfg.ny);up++){
+                    if open_water(cells[at(vec2<i32>(rp.x,rp.y+up))]){return 1.;}
+                }
+            }
+            return 0.;
         }
         p=below;
     }

@@ -5,6 +5,7 @@
 //! steps, and turns the picture between updates.
 mod bed;
 mod buffers;
+mod foam;
 mod grid;
 mod interface;
 mod kernel;
@@ -22,10 +23,11 @@ mod uses;
 
 use bed::Bed;
 pub use buffers::Buffers;
+use foam::Foam;
+pub use foam::{FOAM_VERTS, MAX_BUBBLES};
 pub use grid::{CELLS, TANK, cell_width};
 use interface::Interface;
 use kernel::{Kernel, Pipelines, Plan};
-use labels::Labels;
 pub use material::{Grains, POWDER_DIAMETER};
 use material::{TABLE_STRIPS, table_strip};
 use mechanics::Mechanics;
@@ -181,30 +183,31 @@ fn layout() -> Layout {
     let mechanics = Mechanics::new(&mut plans);
     let stream = Stream::new(&mut plans);
     let transport = Transport::new(&mut plans);
-    let labels = Labels::new(&mut plans);
+    let foam = Foam::new(&mut plans);
     let interface = Interface::new(&mut plans);
     let [nx, ny] = CELLS.map(|v| v as u32);
-    let invert = [
-        vec![
-            plans.add(Plan::new(
-                Program::Invert,
-                "invert_cells",
-                (nx * ny).div_ceil(2).div_ceil(128),
-            )),
-            plans.add(Plan::new(
-                Program::Invert,
-                "invert_stream",
-                ((nx + 1) * (ny + 1)).div_ceil(2).div_ceil(128),
-            )),
-        ],
-        interface.kernels(),
-        vec![bed.clear_strata],
-    ]
-    .concat();
+    let invert = vec![
+        plans.add(Plan::new(
+            Program::Invert,
+            "invert_cells",
+            (nx * ny).div_ceil(2).div_ceil(128),
+        )),
+        plans.add(Plan::new(
+            Program::Invert,
+            "invert_stream",
+            ((nx + 1) * (ny + 1)).div_ceil(2).div_ceil(128),
+        )),
+        foam.invert,
+        foam.raster,
+        interface.apertures,
+        bed.clear_strata,
+    ];
     let prepare = [
-        vec![bed.geometry, bed.release],
-        interface.kernels(),
         vec![
+            bed.geometry,
+            bed.release,
+            foam.raster,
+            interface.apertures,
             bed.occupancy,
             bed.passage,
             mechanics.predict,
@@ -218,7 +221,7 @@ fn layout() -> Layout {
     ]
     .concat();
     let steps = update::steps(
-        &slab, &bed, &mechanics, &stream, &transport, &labels, &interface,
+        &slab, &bed, &mechanics, &stream, &transport, &foam, &interface,
     );
     Layout {
         plans: plans.take(),

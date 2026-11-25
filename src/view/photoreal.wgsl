@@ -14,6 +14,22 @@
 struct Sketch { gas: vec4<f32>, sand: vec4<f32>, carry: vec4<f32> }
 @group(0) @binding(2) var<storage, read> sketch: array<Sketch>;
 
+struct FoamBubble {
+    target_area: f32,
+    drain_time: f32,
+    slot: u32,
+    alive: u32,
+    centroid: vec2<f32>,
+    vel: vec2<f32>,
+    bbox_min: vec2<f32>,
+    bbox_max: vec2<f32>,
+    drain_partner: u32,
+    held: u32,
+    disp_vel: vec2<f32>,
+    verts: array<vec2<f32>, FOAM_VERTS>,
+}
+@group(0) @binding(6) var<storage, read> foam: array<FoamBubble>;
+
 // The weights of the 3x3 cells around a point, and their derivatives.
 struct Stencil { cell: vec2<i32>, wx: vec3<f32>, wy: vec3<f32>, dx: vec3<f32>, dy: vec3<f32> }
 fn stencil(p: vec2<f32>) -> Stencil {
@@ -273,57 +289,57 @@ const SWELL: f32 = .25;
 fn bubble_at(p: vec2<f32>) -> Bubble {
     let k = stencil(p);
     if !near(k, GAS_NEAR) { return Bubble(4., vec2<f32>(0., 1.)); }
-    var value: array<f32, GAS_SLOTS>;
-    var slope: array<vec2<f32>, GAS_SLOTS>;
-    var total = 0.;
-    var gradient = vec2<f32>(0.);
-    for (var j = 0; j < 3; j++) {
-        for (var i = 0; i < 3; i++) {
-            let gas = sketch_at(k, i, j).gas;
-            if gas.x > 0. {
-                let w = k.wx[i] * k.wy[j];
-                let d = vec2<f32>(k.dx[i] * k.wy[j], k.wx[i] * k.dy[j]);
-                total += w * gas.x;
-                gradient += d * gas.x;
-                let a = u32(gas.w) % 16u;
-                let b = (u32(gas.w) / 16u) % 16u;
-                value[a] += w * gas.y;
-                slope[a] += d * gas.y;
-                value[b] += w * gas.z;
-                slope[b] += d * gas.z;
+    let q = p + vec2<f32>(.5);
+    var best_sd = 4.;
+    var best_n = vec2<f32>(0., 1.);
+    for (var bi = 0u; bi < MAX_BUBBLES; bi++) {
+        if foam[bi].alive == 0u { continue; }
+        let bmin = foam[bi].bbox_min - vec2<f32>(1.5);
+        let bmax = foam[bi].bbox_max + vec2<f32>(1.5);
+        if q.x < bmin.x || q.x > bmax.x || q.y < bmin.y || q.y > bmax.y {
+            continue;
+        }
+        var min_d2 = 1e20;
+        var edge_n = vec2<f32>(0., 1.);
+        var crossings = 0i;
+        for (var m = 0u; m < FOAM_VERTS; m++) {
+            let a = foam[bi].verts[m];
+            let b = foam[bi].verts[(m + 1u) % FOAM_VERTS];
+            let e = b - a;
+            let len2 = dot(e, e);
+            let t = select(0., clamp(dot(q - a, e) / len2, 0., 1.), len2 > 1e-10);
+            let closest = a + t * e;
+            let diff = q - closest;
+            let d2 = dot(diff, diff);
+            if d2 < min_d2 {
+                min_d2 = d2;
+                let e_len = sqrt(max(len2, 1e-10));
+                let en = vec2<f32>(e.y, -e.x) / e_len;
+                // Smooth vertex normal interpolation across edge ends for silky rim shading.
+                let a_prev = foam[bi].verts[(m + FOAM_VERTS - 1u) % FOAM_VERTS];
+                let b_next = foam[bi].verts[(m + 2u) % FOAM_VERTS];
+                let t0 = b - a_prev;
+                let t1 = b_next - a;
+                let n0 = vec2<f32>(t0.y, -t0.x) / max(length(t0), 1e-6);
+                let n1 = vec2<f32>(t1.y, -t1.x) / max(length(t1), 1e-6);
+                let interp = mix(n0, n1, t);
+                let ilen = length(interp);
+                edge_n = select(en, interp / ilen, ilen > 1e-5);
+            }
+            if (a.y <= q.y && b.y > q.y) || (b.y <= q.y && a.y > q.y) {
+                let x_int = a.x + (q.y - a.y) * (b.x - a.x) / (b.y - a.y);
+                if q.x < x_int { crossings += 1; }
             }
         }
-    }
-    var first = 0u;
-    var second = 1u;
-    if value[1] > value[0] {
-        first = 1u;
-        second = 0u;
-    }
-    for (var l = 2u; l < GAS_SLOTS; l++) {
-        if value[l] > value[first] {
-            second = first;
-            first = l;
-        } else if value[l] > value[second] {
-            second = l;
+        let inside = (crossings & 1) != 0;
+        let dist = sqrt(min_d2);
+        let sd = select(dist, -dist, inside);
+        if sd < best_sd {
+            best_sd = sd;
+            best_n = edge_n;
         }
     }
-    // The lead w and the level of the gas at which the bubble ends,
-    // 1/2 + (1 - w)(1 - 3 w) / 2: 1 at the film, 1/2 with no other near,
-    // and 1/2 in the mean.
-    let pair = max(value[first] + value[second], 1.e-6);
-    let lead = (value[first] - value[second]) / pair;
-    let lead_slope = 2. * (value[second] * slope[first] - value[first] * slope[second]) / (pair * pair);
-    let level = 1. - 2. * lead + 1.5 * lead * lead;
-    let inward = gradient - (3. * lead - 2.) * lead_slope;
-    let steepness = max(length(inward), 1.e-3);
-    var bubble = Bubble((level - total) / steepness, -inward / steepness);
-    // An outline swells no further than SWELL past the half level of all
-    // the gas: gas spread thinner than a bubble's edge shows no bubble.
-    let rise = max(length(gradient), 1.e-3);
-    let reach = (.5 - total) / rise - SWELL;
-    if reach > bubble.distance { bubble = Bubble(reach, -gradient / rise); }
-    return Bubble(clamp(bubble.distance, -4., 4.), bubble.normal);
+    return Bubble(clamp(best_sd, -4., 4.), best_n);
 }
 
 fn bubble_color(p: vec2<f32>, bubble: Bubble) -> vec3<f32> {
