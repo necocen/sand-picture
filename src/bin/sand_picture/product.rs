@@ -144,6 +144,11 @@ impl Product {
         self.model.shake_pose()
     }
 
+    /// Sets or clears live 3D apparent gravity from a device motion sensor.
+    pub fn set_sensor_gravity(&mut self, gravity: Option<[f32; 3]>) {
+        self.model.set_sensor_gravity(gravity);
+    }
+
     /// Back to the scene at rest, turned over at once.
     pub fn reset(&mut self) {
         self.reset_pending = true;

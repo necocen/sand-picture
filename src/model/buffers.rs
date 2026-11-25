@@ -94,13 +94,14 @@ impl Buffers {
                 0f32.to_bits(),
                 0,
                 0,
-                0,
+                0f32.to_bits(),
             ]
             .into_iter()
             .flat_map(u32::to_le_bytes)
             .collect::<Vec<_>>(),
-            // The in-plane gravity (word 6) changes while the picture is turned,
-            // the lateral apparent gravity (word 8) while it is shaken.
+            // The downward gravity (word 6), lateral gravity (word 8) and
+            // out-of-plane plate gravity (word 11) vary with turns, shakes,
+            // and live motion sensors.
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let buffers = Self {

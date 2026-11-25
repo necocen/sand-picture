@@ -184,6 +184,7 @@ fn main() {
     let mut turns: Option<Vec<u64>> = None;
     let mut shakes: Vec<u64> = Vec::new();
     let mut resets: Vec<u64> = Vec::new();
+    let mut sensor_gravity: Option<[f32; 3]> = None;
     let mut views = false;
     let mut frames = false;
     let mut size = REFERENCE_SIZE;
@@ -198,6 +199,15 @@ fn main() {
             "--turn" => turns = Some(numbers(&value(), "--turn")),
             "--shake" => shakes = numbers(&value(), "--shake"),
             "--reset" => resets = numbers(&value(), "--reset"),
+            "--gravity" => {
+                let raw = value();
+                let parts: Vec<f32> = raw
+                    .split(',')
+                    .map(|v| v.parse().expect("--gravity GX,GY,GZ"))
+                    .collect();
+                assert_eq!(parts.len(), 3, "--gravity GX,GY,GZ");
+                sensor_gravity = Some([parts[0], parts[1], parts[2]]);
+            }
             "--views" => views = true,
             "--frames" => frames = true,
             "--size" => {
@@ -233,6 +243,7 @@ fn main() {
         }
         None => 0,
     };
+    model.set_sensor_gravity(sensor_gravity);
     let turns = turns.unwrap_or(if loaded.is_some() { vec![] } else { vec![0] });
     let pictures =
         (views || frames || timed_pictures > 0).then(|| Pictures::new(&gpu, &model, size));

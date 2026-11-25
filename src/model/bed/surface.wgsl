@@ -200,12 +200,12 @@ fn transfer_surface(xa:u32,xb:u32,requested:vec2<f32>)->vec2<f32>{
     }return moved;
 }
 // The depth (m) of the layer that a flow of depth `depth` moves: at least a
-// grain. While the hands shake the picture, keep the physical Jop wall-friction
-// yield depth up to 2.5 plate gaps (2.5 mm) so bottom dunes visibly slump and
-// level under lateral acceleration without reworking deep buried strata on a
-// vertical face in a single step.
+// grain. Under lateral acceleration (shake or sideways tilt), the even/odd
+// surface sweep carries an advective component, so cap the per-step layer to
+// 0.35 cells (CFL < 0.5) to prevent sawtooth overshoots while still letting
+// bottom dunes visibly slump and level.
 fn moving_depth(depth:f32)->f32{
-    if cfg.lateral!=0.{return clamp(depth,GRAIN_LAYER,2.5*PLATE_GAP);}return max(depth,GRAIN_LAYER);
+    if cfg.lateral!=0.{return clamp(depth,GRAIN_LAYER,.35*cfg.h);}return max(depth,GRAIN_LAYER);
 }
 // The surface flow of the columns `left` and left+1 in one update. Its
 // depth and the flux it moved are kept in terrain[nx+left].
@@ -278,7 +278,7 @@ fn surface_pair(left:u32){
     let amount=min(path.aperture*packing*abs(flux)*cfg.dt/cfg.h/cfg.h,moving_depth(depth)/cfg.h*packing);
     var requested=amount*share;
     if path.source==top{
-        if cfg.lateral==0.{
+        if abs(cfg.lateral)<3.0{
             let layer=peel(donor,moving_depth(depth)/cfg.h*packing);
             let deficit=max(SPECIES_FRICTION-vec2<f32>(abs(slope)),vec2<f32>(0.));
             let mobility=1./(1.+3.*deficit/(SPECIES_FRICTION.y-SPECIES_FRICTION.x));

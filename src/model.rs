@@ -78,6 +78,11 @@ pub struct Model {
     measure_kernel: usize,
     /// What the person's hands are doing to the picture, if anything.
     motion: Option<Motion>,
+    /// Live apparent gravity `[gx (+right), gy (+down), gz (out of glass)]`
+    /// from an accelerometer/tilt sensor, when enabled.
+    sensor_gravity: Option<[f32; 3]>,
+    /// True once sensor gravity has been written so disabling restores upright.
+    sensor_applied: bool,
     /// Target total air area (cells^2), persisted across resets.
     air_area: f32,
     /// Monotonic counter diversifying injection columns across clicks.
@@ -176,6 +181,8 @@ impl Building {
             adjust_air_steps: assembly.adjust_air_steps,
             measure_kernel: assembly.measure_kernel,
             motion: None,
+            sensor_gravity: None,
+            sensor_applied: false,
             air_area: DEFAULT_AIR_AREA,
             air_seed: 1,
         };
@@ -299,10 +306,18 @@ impl Model {
     /// if built anew: no pipeline is made again. Call it between updates.
     pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.motion = None;
-        self.write_gravity(queue, STANDARD_GRAVITY, 0.);
+        self.sensor_applied = false;
+        self.write_gravity(queue, STANDARD_GRAVITY, 0., 0.);
         self.buffers
             .restore(device, queue, &self.scene, self.air_area);
         self.prepare(device, queue);
+    }
+
+    /// Sets or clears live 3D apparent gravity `[gx (+right), gy (+down), gz]`
+    /// from an external motion sensor (m/s^2). Active whenever no Turn/Shake
+    /// button motion is running.
+    pub fn set_sensor_gravity(&mut self, gravity: Option<[f32; 3]>) {
+        self.sensor_gravity = gravity;
     }
 
     /// Current target total air area (cells^2).
@@ -416,9 +431,20 @@ impl Model {
         use std::f32::consts::PI;
         let mut lateral = 0.;
         let mut gravity = STANDARD_GRAVITY;
+        let mut plate = 0.;
         let mut mirror = false;
         let ended = match self.motion.as_mut() {
-            None => return false,
+            None => {
+                if let Some(raw) = self.sensor_gravity {
+                    let (g, lat, pl) = map_sensor_gravity(raw);
+                    self.write_gravity(queue, g, lat, pl);
+                    self.sensor_applied = true;
+                } else if self.sensor_applied {
+                    self.write_gravity(queue, STANDARD_GRAVITY, 0., 0.);
+                    self.sensor_applied = false;
+                }
+                return false;
+            }
             Some(Motion::Shake { elapsed }) => {
                 *elapsed += DT;
                 if *elapsed < SHAKE_SECONDS {
@@ -437,6 +463,9 @@ impl Model {
                 let t = (*elapsed / TURN_SECONDS).min(1.);
                 if t < 1. {
                     gravity = STANDARD_GRAVITY * (0.5 * PI * t).sin();
+                    plate = (STANDARD_GRAVITY * STANDARD_GRAVITY - gravity * gravity)
+                        .max(0.)
+                        .sqrt();
                 }
                 t >= 1.
             }
@@ -444,15 +473,17 @@ impl Model {
         if ended {
             self.motion = None;
         }
-        self.write_gravity(queue, gravity, lateral);
+        self.write_gravity(queue, gravity, lateral, plate);
         mirror
     }
 
-    /// Writes an update's apparent gravity: along the rows (the shaders'
-    /// cfg.gravity) and along x (cfg.lateral).
-    fn write_gravity(&self, queue: &wgpu::Queue, gravity: f32, lateral: f32) {
+    /// Writes an update's apparent gravity: downward along the rows
+    /// (`cfg.gravity`), rightward along x (`cfg.lateral`), and perpendicular
+    /// to the glass plates (`cfg.plate`).
+    fn write_gravity(&self, queue: &wgpu::Queue, gravity: f32, lateral: f32, plate: f32) {
         queue.write_buffer(&self.buffers.config, 24, &gravity.to_le_bytes());
         queue.write_buffer(&self.buffers.config, 32, &lateral.to_le_bytes());
+        queue.write_buffer(&self.buffers.config, 44, &plate.to_le_bytes());
     }
 
     /// Turn the current material configuration without advancing physical time.
@@ -468,11 +499,39 @@ impl Model {
     }
 }
 
+/// Maps live 3D apparent gravity `[gx (+right), gy (+down), gz (out of glass)]`
+/// (m/s^2) into the simulation's `(gravity, lateral, plate)` triplet.
+///
+/// Up to +-55 deg from upright (covering normal tilts and vigorous upright
+/// hand shakes), `(gy, gx, |gz|)` passes through directly. Past 55 deg toward
+/// sideways (90 deg) or upside-down (`gy <= 0`), where the current `y = 0` bed
+/// model cannot yet build a vertical-wall deposit, the in-plane component fades
+/// smoothly into out-of-plane glass friction `plate` so the sand holds safely.
+pub fn map_sensor_gravity(raw: [f32; 3]) -> (f32, f32, f32) {
+    const MAX_ACCEL: f32 = 14.0;
+    const FADE_START: f32 = 55.0_f32 * std::f32::consts::PI / 180.0;
+    const FADE_SPAN: f32 = 30.0_f32 * std::f32::consts::PI / 180.0;
+
+    let gx = raw[0].clamp(-MAX_ACCEL, MAX_ACCEL);
+    let gy = raw[1].clamp(-MAX_ACCEL, MAX_ACCEL);
+    let gz = raw[2].abs().min(MAX_ACCEL);
+    let in_plane = gx.hypot(gy);
+    let blend = if gy <= 0.0 {
+        1.0
+    } else {
+        let theta = gx.abs().atan2(gy);
+        let u = ((theta - FADE_START) / FADE_SPAN).clamp(0.0, 1.0);
+        u * u * (3.0 - 2.0 * u)
+    };
+    let keep = 1.0 - blend;
+    (gy.max(0.0) * keep, gx * keep, gz.hypot(in_plane * blend))
+}
+
 #[cfg(test)]
 mod tests {
     use super::kernel::declarations;
     use super::uses::USES;
-    use super::{Grains, Program, layout};
+    use super::{Grains, Program, STANDARD_GRAVITY, layout, map_sensor_gravity};
     use naga::valid::{Capabilities, ValidationFlags, Validator};
 
     /// The table of what each entry point uses is what the shaders say, and
@@ -541,6 +600,31 @@ mod tests {
         // Every kernel runs an entry point of the table.
         for plan in layout().plans {
             super::uses::uses(plan.program, plan.entry);
+        }
+    }
+
+    #[test]
+    fn sensor_gravity_maps_tilt_flat_shake_and_guard() {
+        let g = STANDARD_GRAVITY;
+        // Upright at rest.
+        let (gy, gx, gz) = map_sensor_gravity([0.0, g, 0.0]);
+        assert!((gy - g).abs() < 1e-5 && gx.abs() < 1e-5 && gz.abs() < 1e-5);
+        // 30-degree clockwise tilt passes through unattenuated.
+        let rad = 30.0_f32.to_radians();
+        let (gy, gx, gz) = map_sensor_gravity([g * rad.sin(), g * rad.cos(), 0.0]);
+        assert!((gy - g * rad.cos()).abs() < 1e-4);
+        assert!((gx - g * rad.sin()).abs() < 1e-4);
+        assert!(gz.abs() < 1e-5);
+        // Lying flat on a table routes all gravity into plate friction.
+        let (gy, gx, gz) = map_sensor_gravity([0.0, 0.0, g]);
+        assert!(gy.abs() < 1e-5 && gx.abs() < 1e-5 && (gz - g).abs() < 1e-5);
+        // Upright hand shake (0.72 g lateral) passes through unattenuated.
+        let (gy, gx, gz) = map_sensor_gravity([7.1, g, 0.0]);
+        assert!((gy - g).abs() < 1e-5 && (gx - 7.1).abs() < 1e-5 && gz.abs() < 1e-5);
+        // Sideways 90 deg and upside-down fold safely into plate gravity.
+        for raw in [[g, 0.0, 0.0], [0.0, -g, 0.0]] {
+            let (gy, gx, gz) = map_sensor_gravity(raw);
+            assert!(gy.abs() < 1e-5 && gx.abs() < 1e-5 && (gz - g).abs() < 1e-4);
         }
     }
 }

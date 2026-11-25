@@ -3,6 +3,7 @@
 use super::panel::{Command, Panel, Readout};
 use super::product::Product;
 use super::screen::Screen;
+use super::sensor::Sensor;
 use mikage::winit::keyboard::KeyCode;
 use mikage::{
     App, GpuContext, RedrawRequest, RenderContext, RenderTargetConfig, SimulationControl,
@@ -28,7 +29,7 @@ enum State {
     Building(Building),
     /// The model is built; its views are made next.
     Built(Model),
-    Running(Product),
+    Running(Box<Product>),
 }
 
 /// What the kept picture shows: the updates it includes, the view, and when
@@ -44,6 +45,7 @@ pub struct SandPicture {
     screen: Screen,
     shown: Option<Shown>,
     panel: Panel,
+    sensor: Sensor,
     mode: Mode,
     /// The person has stopped the picture's time.
     paused: bool,
@@ -58,6 +60,7 @@ impl SandPicture {
             screen: Screen::new(gpu, target, picture_size(window)),
             shown: None,
             panel: Panel::default(),
+            sensor: Sensor::new(),
             mode: Mode::default(),
             paused: false,
             redraw: None,
@@ -87,7 +90,7 @@ impl SandPicture {
                     if let Some(control) = self.control.as_ref().filter(|_| !self.paused) {
                         control.resume();
                     }
-                    State::Running(product)
+                    State::Running(Box::new(product))
                 }
                 State::Running(product) => {
                     self.state = State::Running(product);
@@ -138,6 +141,9 @@ impl SandPicture {
                     product.toggle_auto_flip();
                 }
             }
+            Command::ToggleTilt => {
+                self.sensor.toggle();
+            }
             Command::Shake => {
                 if let State::Running(product) = &mut self.state {
                     product.shake();
@@ -179,6 +185,7 @@ impl App for SandPicture {
         for (key, command) in [
             (KeyCode::KeyF, Command::Turn),
             (KeyCode::KeyA, Command::ToggleAuto),
+            (KeyCode::KeyG, Command::ToggleTilt),
             (KeyCode::KeyS, Command::Shake),
             (KeyCode::Space, Command::Pause),
             (KeyCode::KeyR, Command::Reset),
@@ -202,6 +209,7 @@ impl App for SandPicture {
 
     fn tick(&mut self, ctx: &mut TickContext<'_>) {
         if let State::Running(product) = &mut self.state {
+            product.set_sensor_gravity(self.sensor.gravity());
             product.tick(ctx);
             // Whoever ran the update (the clock, or a tool through the
             // agent), the window now shows an older state.
@@ -266,6 +274,7 @@ impl App for SandPicture {
                 seconds: product.seconds(),
                 paused: self.paused,
                 auto_flip: product.auto_flip(),
+                sensor: self.sensor.state(),
                 air_area: product.air_area(),
                 air_percent: product.air_percent(),
                 speed: product.speed(),

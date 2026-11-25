@@ -1,7 +1,8 @@
 //! The sand picture's window.
-//! Keys: F turns the picture over, A toggles auto-turn, S shakes, Space stops
-//! and runs its time, R resets it, - / = removes or injects air, V cycles the
-//! views, H hides or shows the panel, P moves the panel between top and bottom.
+//! Keys: F turns the picture over, A toggles auto-turn, G toggles tilt sensor,
+//! S shakes, Space stops and runs its time, R resets it, - / = removes or
+//! injects air, V cycles the views, H hides or shows the panel, P moves the
+//! panel between top and bottom.
 #[path = "sand_picture/app.rs"]
 mod app;
 #[path = "sand_picture/panel.rs"]
@@ -10,6 +11,8 @@ mod panel;
 mod product;
 #[path = "sand_picture/screen.rs"]
 mod screen;
+#[path = "sand_picture/sensor.rs"]
+mod sensor;
 
 use app::SandPicture;
 use mikage::{GpuDescriptor, GpuRequirements, RedrawPolicy, RunConfig, SimulationPolicy};

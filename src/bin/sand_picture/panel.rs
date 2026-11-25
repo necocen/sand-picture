@@ -1,6 +1,7 @@
 //! The control panel: one egui window at an edge of the picture, which hides
 //! and comes back at a click on the picture. In a window narrower than its
 //! row of controls the row wraps.
+use super::sensor::SensorState;
 use mikage::egui;
 use sand_picture::view::Mode;
 
@@ -20,6 +21,8 @@ pub enum Command {
     Turn,
     /// Toggle automatic turning once sand finishes falling.
     ToggleAuto,
+    /// Toggle device tilt / accelerometer gravity when available.
+    ToggleTilt,
     /// Shake the picture left and right for a moment.
     Shake,
     /// Stop the picture's time, or let it run again.
@@ -38,6 +41,7 @@ pub struct Readout {
     pub seconds: f64,
     pub paused: bool,
     pub auto_flip: bool,
+    pub sensor: SensorState,
     /// Target total air area (cells^2) and percentage of default.
     pub air_area: f32,
     pub air_percent: u32,
@@ -191,6 +195,32 @@ impl Panel {
                         .changed()
                     {
                         command = Some(Command::ToggleAuto);
+                    }
+                    if readout.sensor != SensorState::Unavailable {
+                        let mut tilt = readout.sensor.is_enabled();
+                        let label = match readout.sensor {
+                            SensorState::Active => "Tilt",
+                            SensorState::Starting => "Tilt…",
+                            SensorState::NeedsTap => "Tilt (tap)",
+                            SensorState::Denied => "Tilt (denied)",
+                            SensorState::Off | SensorState::Unavailable => "Tilt",
+                        };
+                        let hint = match readout.sensor {
+                            SensorState::Active => "Gravity follows device tilt and shake (G)",
+                            SensorState::Starting => "Waiting for motion sensor readings (G)",
+                            SensorState::NeedsTap => {
+                                "Tap the button at the bottom to allow motion sensor access"
+                            }
+                            SensorState::Denied => {
+                                "Motion sensor permission denied; click to retry (G)"
+                            }
+                            SensorState::Off | SensorState::Unavailable => {
+                                "Use device tilt and shake for gravity (G)"
+                            }
+                        };
+                        if ui.checkbox(&mut tilt, label).on_hover_text(hint).changed() {
+                            command = Some(Command::ToggleTilt);
+                        }
                     }
                     let details = line(ui, "Details", egui::TextStyle::Button).size().x
                         + 2.0 * ui.spacing().button_padding.x;

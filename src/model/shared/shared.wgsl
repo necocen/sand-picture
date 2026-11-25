@@ -1,13 +1,11 @@
 // Declarations shared by every stage: the configuration, the records of a
 // cell, a face and a transport with their buffers, and the cell accessors.
 
-// cfg.gravity is the gravity in the plane of the glass, g |cos(theta)| while
-// the picture is tipped front to back by theta (the grid is mirrored as it
-// lies flat, so gravity always points down the rows); the rest, g
-// |sin(theta)|, presses the grains on the lower plate (plate_gravity).
-// cfg.lateral is the apparent gravity along x while the tank is shaken, minus
-// its acceleration. The material table's speeds are at the standard gravity.
-struct Config { nx:u32, ny:u32, n:u32, table_side:u32, dt:f32, h:f32, gravity:f32,substeps:u32, lateral:f32, air_delta:f32, air_seed:u32, pad2:u32 }
+// cfg.gravity is the downward gravity in the plane of the glass (-y),
+// cfg.lateral is the apparent gravity along +x (shaking or sideways tilt), and
+// cfg.plate is the out-of-plane gravity pressing grains against the glass
+// plates (z). The material table's speeds are at the standard gravity.
+struct Config { nx:u32, ny:u32, n:u32, table_side:u32, dt:f32, h:f32, gravity:f32,substeps:u32, lateral:f32, air_delta:f32, air_seed:u32, plate:f32 }
 const STANDARD_GRAVITY:f32=9.80665;
 // The white is its grit and powder (material.rs). Of its volume `total` is
 // powder and `free` is free powder, single grains dispersed in the water.
@@ -22,10 +20,7 @@ fn packing_speeds(powder:PowderShare)->vec2<f32>{
     let r=mix(1.,GRAIN_DIAMETER.x/POWDER_DIAMETER,powder.total);
     return vec2<f32>(TERMINAL_SPEED.x/(r*r),TERMINAL_SPEED.y);
 }
-fn plate_gravity()->f32{
-    if cfg.gravity>=STANDARD_GRAVITY{return 0.;}
-    return sqrt(max(STANDARD_GRAVITY*STANDARD_GRAVITY-cfg.gravity*cfg.gravity,0.));
-}
+fn plate_gravity()->f32{return cfg.plate;}
 struct PhaseVolumes {water:f32,fine:f32,coarse:f32,gas:f32}
 // `load` is the part of `pressure` that pushes the neighbours: the reaction
 // to the compression the flow imposes. The rest, and `suction` (the pore

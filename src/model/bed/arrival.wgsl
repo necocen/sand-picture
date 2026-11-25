@@ -90,11 +90,17 @@ fn exchange_from_source(x:u32){
     let column=bed_column(x);if !column.connected{return;}
     let bi=column.top*cfg.nx+x;let b=arrival[bi].bed;let bs=b.x+b.y;
     let normal=surface_normal(i32(x));
-    // The top cell is released when it would need tension to stay. Support
-    // is the vertical one, here and below: against the hands' shake the
-    // plates hold the deposit under its top few millimetres, which the
-    // surface flow moves. Sand on a pocket rests on it (on_pocket).
-    if bs>0.&&!on_pocket(x,column.top)&&dot(required_support(bi,b.xy/bs,0.),normal)<0.{release_bed(bi);return;}
+    // The top cell is released when it would need tension to stay, after
+    // accounting for out-of-plane glass-plate Coulomb friction when tilted
+    // toward flat (`plate_gravity > 0`). Support is the vertical one, here and
+    // below: against the hands' shake the plates hold the deposit under its top
+    // few millimetres, which the surface flow moves. Sand on a pocket rests on
+    // it (on_pocket).
+    if bs>0.&&!on_pocket(x,column.top){
+        let share=b.xy/bs;
+        let plate_hold=.4*dot(share,RHO.yz-vec2<f32>(RHO.x))*plate_gravity();
+        if dot(required_support(bi,share,0.),normal)+plate_hold<0.{release_bed(bi);return;}
+    }
     var first=column.open;
     // Where the front starts. A free layer thinner than a grain on the bed's
     // top cell holds no grain, and a face that gas closes to the finest
