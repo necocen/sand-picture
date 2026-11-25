@@ -37,6 +37,7 @@ enum State {
 struct Shown {
     updates: u64,
     mode: Mode,
+    flipped: bool,
     at: Instant,
 }
 
@@ -209,7 +210,7 @@ impl App for SandPicture {
 
     fn tick(&mut self, ctx: &mut TickContext<'_>) {
         if let State::Running(product) = &mut self.state {
-            product.set_sensor_gravity(self.sensor.gravity());
+            product.update_sensor(self.sensor.gravity(), self.sensor.take_os_flip_180());
             product.tick(ctx);
             // Whoever ran the update (the clock, or a tool through the
             // agent), the window now shows an older state.
@@ -236,28 +237,36 @@ impl App for SandPicture {
             self.shown = None;
         }
         let State::Running(product) = &mut self.state else {
-            self.screen.encode(ctx, false, (0.0, 0.0));
+            self.screen.encode(ctx, false, (0.0, 0.0), false);
             return;
         };
         // A reset asked for while the time is stopped shows at once.
         if product.apply_pending(ctx.gpu) {
             self.shown = None;
         }
-        let stale = self
+        let flipped = product.view_flipped();
+        let stale = self.shown.as_ref().is_none_or(|shown| {
+            shown.updates != product.updates()
+                || shown.mode != self.mode
+                || shown.flipped != flipped
+        });
+        let flip_changed = self
             .shown
             .as_ref()
-            .is_none_or(|shown| shown.updates != product.updates() || shown.mode != self.mode);
+            .is_some_and(|shown| shown.flipped != flipped);
         let now = Instant::now();
-        let due = self
-            .shown
-            .as_ref()
-            .is_none_or(|shown| now.duration_since(shown.at) >= PICTURE_INTERVAL);
+        let due = flip_changed
+            || self
+                .shown
+                .as_ref()
+                .is_none_or(|shown| now.duration_since(shown.at) >= PICTURE_INTERVAL);
         let shake = product.shake_pose();
         if stale && due {
             product.draw(ctx.encoder, self.screen.image(), self.mode);
             self.shown = Some(Shown {
                 updates: product.updates(),
                 mode: self.mode,
+                flipped,
                 at: now,
             });
         } else if stale {
@@ -265,7 +274,8 @@ impl App for SandPicture {
             // if no further update asks for a frame.
             self.request_redraw();
         }
-        self.screen.encode(ctx, true, shake);
+        let shown_flipped = self.shown.as_ref().is_some_and(|shown| shown.flipped);
+        self.screen.encode(ctx, true, shake, shown_flipped);
     }
 
     fn gui(&mut self, root: &mut egui::Ui) {

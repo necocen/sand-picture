@@ -206,7 +206,9 @@ impl Panel {
                             SensorState::Off | SensorState::Unavailable => "Tilt",
                         };
                         let hint = match readout.sensor {
-                            SensorState::Active => "Gravity follows device tilt and shake (G)",
+                            SensorState::Active => {
+                                "Gravity follows device tilt, shake, and upside-down flip (G)"
+                            }
                             SensorState::Starting => "Waiting for motion sensor readings (G)",
                             SensorState::NeedsTap => {
                                 "Tap the button at the bottom to allow motion sensor access"
@@ -215,7 +217,7 @@ impl Panel {
                                 "Motion sensor permission denied; click to retry (G)"
                             }
                             SensorState::Off | SensorState::Unavailable => {
-                                "Use device tilt and shake for gravity (G)"
+                                "Use device tilt, shake, and upside-down flip for gravity (G)"
                             }
                         };
                         if ui.checkbox(&mut tilt, label).on_hover_text(hint).changed() {

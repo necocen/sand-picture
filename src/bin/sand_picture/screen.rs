@@ -17,7 +17,7 @@ const FIT_WGSL: &str = r"
 struct Fit {
     // (center_x, center_y, half_w, half_h) in NDC.
     rect: vec4<f32>,
-    // (border_strength, inv_quad_w, inv_quad_h, 0.0).
+    // (border_strength, inv_quad_w, inv_quad_h, flipped_180).
     frame: vec4<f32>,
 }
 
@@ -45,7 +45,8 @@ fn vertex(@builtin(vertex_index) index: u32) -> Corner {
         fit.rect.x + (2.0 * uv.x - 1.0) * fit.rect.z,
         fit.rect.y + (1.0 - 2.0 * uv.y) * fit.rect.w,
     );
-    return Corner(vec4<f32>(pos, 0.0, 1.0), uv);
+    let tex_uv = select(uv, vec2<f32>(1.0) - uv, fit.frame.w > 0.5);
+    return Corner(vec4<f32>(pos, 0.0, 1.0), tex_uv);
 }
 
 @fragment
@@ -161,8 +162,15 @@ impl Screen {
 
     /// The window's frame: its surround and, when there is one, the kept
     /// picture at the largest size of its shape that fits, displaced by
-    /// `shake = (offset_frac, envelope)` while the tank is being shaken.
-    pub fn encode(&self, ctx: &mut RenderContext<'_, ()>, picture: bool, shake: (f32, f32)) {
+    /// `shake = (offset_frac, envelope)` while shaken and optionally rotated
+    /// 180 degrees (`flipped`) when an upside-down device did not auto-rotate.
+    pub fn encode(
+        &self,
+        ctx: &mut RenderContext<'_, ()>,
+        picture: bool,
+        shake: (f32, f32),
+        flipped: bool,
+    ) {
         let attachment = ctx.color_attachment(wgpu::Operations {
             load: wgpu::LoadOp::Clear(SURROUND),
             store: wgpu::StoreOp::Store,
@@ -182,7 +190,7 @@ impl Screen {
                 env,
                 1.0 / quad[0],
                 1.0 / quad[1],
-                0.0,
+                if flipped { 1.0 } else { 0.0 },
             ];
             let bytes: Vec<u8> = params.into_iter().flat_map(f32::to_le_bytes).collect();
             ctx.gpu.queue.write_buffer(&self.fit_params, 0, &bytes);

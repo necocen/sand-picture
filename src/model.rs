@@ -387,6 +387,11 @@ impl Model {
         begins
     }
 
+    /// True while a turn is currently ramping gravity.
+    pub fn is_turning(&self) -> bool {
+        matches!(self.motion, Some(Motion::Turn { .. }))
+    }
+
     /// Begin shaking the picture left and right, unless the hands are at a
     /// shake or a turn already.
     pub fn start_shake(&mut self) {
