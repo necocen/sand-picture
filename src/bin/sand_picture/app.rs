@@ -228,7 +228,7 @@ impl App for SandPicture {
             self.shown = None;
         }
         let State::Running(product) = &mut self.state else {
-            self.screen.encode(ctx, false);
+            self.screen.encode(ctx, false, (0.0, 0.0));
             return;
         };
         // A reset asked for while the time is stopped shows at once.
@@ -244,6 +244,7 @@ impl App for SandPicture {
             .shown
             .as_ref()
             .is_none_or(|shown| now.duration_since(shown.at) >= PICTURE_INTERVAL);
+        let shake = product.shake_pose();
         if stale && due {
             product.draw(ctx.encoder, self.screen.image(), self.mode);
             self.shown = Some(Shown {
@@ -256,7 +257,7 @@ impl App for SandPicture {
             // if no further update asks for a frame.
             self.request_redraw();
         }
-        self.screen.encode(ctx, true);
+        self.screen.encode(ctx, true, shake);
     }
 
     fn gui(&mut self, root: &mut egui::Ui) {

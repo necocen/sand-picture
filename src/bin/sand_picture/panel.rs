@@ -181,10 +181,10 @@ impl Panel {
                         command = Some(Command::Reset);
                     }
                     let mut auto = readout.auto_flip;
-                    let auto_w = line(ui, "Auto", egui::TextStyle::Button).size().x + 28.0;
+                    let auto_w = line(ui, "Auto Turn", egui::TextStyle::Button).size().x + 28.0;
                     divider(ui, auto_w);
                     if ui
-                        .checkbox(&mut auto, "Auto")
+                        .checkbox(&mut auto, "Auto Turn")
                         .on_hover_text(
                             "Automatically turn the picture over once sand finishes falling (A)",
                         )

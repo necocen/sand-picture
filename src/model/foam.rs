@@ -26,11 +26,10 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 
-/// Default target total air area (cells^2) matching the polydisperse single-layer foam:
-/// at capillary thickness ~2.1 cells (`FOAM_SIGMA = 0.0170`), worst-case flat
-/// horizontal span stays <= ~218/270 (~81%), guaranteeing open shifting throats
-/// above granular arching width even on a flat sand underside or across flips.
-pub const DEFAULT_AIR_AREA: f32 = 435.0;
+/// Default target total air area (cells^2) matching the polydisperse single-layer foam
+/// (108% of the earlier 435 cells^2 baseline): richer bubble barrier while keeping
+/// worst-case horizontal span safely below wall-to-wall sealing across flips.
+pub const DEFAULT_AIR_AREA: f32 = 470.0;
 /// Bounds for dynamic user air adjustment (cells^2).
 pub const MIN_AIR_AREA: f32 = 150.0;
 pub const MAX_AIR_AREA: f32 = 720.0;

@@ -379,6 +379,26 @@ impl Model {
         }
     }
 
+    /// Current horizontal tank displacement as a fraction of tank width
+    /// (`[-d/W, +d/W]`) and smooth lift envelope (`[0, 1]`) while shaken,
+    /// matching the physical `d sin(2 pi f t)` frame motion; `(0, 0)` at rest.
+    pub fn shake_pose(&self) -> (f32, f32) {
+        use std::f32::consts::PI;
+        let Some(Motion::Shake { elapsed }) = self.motion else {
+            return (0.0, 0.0);
+        };
+        let t = elapsed.clamp(0.0, SHAKE_SECONDS);
+        let omega = 2.0 * PI * SHAKE_FREQUENCY;
+        let disp = SHAKE_DISPLACEMENT * (omega * t).sin() / (TANK[0] as f32);
+        let ease_out = |x: f32, span: f32| {
+            let u = (x / span).clamp(0.0, 1.0);
+            let inv = 1.0 - u;
+            1.0 - inv * inv * inv
+        };
+        let env = ease_out(t, 0.10) * ease_out(SHAKE_SECONDS - t, 0.10);
+        (disp, env)
+    }
+
     /// Advance the hands' motion by one update, before that update is
     /// encoded: writes the update's apparent gravity and returns whether the
     /// grid must be mirrored first.

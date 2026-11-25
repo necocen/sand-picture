@@ -138,6 +138,12 @@ impl Product {
         self.shake_pending = true;
     }
 
+    /// Current horizontal shake displacement (fraction of tank width) and lift
+    /// envelope (`[0, 1]`) for visual tank motion.
+    pub fn shake_pose(&self) -> (f32, f32) {
+        self.model.shake_pose()
+    }
+
     /// Back to the scene at rest, turned over at once.
     pub fn reset(&mut self) {
         self.reset_pending = true;
