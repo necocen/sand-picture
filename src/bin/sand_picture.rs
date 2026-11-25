@@ -22,7 +22,7 @@ const WINDOW: [u32; 2] = [720, 480];
 
 fn main() {
     let config = RunConfig::<()> {
-        title: "Sand Picture (Proto A)".into(),
+        title: "Sand Picture".into(),
         width: WINDOW[0],
         height: WINDOW[1],
         // WebGPU's default limits and nothing above them: the same model
