@@ -6,32 +6,33 @@ views draw with `tests/baseline/hashes.txt`, bit for bit. It needs the GPU, so
 run it outside a sandbox. The app and the check use the same model, the same
 views and WebGPU's default limits; the check holds no second physics.
 
-What a run does, in the picture's own time (an update is 8 ms):
+For four-wall 90° transpose verification (`216×144 ↔ 144×216`, sideways settle,
+sideways 180° flip, CW/CCW return), run `mise run check-rotation`
+(`cargo run --release --example rotation_check`).
+
+What `check` does, in the picture's own time (an update is 8 ms):
 
 | Step | Checkpoints |
 |---|---|
-| The picture rests, is turned over at once and runs | 0 s, 1 s (the turn mirrors the grid), 5 s: updates 0, 125, 625 |
-| It is turned over again | 6 s, as the grid is mirrored with the sand up: `turned 750` |
+| The picture rests, is turned over at once (grid mirrored on update 1, 0.5 s gravity ramp) and runs | 0 s, 1 s, 5 s: updates 0, 125, 625 |
+| It is turned over again | 6 s (`turned 750`) |
 | It is reset and shaken as it rests | a second into the shake: `shaken 125` |
 | It is reset, as with the app's Reset | 0, 1 and 5 s again: they must equal the first three |
 | It is reset again and given the state it had one update before the turn mirrored the grid | 5 s: it must equal the first run's |
 | `--full` (`mise run check-full`) runs on from that state | 15, 30 and 60 s: updates 1875, 3750, 7500 |
 
-A checkpoint is the SHA-256 of ten things: the seven buffers of the picture's
-state (`cells`, `geometry`, `faces`, `stream`, `terrain`, `strata` and
-`labels`) and the raw RGBA pixels of the three views at 1440 x 960 (`image`
+A checkpoint is the SHA-256 of eleven things: the eight buffers of the picture's
+state (`cells`, `geometry`, `faces`, `stream`, `terrain`, `strata`, `labels`
+and `foam`) and the raw RGBA pixels of the three views at 1440 × 960 (`image`
 is Photoreal, then `simple` and `flow`). The views are drawn before the
-buffers are read, so a view that wrote to the model would show. Of the
-`labels` only the parts two runs agree in are taken (the union-find's nodes,
-each cell's counts and word): the records of its bubbles are numbered in the
-order the GPU's threads reach them, and two runs of one build differ there
-while everything else is equal.
+buffers are read, so a view that wrote to the model would show. Of `labels`,
+only the parts two runs agree in are taken (`Buffers::agreeing_labels`).
 
 The state is what a model needs to go on as the model that wrote it
 (`Buffers::state`); every other buffer is a constant or is written by an
 update before the update reads it, and is neither saved nor compared. The
-fourth step holds the check to that: the model's other buffers then hold what
-a reset and its preparation left, its turn is brought to the same point by
+restore step holds the check to that: the model's other buffers hold what a
+reset and its preparation left, its turn is brought to the same point by
 advancing a new one without running updates, and its next update mirrors the
 grid.
 
@@ -66,6 +67,6 @@ PNG (`records/` is ignored by git). Look at the pictures, at 1, 5, 15, 30 and
 then. Pictures are not kept in the repository.
 
 The baseline holds for one environment: the hashes here were recorded on an
-Apple M1 Max with macOS 27.2.1, Rust 1.95.0 and wgpu and naga 30.0.1. Before any
-of these is raised, record a candidate in the new environment first, with the
-code unchanged.
+Apple M1 Max (Metal, macOS), Rust 1.95.0 and wgpu and naga 30.0.1 on the
+216 × 144 grid. Before any of these is raised, record a candidate in the new
+environment first, with the code unchanged.

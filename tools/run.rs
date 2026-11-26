@@ -11,7 +11,7 @@
 //! `--reset` returns the model to the scene at rest after the named updates
 //! (before a turn named for the same update), as the app's reset does. `--steps` is the number of the last update. `--dump` writes the
 //! picture's state (the cells, the geometry rows, the faces, the flow, the
-//! bed's columns, the strata and the labels) after the listed updates into
+//! bed's columns, the strata, the labels and the foam) after the listed updates into
 //! `OUTPUT/step-NNNNN/`; `--light EVERY` writes the cells and the bed's
 //! columns every EVERY updates. `--views` adds the three views' pictures to
 //! each dump, as raw RGBA and as PNG (`image` is Photoreal, the name the
