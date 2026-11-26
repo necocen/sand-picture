@@ -18,8 +18,9 @@ pub struct Transport {
     release: usize,
     /// Before the carry: each cell's grains and body membership (plug_record).
     record: usize,
-    /// After the carry: the kinematic descent of packed bodies (plug_descent).
-    plug: usize,
+    /// After the carry: the kinematic descent of packed bodies (`plug_supply`
+    /// then `plug_walk`).
+    plug: [usize; 2],
     /// The schedule: reset, reduce and finish before the carry, advance after
     /// each slot.
     schedule: [usize; 3],
@@ -47,7 +48,10 @@ impl Transport {
             ],
             release: plans.add(model("free_powder", groups)),
             record: plans.add(model("plug_record", groups)),
-            plug: plans.add(model("plug_descent", 1)),
+            plug: [
+                plans.add(model("plug_supply", 1)),
+                plans.add(model("plug_walk", 1)),
+            ],
             common_reconstruct: plans.add(Plan::new(Program::Model, "reconstruct_common", groups)),
             schedule: [
                 plans.add(scheduled("reset", 1)),
@@ -82,6 +86,6 @@ impl Transport {
 
     /// Once per update: let the voids the carry left in packed bodies rise.
     pub fn plug_descent(&self) -> Vec<usize> {
-        vec![self.plug]
+        self.plug.to_vec()
     }
 }

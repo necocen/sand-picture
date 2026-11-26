@@ -62,6 +62,8 @@ var<workgroup> sh_step_alive: u32;
 var<workgroup> sh_bmin: array<vec2<f32>, MAX_BUBBLES>;
 var<workgroup> sh_bmax: array<vec2<f32>, MAX_BUBBLES>;
 var<workgroup> sh_alive: array<u32, MAX_BUBBLES>;
+var<workgroup> sh_best_j: array<u32, MAX_BUBBLES>;
+var<workgroup> sh_drain_rate: array<f32, MAX_BUBBLES>;
 
 fn foam_solid_cell(cx: i32, cy: i32) -> f32 {
     let p = clamp(vec2<i32>(cx, cy), vec2<i32>(0), vec2<i32>(i32(cfg.nx) - 1, i32(cfg.ny) - 1));
@@ -638,19 +640,27 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
                 }
             }
         }
-        if best_j != 0xffffffffu && best_j == foam_next[tid].drain_partner {
-            foam_next[tid].drain_time = foam_next[tid].drain_time + drain_rate * cfg.dt;
-        } else {
-            foam_next[tid].drain_partner = best_j;
-            foam_next[tid].drain_time = 0.0;
-        }
+        sh_best_j[tid] = best_j;
+        sh_drain_rate[tid] = drain_rate;
+    } else if tid < MAX_BUBBLES {
+        sh_best_j[tid] = 0xffffffffu;
+        sh_drain_rate[tid] = 0.0;
     }
-    storageBarrier();
     workgroupBarrier();
 
-    // Thread 0 performs size-dependent film-drainage coalescence, Rayleigh-Taylor
-    // breakup of over-wide rising ribbons after a flip, and slot coloring.
+    // Thread 0 updates film-drainage timers, performs size-dependent coalescence,
+    // Rayleigh-Taylor breakup of over-wide rising ribbons after a flip, and slot coloring.
     if tid == 0u {
+        for (var i = 0u; i < MAX_BUBBLES; i++) {
+            if sh_alive[i] == 0u { continue; }
+            let best_j = sh_best_j[i];
+            if best_j != 0xffffffffu && best_j == foam_next[i].drain_partner {
+                foam_next[i].drain_time = foam_next[i].drain_time + sh_drain_rate[i] * cfg.dt;
+            } else {
+                foam_next[i].drain_partner = best_j;
+                foam_next[i].drain_time = 0.0;
+            }
+        }
         // A. Film-drainage coalescence (Reynolds/Stefan law): deformable bubbles
         // (area >= 2.0 cells^2) pressed together for >= 2.5 s merge into wider flat
         // horizontal air pockets (up to 26.0 cells^2 vertically, 18.0 laterally so
@@ -848,10 +858,14 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             }
         }
     }
-    storageBarrier();
-    workgroupBarrier();
+}
 
-    // Commit ping-ponged bubbles to `foam` and record component areas in `labels`.
+// 2b. Commit ping-ponged bubbles (`foam_next -> foam`) and record component areas
+// in `labels` as a separate dispatch so the compute-pass barrier synchronises storage
+// writes cleanly without `storageBarrier()`.
+@compute @workgroup_size(128)
+fn foam_commit(@builtin(local_invocation_id) lid: vec3<u32>) {
+    let tid = lid.x;
     if tid < MAX_BUBBLES {
         foam[tid] = foam_next[tid];
         let area_u = select(0u, u32(round(foam_next[tid].target_area * LABEL_AREA_UNIT)), foam_next[tid].alive != 0u);
@@ -1061,8 +1075,7 @@ fn rotate_foam_ccw(@builtin(global_invocation_id) id: vec3<u32>) {
     rotate_foam_quarter(id.x, false);
 }
 
-// Shared scratch for `foam_adjust_air` and `measure_sand`.
-var<workgroup> sh_air_scale: f32;
+// Shared scratch for `measure_sand`.
 var<workgroup> sh_sum_total: array<f32, 256>;
 var<workgroup> sh_sum_bed: array<f32, 256>;
 var<workgroup> sh_sum_above: array<f32, 256>;
@@ -1194,40 +1207,35 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
                 scale = clamp((total + rem) / total, 1.0, 1.35);
             }
         }
-        sh_air_scale = scale;
-    }
-    storageBarrier();
-    workgroupBarrier();
-
-    if tid < MAX_BUBBLES {
-        let scale = sh_air_scale;
-        if foam[tid].alive != 0u && abs(scale - 1.0) > 1e-5 {
-            let new_a = foam[tid].target_area * scale;
-            if new_a < 0.70 {
-                foam[tid].alive = 0u;
-                foam[tid].target_area = 0.0;
-                foam[tid].disp_vel = vec2<f32>(0.0);
-            } else {
-                let cent = foam[tid].centroid;
-                let rs = sqrt(scale);
-                var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
-                var bmax = vec2<f32>(0.0);
-                for (var m = 0u; m < FOAM_VERTS; m++) {
-                    let p = clamp(
-                        cent + (foam[tid].verts[m] - cent) * rs,
-                        vec2<f32>(FOAM_WALL_PAD),
-                        vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
-                    );
-                    foam[tid].verts[m] = p;
-                    bmin = min(bmin, p);
-                    bmax = max(bmax, p);
+        for (var bi = 0u; bi < MAX_BUBBLES; bi++) {
+            if foam[bi].alive != 0u && abs(scale - 1.0) > 1e-5 {
+                let new_a = foam[bi].target_area * scale;
+                if new_a < 0.70 {
+                    foam[bi].alive = 0u;
+                    foam[bi].target_area = 0.0;
+                    foam[bi].disp_vel = vec2<f32>(0.0);
+                } else {
+                    let cent = foam[bi].centroid;
+                    let rs = sqrt(scale);
+                    var bmin = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
+                    var bmax = vec2<f32>(0.0);
+                    for (var m = 0u; m < FOAM_VERTS; m++) {
+                        let p = clamp(
+                            cent + (foam[bi].verts[m] - cent) * rs,
+                            vec2<f32>(FOAM_WALL_PAD),
+                            vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
+                        );
+                        foam[bi].verts[m] = p;
+                        bmin = min(bmin, p);
+                        bmax = max(bmax, p);
+                    }
+                    foam[bi].target_area = new_a;
+                    foam[bi].bbox_min = bmin;
+                    foam[bi].bbox_max = bmax;
                 }
-                foam[tid].target_area = new_a;
-                foam[tid].bbox_min = bmin;
-                foam[tid].bbox_max = bmax;
             }
+            foam_next[bi] = foam[bi];
         }
-        foam_next[tid] = foam[tid];
     }
 }
 

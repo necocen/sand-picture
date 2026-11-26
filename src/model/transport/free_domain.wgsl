@@ -10,8 +10,12 @@ fn free_wet(c:Cell)->f32{
 // The deposit's share of the cell's wet part, through the smaller of the
 // two: b/(b+w) can round below one where b+w rounds to b (relaxed
 // reciprocals), a water film over a full bed that no stored water makes.
+// A film thinner than 1e-4 of a cell (< 0.055 um, far below a grain) is
+// floating-point subtraction residue that would otherwise create a 1e16
+// singular resistance weight (weight / area^2) in the f32 stream solve.
 fn occupied_wet_fraction(c:Cell)->f32{
     if c.bed.z<=0.{return 0.;}let free=free_wet(c);let total=c.bed.z+free;
+    if free<=1e-4*total{return 1.;}
     if c.bed.z>=free{return 1.-free/total;}
     return c.bed.z/total;
 }

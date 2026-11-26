@@ -301,6 +301,17 @@ var<workgroup> sums:array<vec2<f32>,128>;
 var<workgroup> x:array<f32,POINT_THREADS>;
 var<workgroup> r:array<f32,POINT_THREADS>;
 var<workgroup> direction:array<f32,POINT_THREADS>;
+// Workgroup-staged coarse V-cycle state: holds `solution` for all levels in
+// `coarse_cycle` (<= 1152 points), the active level's `residual` (<= 1024),
+// and `rhs` for levels below the entry level (<= 320). Staging in workgroup
+// memory avoids `storageBarrier()` inside single-workgroup loops (which hits
+// Apple Metal load-reordering bugs) and keeps every coarse sweep on-chip.
+const COARSE_SOL_CAP:u32=1152u;
+const COARSE_RES_CAP:u32=1024u;
+const COARSE_RHS_CAP:u32=320u;
+var<workgroup> coarse_sol:array<f32,COARSE_SOL_CAP>;
+var<workgroup> coarse_res:array<f32,COARSE_RES_CAP>;
+var<workgroup> coarse_rhs:array<f32,COARSE_RHS_CAP>;
 // Two workgroup sums in one tree: each component adds in the order of a
 // single sum. The tree spans the first 128 threads, which hold every point
 // of the coarsest level; the others wait at its barriers.
@@ -314,26 +325,60 @@ fn sparse_product(l:Level,i:u32)->f32 {
 // The Jacobi preconditioner, from the operator's present diagonal: an
 // inverse cached earlier is wrong once a passage has closed.
 fn coarse_response(l:Level,i:u32,n:u32)->f32{if i<n{return r[i]/entry(l,i,i);}return 0.;}
+fn coarse_rhs_value(l:Level,base:u32,rhs_base:u32,i:u32)->f32{
+    if l.offset==base{return rows[l.offset+i].rhs;}
+    return coarse_rhs[l.offset-rhs_base+i];
+}
+fn coarse_row_product(l:Level,base:u32,i:u32,diagonal:bool)->f32 {
+    let p=vec2<i32>(i32(i%l.nx),i32(i/l.nx));let last=vec2<i32>(i32(l.nx)-1,i32(l.ny)-1);
+    let j=l.offset+i;let sbase=l.offset-base;
+    let x0=u32(clamp(p.x-2,0,last.x));let x1=u32(clamp(p.x-1,0,last.x));let x2=u32(p.x);
+    let x3=u32(clamp(p.x+1,0,last.x));let x4=u32(clamp(p.x+2,0,last.x));
+    let y0=sbase+u32(clamp(p.y-2,0,last.y))*l.nx;let y1=sbase+u32(clamp(p.y-1,0,last.y))*l.nx;let y2=sbase+u32(p.y)*l.nx;
+    let y3=sbase+u32(clamp(p.y+1,0,last.y))*l.nx;let y4=sbase+u32(clamp(p.y+2,0,last.y))*l.nx;
+    var value=0.;
+    value+=rows[j].a[0]*coarse_sol[y0+x0];value+=rows[j].a[1]*coarse_sol[y0+x1];value+=rows[j].a[2]*coarse_sol[y0+x2];value+=rows[j].a[3]*coarse_sol[y0+x3];value+=rows[j].a[4]*coarse_sol[y0+x4];
+    value+=rows[j].a[5]*coarse_sol[y1+x0];value+=rows[j].a[6]*coarse_sol[y1+x1];value+=rows[j].a[7]*coarse_sol[y1+x2];value+=rows[j].a[8]*coarse_sol[y1+x3];value+=rows[j].a[9]*coarse_sol[y1+x4];
+    value+=rows[j].a[10]*coarse_sol[y2+x0];value+=rows[j].a[11]*coarse_sol[y2+x1];if diagonal{value+=rows[j].a[12]*coarse_sol[y2+x2];}value+=rows[j].a[13]*coarse_sol[y2+x3];value+=rows[j].a[14]*coarse_sol[y2+x4];
+    value+=rows[j].a[15]*coarse_sol[y3+x0];value+=rows[j].a[16]*coarse_sol[y3+x1];value+=rows[j].a[17]*coarse_sol[y3+x2];value+=rows[j].a[18]*coarse_sol[y3+x3];value+=rows[j].a[19]*coarse_sol[y3+x4];
+    value+=rows[j].a[20]*coarse_sol[y4+x0];value+=rows[j].a[21]*coarse_sol[y4+x1];value+=rows[j].a[22]*coarse_sol[y4+x2];value+=rows[j].a[23]*coarse_sol[y4+x3];value+=rows[j].a[24]*coarse_sol[y4+x4];
+    return value;
+}
+fn coarse_smooth_colour(l:Level,base:u32,rhs_base:u32,color:u32,t:u32){
+    let cx=color%3u;let cy=color/3u;let across=(l.nx-cx+2u)/3u;let points=across*((l.ny-cy+2u)/3u);
+    let sbase=l.offset-base;
+    for(var k=t;k<points;k+=POINT_THREADS){
+        let y=cy+3u*(k/across);if y>=l.ny{continue;}let i=y*l.nx+cx+3u*(k%across);
+        let diagonal=rows[l.offset+i].a[12];
+        if diagonal>0.{coarse_sol[sbase+i]=(coarse_rhs_value(l,base,rhs_base,i)-coarse_row_product(l,base,i,false))/diagonal;}
+    }
+}
+fn coarse_interpolation(l:Level,p:vec2<i32>,parent:vec2<i32>)->f32{
+    if !valid(p,l.nx,l.ny)||!valid(parent,l.cx,l.cy){return 0.;}
+    let distance=abs(p-2*parent);
+    if any(distance>vec2<i32>(1)){return 0.;}
+    return (1.-.5*f32(distance.x))*(1.-.5*f32(distance.y));
+}
 // Conjugate gradients on the coarsest level, one point per invocation: at
 // most eight steps, ended by a residual 1e-6 of the first or by a direction
 // without positive energy.
-fn solve_coarsest(l:Level,i:u32){
+fn solve_coarsest(l:Level,base:u32,rhs_base:u32,i:u32){
     let n=l.nx*l.ny;
-    x[i]=0.;r[i]=0.;direction[i]=0.;if i<n{r[i]=rows[l.offset+i].rhs;}workgroupBarrier();
+    x[i]=0.;r[i]=0.;direction[i]=0.;if i<n{r[i]=coarse_rhs_value(l,base,rhs_base,i);}workgroupBarrier();
     // r.r decides whether to go on, r.z is the step's numerator; both are
     // summed together after each update of r.
     var previous=1.;var z=coarse_response(l,i,n);var sums=totals(vec2<f32>(r[i]*r[i],r[i]*z),i);
     let initial=sums.x;
     for(var step=0u;step<8u;step++){
-        if sums.x<=initial*1e-12||initial<=1e-30{break;}
-        let rz=sums.y;var beta=0.;if step>0u&&previous>1e-30{beta=clamp(rz/previous,0.,1e6);}
+        if sums.x<=initial*1e-12||!(initial>0.&&initial<1e34){break;}
+        let rz=sums.y;var beta=0.;if step>0u&&previous>0.&&previous<1e34{beta=clamp(rz/previous,0.,1e6);}
         direction[i]=z+beta*direction[i];workgroupBarrier();var ad=0.;
         if i<n{ad=sparse_product(l,i);}
-        let denominator=totals(vec2<f32>(direction[i]*ad,0.),i).x;if denominator<=1e-30{break;}let alpha=clamp(rz/denominator,-1e6,1e6);
+        let denominator=totals(vec2<f32>(direction[i]*ad,0.),i).x;if !(denominator>0.&&denominator<1e34){break;}let alpha=clamp(rz/denominator,-1e6,1e6);
         x[i]+=alpha*direction[i];r[i]-=alpha*ad;workgroupBarrier();previous=rz;
         z=coarse_response(l,i,n);sums=totals(vec2<f32>(r[i]*r[i],r[i]*z),i);
     }
-    if i<n{solution[l.offset+i]=x[i];}
+    if i<n{coarse_sol[l.offset-base+i]=x[i];}
 }
 // Entry k: level k's size and offset, zero past the coarsest.
 @group(0) @binding(10) var<storage,read_write> hierarchy:array<vec4<u32>>;
@@ -341,32 +386,54 @@ fn hierarchy_level(k:u32)->Level{
     let level=hierarchy[k];let coarse=hierarchy[k+1u];
     return Level(level.x,level.y,level.z,coarse.x,coarse.y,coarse.z);
 }
-fn smooth_colour(l:Level,color:u32,t:u32){
-    let cx=color%3u;let cy=color/3u;let points=((l.nx-cx+2u)/3u)*((l.ny-cy+2u)/3u);
-    for(var k=t;k<points;k+=POINT_THREADS){relax_point(l,color,k);}
-}
 // The cycle's levels from hierarchy[0] down in one workgroup and one
 // dispatch (a small level's dispatches cost more than its work), in the
 // dispatched cycle's order: each level's nine colours, its residual and the
 // restriction, the coarsest level's conjugate gradients, then each level's
-// prolongation and its colours in reverse. A storage barrier stands where
-// the dispatched cycle has a dispatch boundary. The configuration's colour
-// is the number of levels smoothed above the coarsest: a uniform count, so
-// that the barriers stand in uniform control flow.
+// prolongation and its colours in reverse. All intermediate fields stay in
+// workgroup memory with pure workgroupBarrier() synchronisation; `solution`
+// is written once at the end.
 @compute @workgroup_size(POINT_THREADS) fn coarse_cycle(@builtin(local_invocation_index) t:u32){
     let smoothed=cfg.color;
+    let l0=hierarchy_level(0u);
+    let base=l0.offset;
+    let rhs_base=select(base,hierarchy_level(1u).offset,smoothed>0u);
+    let last=hierarchy_level(smoothed);
+    let total_sol=last.offset-base+last.nx*last.ny;
+    for(var i=t;i<total_sol;i+=POINT_THREADS){coarse_sol[i]=0.;}
+    workgroupBarrier();
     for(var k=0u;k<smoothed;k++){
         let l=hierarchy_level(k);
-        /*loop: slower written out*/for(var color=0u;color<9u;color++){smooth_colour(l,color,t);storageBarrier();}
-        for(var i=t;i<l.nx*l.ny;i+=POINT_THREADS){residual_point(l,i);}storageBarrier();
-        for(var i=t;i<l.cx*l.cy;i+=POINT_THREADS){restrict_point(l,i);}storageBarrier();
+        /*loop: slower written out*/for(var color=0u;color<9u;color++){coarse_smooth_colour(l,base,rhs_base,color,t);workgroupBarrier();}
+        for(var i=t;i<l.nx*l.ny;i+=POINT_THREADS){coarse_res[i]=coarse_rhs_value(l,base,rhs_base,i)-coarse_row_product(l,base,i,true);}
+        workgroupBarrier();
+        for(var i=t;i<l.cx*l.cy;i+=POINT_THREADS){
+            let cbase=vec2<i32>(i32(i%l.cx),i32(i/l.cx))*2;var b=0.;
+            for(var ry=-1;ry<=1;ry++){for(var rx=-1;rx<=1;rx++){
+                let p=cbase+vec2<i32>(rx,ry);let weight=coarse_interpolation(l,p,cbase/2);
+                if weight>0.{b+=weight*coarse_res[at(p,l.nx)];}
+            }}
+            coarse_rhs[l.coarse-rhs_base+i]=b;coarse_sol[l.coarse-base+i]=0.;
+        }
+        workgroupBarrier();
     }
-    solve_coarsest(hierarchy_level(smoothed),t);storageBarrier();
+    solve_coarsest(last,base,rhs_base,t);
+    workgroupBarrier();
     for(var k=smoothed;k>0u;k--){
         let l=hierarchy_level(k-1u);
-        for(var i=t;i<l.nx*l.ny;i+=POINT_THREADS){prolong_point(l,i);}storageBarrier();
-        /*loop: slower written out*/for(var color=0u;color<9u;color++){smooth_colour(l,8u-color,t);storageBarrier();}
+        let sbase=l.offset-base;let cbase=l.coarse-base;
+        for(var i=t;i<l.nx*l.ny;i+=POINT_THREADS){
+            let p=vec2<i32>(i32(i%l.nx),i32(i/l.nx));var value=0.;let pbase=p/2;
+            for(var py=0;py<=1;py++){for(var px=0;px<=1;px++){
+                let parent=pbase+vec2<i32>(px,py);let weight=coarse_interpolation(l,p,parent);
+                if weight>0.{value+=weight*coarse_sol[cbase+at(parent,l.cx)];}
+            }}
+            coarse_sol[sbase+i]+=value;
+        }
+        workgroupBarrier();
+        /*loop: slower written out*/for(var color=0u;color<9u;color++){coarse_smooth_colour(l,base,rhs_base,8u-color,t);workgroupBarrier();}
     }
+    for(var i=t;i<total_sol;i+=POINT_THREADS){solution[base+i]=coarse_sol[i];}
 }
 
 // The tension's force on psi. tau = sigma |grad(alpha)| (I - n n^T), and for

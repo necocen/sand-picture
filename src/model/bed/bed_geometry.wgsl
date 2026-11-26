@@ -87,7 +87,8 @@ fn bed_edge_interval(i:u32,a:u32,side:f32)->vec2<f32>{
         let j=at(q);let l=bed_edge_interval(i,a,.5);let r=bed_edge_interval(j,a,-.5);
         let left=max(0.,l.y-l.x);let right=max(0.,r.y-r.x);
         let overlap=max(0.,min(l.y,r.y)-max(l.x,r.x));
-        let occupied=clamp(left+right-overlap,0.,1.);
+        var occupied=clamp(left+right-overlap,0.,1.);
+        if 1.-occupied<1e-4{occupied=1.;}
         let lp=geometry[BED_OCCUPANCY_ROW*cfg.n+i].y;let rp=geometry[BED_OCCUPANCY_ROW*cfg.n+j].y;
         // Where the two cells' traces overlap the denser one sets the solid;
         // apart, their solids add.

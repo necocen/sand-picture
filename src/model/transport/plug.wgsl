@@ -3,10 +3,11 @@
 // silo flow as a transport step (plug_descent). plug_record runs before the
 // carry (stage TransportPrepare), plug_descent after it (stage TraceGas).
 
-// The walk's threads, and the cells whose steps it keeps: more than a row
-// and two cells of any grid.
+// The walk's threads and column-owned row handoff capacity (covers both
+// 270x180 and 180x270).
 const PLUG_THREADS:u32=256u;
-const PLUG_KEPT:u32=384u;
+const PLUG_COLS:u32=270u;
+const PLUG_WORDS:u32=9u;
 fn plug_deposit(c:Cell)->bool{return max(c.bed.x,0.)+max(c.bed.y,0.)>0.;}
 // A packed body's cell: free grains at the critical packing of their wet
 // part or more, or a body's last layer (body_faces); no deposit, and no
@@ -83,21 +84,19 @@ fn plug_scaled(m:vec2<f32>,old:f32,now:f32)->vec2<f32>{
     if old<=0.{return vec2<f32>(0.);}
     return m*(now/old);
 }
-// The most rows of a grid (covers both 270x180 and 180x270). plug_linked: the
-// rows that hold a link. The other arrays: the steps of the last PLUG_KEPT
-// cells of the walk, a cell's at its raster index modulo PLUG_KEPT.
-const PLUG_ROWS:u32=272u;
-var<workgroup> plug_marks:array<atomic<u32>,PLUG_ROWS>;
-var<workgroup> plug_linked:array<u32,PLUG_ROWS>;
-var<workgroup> plug_ask:array<f32,PLUG_KEPT>;
-var<workgroup> plug_left:array<f32,PLUG_KEPT>;
-var<workgroup> plug_centre:array<f32,PLUG_KEPT>;
-var<workgroup> plug_right:array<f32,PLUG_KEPT>;
-var<workgroup> plug_fine:array<f32,PLUG_KEPT>;
-var<workgroup> plug_up_left:array<f32,PLUG_KEPT>;
-var<workgroup> plug_up_centre:array<f32,PLUG_KEPT>;
-var<workgroup> plug_up_right:array<f32,PLUG_KEPT>;
-var<workgroup> plug_up_fine:array<f32,PLUG_KEPT>;
+// Per-row supply scratch for `plug_supply` (row y+1's supply values).
+var<workgroup> plug_supply_row:array<f32,PLUG_COLS>;
+// Bitmask of rows holding a link (up to 288 rows) and per-column handoff
+// from row y-1 to row y for `plug_walk`. Staging all cross-thread handoff
+// in workgroup memory lets each thread exclusively own its columns' cells
+// across rows with pure workgroupBarrier() synchronisation (no storageBarrier).
+var<workgroup> plug_marks:array<atomic<u32>,PLUG_WORDS>;
+var<workgroup> plug_linked:array<u32,PLUG_WORDS>;
+var<workgroup> pw_ask:array<f32,PLUG_COLS>;
+var<workgroup> pw_down:array<vec4<f32>,PLUG_COLS>;
+var<workgroup> pw_up:array<vec4<f32>,PLUG_COLS>;
+var<workgroup> pw_vel:array<vec4<f32>,PLUG_COLS>;
+var<workgroup> pw_pow:array<u32,PLUG_COLS>;
 // The share of an ask that falls to the cell straight above the asker; a
 // wall's share folds into it (the walls are mirrors).
 fn plug_centre_weight(x:i32,k:f32)->f32{
@@ -312,93 +311,50 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
     return out;
 }
 // Cell r takes the parts that the givers at columns x-1, x and x+1 of row
-// gy pass it, with their fine shares: the grains arrive with their givers'
+// y-1 pass it, with their fine shares, velocities, and powder shares already
+// handed across workgroup memory: the grains arrive with their givers'
 // velocities and powder, and the same volume of its water leaves.
-fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
+fn plug_receive_local(
+    r:u32,
+    parts:vec3<f32>,
+    fines:vec3<f32>,
+    vf:array<vec2<f32>,3>,
+    vc:array<vec2<f32>,3>,
+    pw:array<vec2<f32>,3>,
+){
     var received=0.;var fine=0.;var coarse=0.;var fine_momentum=vec2<f32>(0.);var coarse_momentum=vec2<f32>(0.);
     var powder=vec2<f32>(0.);
     for(var d=0;d<3;d++){
         let part=parts[d];if part<=0.{continue;}
-        let giver=cells[at(vec2<i32>(x+d-1,gy))];let gg=grains(giver);
         let part_fine=part*fines[d];let part_coarse=part-part_fine;
         received+=part;fine+=part_fine;coarse+=part_coarse;
-        // A giver left with a trace of a species gives its part no velocity:
-        // the trace is what rounding left of a difference, its momentum
-        // likewise, and their quotient is no velocity.
-        if gg.x>TRACE_VOLUME{
-            fine_momentum+=part_fine*giver.momentum[1]/gg.x;
-            let share=white_powder(giver);powder+=part_fine*vec2<f32>(share.total,share.free);
-        }
-        if gg.y>TRACE_VOLUME{coarse_momentum+=part_coarse*giver.momentum[2]/gg.y;}
+        fine_momentum+=part_fine*vf[d];
+        powder+=part_fine*pw[d];
+        coarse_momentum+=part_coarse*vc[d];
     }
     if received<=0.{return;}
     let c=cells[r];let g=grains(c);let water=max(c.volume.water,0.);
-    // The coarse part is the sum of its parts: as the difference of the two
-    // sums a small coarse share is lost to rounding while its momentum
-    // arrives.
     cells[r].volume.fine=g.x+fine;cells[r].volume.coarse=g.y+coarse;
     cells[r].volume.water=max(water-received,0.);
     cells[r].momentum[0]=plug_scaled(c.momentum[0],water,max(water-received,0.));
     cells[r].momentum[1]=c.momentum[1]+fine_momentum;cells[r].momentum[2]=c.momentum[2]+coarse_momentum;
     cells[r].powder.mobile=c.powder.mobile+powder.x;cells[r].powder.free=c.powder.free+powder.y;
 }
-// The walk, one workgroup from the floor to the ceiling. In the kinematic
-// model of a thin silo (Nedderman and Tuzun 1979; K = 0.26 b, Hung,
-// Aussillous and Capart 2018) the voids left by departing grains rise
-// through the packing, spreading sideways by K per unit height, and the
-// grains above fall into them: the column over a joint comes down as a
-// plug of unchanged packing and the surface sinks into a funnel. The
-// carry's cell-mean velocities leave the deficits where they arise, to
-// loosen the column until a bubble enters it. So each link asks the three
-// cells above for its deficit, weighted k, 1-2k, k with k = K/h, and gives
-// what it is asked up to its grains; with no link above, it keeps its
-// deficit and the surface sinks. A bubble cuts a chain, the deposit ends
-// it, and sand that stands on nothing packed moves by the carry alone.
-//
-// The kinematic model is of sand that flows. Packed sand does not flow
-// until it has dilated, and the tank is closed: a void can rise only
-// through sand that has given way, to a surface that can sink. So the walk
-// has two parts. First, from the ceiling down, each cell's supply: the
-// share of a draw on it that reaches the top through links that have given
-// way (plug_flows), by the weights the walk asks with. Water that lies open
-// to the ceiling takes a column's deficit (1); a bubble, the deposit, a link
-// that has not given way and a pocket of water with sand over it pass
-// nothing on (0): the pocket would need water through the packing around it
-// to grow. Then the walk itself, in which a link gives in the measure of its
-// supply and a packed link that is drawn on gives way at the rate its roof
-// would breach (plug_give). SET_IN_ROW keeps a cell's supply and whether it
-// was a link for the next update's mechanics (void_speed).
-//
-// The cells are walked in raster order, a thread to a cell and `width`
-// cells a turn: a row a turn on a grid no wider than the workgroup, else
-// PLUG_THREADS cells, so that no thread serves two cells in a turn (a turn
-// lasts as long as its slowest thread). A cell's turn needs the steps of
-// the three cells below it and leaves the cells beside it alone: on a wider
-// grid those three lie a row less a cell back or more, in an earlier turn.
-// In its turn the cell at (x, y) passes on what row y-1 gave (down to the
-// cell at (x, y-2), up to itself), then gives in its own right; one row
-// past the top only the first remains. Each cell so takes what the row
-// below hands up, gives, and takes what the row above gives, in that order.
-@compute @workgroup_size(PLUG_THREADS) fn plug_descent(@builtin(local_invocation_id) id:vec3<u32>){
+// First half of the kinematic silo walk: from the ceiling down, each cell's
+// supply (the share of a draw on it that reaches the top through links that
+// have given way). Row y+1's supply is kept in workgroup memory so `geometry`
+// is write-only here; the dispatch boundary before `plug_walk` publishes it.
+@compute @workgroup_size(PLUG_THREADS) fn plug_supply(@builtin(local_invocation_id) id:vec3<u32>){
     let nx=i32(cfg.nx);let ny=i32(cfg.ny);let k=VOID_SPREAD/cfg.h;let t=id.x;
-    for(var y=t;y<cfg.ny;y+=PLUG_THREADS){atomicStore(&plug_marks[y],0u);}
+    for(var x=t;x<cfg.nx;x+=PLUG_THREADS){plug_supply_row[x]=1.;}
     workgroupBarrier();
-    for(var i=t;i<cfg.n;i+=4u*PLUG_THREADS){
-        var z=vec4<f32>(0.);
-        for(var u=0u;u<4u;u++){let c=i+u*PLUG_THREADS;if c<cfg.n{z[u]=scratch[PLUG_ROW*cfg.n+c].z;}}
-        for(var u=0u;u<4u;u++){let c=i+u*PLUG_THREADS;if c<cfg.n&&z[u]>0.{atomicOr(&plug_marks[c/cfg.nx],1u);}}
-    }
-    workgroupBarrier();
-    for(var y=t;y<cfg.ny;y+=PLUG_THREADS){plug_linked[y]=atomicLoad(&plug_marks[y]);}
-    workgroupBarrier();
-    let width=min(cfg.nx,PLUG_THREADS);let cells_walked=cfg.n+cfg.nx;
-    // The supply, a thread to a cell and `width` cells a turn: a cell's turn
-    // needs the three cells above it, which lie a row less a cell back or
-    // more, in an earlier turn.
-    for(var turn=0u;turn*width<cfg.n;turn++){
-        let index=turn*width+t;
-        if t<width&&index<cfg.n{
-            let i=cfg.n-1u-index;let x=i32(i%cfg.nx);let y=i32(i/cfg.nx);
+    for(var y=ny-1;y>=0;y--){
+        var s_out=vec2<f32>(0.);
+        var l_out=vec2<f32>(0.);
+        for(var stripe=0u;stripe<2u;stripe++){
+            let x=i32(t+stripe*PLUG_THREADS);
+            if x>=nx{continue;}
+            let i=at(vec2<i32>(x,y));
             let link=scratch[PLUG_ROW*cfg.n+i].z;var supply=0.;
             if link<=0.{
                 let c=cells[i];
@@ -406,66 +362,128 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
                     supply=1.;
                     if y+1<ny{
                         let j=at(vec2<i32>(x,y+1));
-                        if scratch[PLUG_ROW*cfg.n+j].z>0.||geometry[SET_IN_ROW*cfg.n+j].y<1.{supply=0.;}
+                        if scratch[PLUG_ROW*cfg.n+j].z>0.||plug_supply_row[u32(x)]<1.{supply=0.;}
                     }
                 }
             }
             if link>0.&&plug_flows(i){
                 for(var d=-1;d<=1;d++){
                     var weight=k;if d==0{weight=plug_centre_weight(x,k);}
-                    let q=vec2<i32>(x+d,y+1);
-                    if q.x<0||q.x>=nx{continue;}
+                    let qx=x+d;
+                    if qx<0||qx>=nx{continue;}
                     var above=1.;
-                    if q.y<ny{above=geometry[SET_IN_ROW*cfg.n+at(q)].y;}
+                    if y+1<ny{above=plug_supply_row[u32(qx)];}
                     supply+=weight*above;
                 }
             }
-            geometry[SET_IN_ROW*cfg.n+i].y=supply;geometry[SET_IN_ROW*cfg.n+i].z=link;
+            s_out[stripe]=supply;l_out[stripe]=link;
         }
-        storageBarrier();
+        workgroupBarrier();
+        for(var stripe=0u;stripe<2u;stripe++){
+            let x=i32(t+stripe*PLUG_THREADS);
+            if x>=nx{continue;}
+            let i=at(vec2<i32>(x,y));
+            plug_supply_row[u32(x)]=s_out[stripe];
+            geometry[SET_IN_ROW*cfg.n+i].y=s_out[stripe];
+            geometry[SET_IN_ROW*cfg.n+i].z=l_out[stripe];
+        }
+        workgroupBarrier();
     }
-    for(var first=0u;first<cells_walked;first+=width){
-        // A turn whose rows and the row below them hold no link has nothing
-        // to pass on and nothing to give.
-        let low=first/cfg.nx;let high=min((first+width-1u)/cfg.nx,cfg.ny-1u);
-        var busy=false;
-        if low>0u&&low<=cfg.ny&&workgroupUniformLoad(&plug_linked[low-1u])!=0u{busy=true;}
-        if low<cfg.ny&&workgroupUniformLoad(&plug_linked[low])!=0u{busy=true;}
-        if workgroupUniformLoad(&plug_linked[high])!=0u{busy=true;}
-        if !busy{continue;}
-        let cell=first+t;let walked=t<width&&cell<cells_walked;
-        let x=i32(cell%cfg.nx);let y=i32(cell/cfg.nx);
-        // The steps of the three cells below, if their row holds a link.
-        var asked=vec3<f32>(0.);var down=vec3<f32>(0.);var down_fine=vec3<f32>(0.);
-        var up=vec3<f32>(0.);var up_fine=vec3<f32>(0.);
-        let handed=walked&&y>0&&plug_linked[y-1]!=0u;
-        if handed{
-            let below=cell-cfg.nx;
-            if x>0{
-                let r=(below-1u)%PLUG_KEPT;
-                asked.x=plug_ask[r];down.x=plug_right[r];down_fine.x=plug_fine[r];up.x=plug_up_right[r];up_fine.x=plug_up_fine[r];
+}
+fn plug_row_linked(row:u32)->bool{
+    return ((workgroupUniformLoad(&plug_linked[row>>5u])>>(row&31u))&1u)!=0u;
+}
+// Second half of the kinematic silo walk: one workgroup from the floor to
+// one row past the ceiling, column-owned across rows so every `cells` write
+// is only ever read back by the same thread, and row y-1 -> row y handoff
+// goes exclusively through workgroup memory (`workgroupBarrier()` only).
+@compute @workgroup_size(PLUG_THREADS) fn plug_walk(@builtin(local_invocation_id) id:vec3<u32>){
+    let nx=i32(cfg.nx);let ny=i32(cfg.ny);let k=VOID_SPREAD/cfg.h;let t=id.x;
+    if t<PLUG_WORDS{atomicStore(&plug_marks[t],0u);}
+    workgroupBarrier();
+    for(var i=t;i<cfg.n;i+=4u*PLUG_THREADS){
+        var z=vec4<f32>(0.);
+        for(var u=0u;u<4u;u++){let c=i+u*PLUG_THREADS;if c<cfg.n{z[u]=scratch[PLUG_ROW*cfg.n+c].z;}}
+        for(var u=0u;u<4u;u++){
+            let c=i+u*PLUG_THREADS;
+            if c<cfg.n&&z[u]>0.{
+                let row=c/cfg.nx;
+                atomicOr(&plug_marks[row>>5u],1u<<(row&31u));
             }
-            let r=below%PLUG_KEPT;
-            asked.y=plug_ask[r];down.y=plug_centre[r];down_fine.y=plug_fine[r];up.y=plug_up_centre[r];up_fine.y=plug_up_fine[r];
-            if x+1<nx{
-                let q=(below+1u)%PLUG_KEPT;
-                asked.z=plug_ask[q];down.z=plug_left[q];down_fine.z=plug_fine[q];up.z=plug_up_left[q];up_fine.z=plug_up_fine[q];
+        }
+    }
+    workgroupBarrier();
+    if t<PLUG_WORDS{plug_linked[t]=atomicLoad(&plug_marks[t]);}
+    workgroupBarrier();
+    for(var y=0u;y<=cfg.ny;y++){
+        let has_prev=y>0u&&plug_row_linked(y-1u);
+        let has_curr=y<cfg.ny&&plug_row_linked(y);
+        if !has_prev&&!has_curr{continue;}
+        var l_asked:array<vec3<f32>,2>;
+        var l_down:array<vec3<f32>,2>;
+        var l_down_fine:array<vec3<f32>,2>;
+        var l_up:array<vec3<f32>,2>;
+        var l_up_fine:array<vec3<f32>,2>;
+        var l_vf:array<array<vec2<f32>,3>,2>;
+        var l_vc:array<array<vec2<f32>,3>,2>;
+        var l_pw:array<array<vec2<f32>,3>,2>;
+        if has_prev{
+            for(var stripe=0u;stripe<2u;stripe++){
+                let xu=t+stripe*PLUG_THREADS;
+                if xu>=cfg.nx{continue;}
+                if xu>0u{
+                    let gx=xu-1u;
+                    l_asked[stripe].x=pw_ask[gx];
+                    let dn=pw_down[gx];let up=pw_up[gx];let v=pw_vel[gx];
+                    l_down[stripe].x=dn.z;l_down_fine[stripe].x=dn.w;
+                    l_up[stripe].x=up.z;l_up_fine[stripe].x=up.w;
+                    l_vf[stripe][0]=v.xy;l_vc[stripe][0]=v.zw;l_pw[stripe][0]=unpack2x16unorm(pw_pow[gx]);
+                }
+                {
+                    let gx=xu;
+                    l_asked[stripe].y=pw_ask[gx];
+                    let dn=pw_down[gx];let up=pw_up[gx];let v=pw_vel[gx];
+                    l_down[stripe].y=dn.y;l_down_fine[stripe].y=dn.w;
+                    l_up[stripe].y=up.y;l_up_fine[stripe].y=up.w;
+                    l_vf[stripe][1]=v.xy;l_vc[stripe][1]=v.zw;l_pw[stripe][1]=unpack2x16unorm(pw_pow[gx]);
+                }
+                if xu+1u<cfg.nx{
+                    let gx=xu+1u;
+                    l_asked[stripe].z=pw_ask[gx];
+                    let dn=pw_down[gx];let up=pw_up[gx];let v=pw_vel[gx];
+                    l_down[stripe].z=dn.x;l_down_fine[stripe].z=dn.w;
+                    l_up[stripe].z=up.x;l_up_fine[stripe].z=up.w;
+                    l_vf[stripe][2]=v.xy;l_vc[stripe][2]=v.zw;l_pw[stripe][2]=unpack2x16unorm(pw_pow[gx]);
+                }
             }
         }
         workgroupBarrier();
-        if handed{
-            if y>1{plug_receive(at(vec2<i32>(x,y-2)),x,y-1,down,down_fine);}
-            if y<ny{plug_receive(at(vec2<i32>(x,y)),x,y-1,up,up_fine);}
+        for(var stripe=0u;stripe<2u;stripe++){
+            let xu=t+stripe*PLUG_THREADS;
+            if xu>=cfg.nx{continue;}
+            let x=i32(xu);let yi=i32(y);
+            if has_prev{
+                if y>1u{plug_receive_local(at(vec2<i32>(x,yi-2)),l_down[stripe],l_down_fine[stripe],l_vf[stripe],l_vc[stripe],l_pw[stripe]);}
+                if y<cfg.ny{plug_receive_local(at(vec2<i32>(x,yi)),l_up[stripe],l_up_fine[stripe],l_vf[stripe],l_vc[stripe],l_pw[stripe]);}
+            }
+            if has_curr{
+                let i=at(vec2<i32>(x,yi));let record=scratch[PLUG_ROW*cfg.n+i];
+                var step=PlugStep();if record.z>0.{step=plug_give(i,x,yi,record,k,l_asked[stripe]);}
+                let after=cells[i];let ag=grains(after);
+                var vf=vec2<f32>(0.);var vc=vec2<f32>(0.);var ps=vec2<f32>(0.);
+                if ag.x>TRACE_VOLUME{
+                    vf=after.momentum[1]/ag.x;
+                    let share=white_powder(after);
+                    ps=clamp(vec2<f32>(share.total,share.free),vec2<f32>(0.),vec2<f32>(1.));
+                }
+                if ag.y>TRACE_VOLUME{vc=after.momentum[2]/ag.y;}
+                pw_ask[xu]=step.ask;
+                pw_down[xu]=vec4<f32>(step.left,step.centre,step.right,step.fine);
+                pw_up[xu]=vec4<f32>(step.up.x,step.up.y,step.up.z,step.up_fine);
+                pw_vel[xu]=vec4<f32>(vf,vc);
+                pw_pow[xu]=pack2x16unorm(ps);
+            }
         }
-        if walked&&y<ny&&plug_linked[y]!=0u{
-            let i=at(vec2<i32>(x,y));let record=scratch[PLUG_ROW*cfg.n+i];
-            var step=PlugStep();if record.z>0.{step=plug_give(i,x,y,record,k,asked);}
-            let r=cell%PLUG_KEPT;
-            plug_ask[r]=step.ask;
-            plug_left[r]=step.left;plug_centre[r]=step.centre;plug_right[r]=step.right;plug_fine[r]=step.fine;
-            plug_up_left[r]=step.up.x;plug_up_centre[r]=step.up.y;plug_up_right[r]=step.up.z;plug_up_fine[r]=step.up_fine;
-        }
-        storageBarrier();
         workgroupBarrier();
     }
 }

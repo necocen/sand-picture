@@ -274,6 +274,7 @@ pub fn initial(scene: &Scene, target_air_area: f32) -> Vec<u8> {
 pub struct Foam {
     pub step: usize,
     pub coalesce: usize,
+    pub commit: usize,
     pub raster: usize,
     pub invert: usize,
     pub rotate_cw: usize,
@@ -288,6 +289,7 @@ impl Foam {
         Self {
             step: plans.add(Plan::new(Program::Model, "foam_step", MAX_BUBBLES as u32)),
             coalesce: plans.add(Plan::new(Program::Model, "foam_coalesce", 1)),
+            commit: plans.add(Plan::new(Program::Model, "foam_commit", 1)),
             raster: plans.add(Plan::new(Program::Model, "foam_raster", cells)),
             invert: plans.add(Plan::new(Program::Model, "invert_foam", 1)),
             rotate_cw: plans.add(Plan::new(Program::Model, "rotate_foam_cw", 1)),
@@ -297,8 +299,8 @@ impl Foam {
         }
     }
 
-    /// Full foam update: advance closed curves, coalesce stacked films, rasterize onto grid.
+    /// Full foam update: advance closed curves, coalesce stacked films, commit, rasterize onto grid.
     pub fn kernels(&self) -> Vec<usize> {
-        vec![self.step, self.coalesce, self.raster]
+        vec![self.step, self.coalesce, self.commit, self.raster]
     }
 }
