@@ -11,7 +11,7 @@
         if !valid(base)||!valid(base+axis(a)){continue;}
         let f=2u*at(base)+a;let face=faces[f];let grains=face.composition.y+face.composition.z;
         let solid=face.composition.w*grains;let opening=face.coarse_momentum.z;
-        if solid<=0.||opening<=0.{continue;}
+        if solid<1e-30||opening<=0.{continue;}
         let contrast=pressure_common_response(f);
         let mobility=face.grain_response.w+grains*face.response.w*contrast*contrast;
         if mobility<=0.{continue;}
@@ -28,10 +28,12 @@
         // old intrinsic traction over all W_new invents a large load when
         // an almost empty cell refills. This is only the constraint guess;
         // the ordinary granular solve still determines the new pressure.
-        let multiplier=frexp(history.x);let ratio=frexp(overlap/diagonal);
+        let multiplier=frexp(history.x);let ratio=frexp(clamp(overlap/diagonal,0.,1.));
         let before=frexp(history.y);let after=frexp(min(wet,history.y));
-        pressure=ldexp(multiplier.fract*ratio.fract*after.fract/before.fract,
-            multiplier.exp+ratio.exp+after.exp-before.exp);
+        if before.fract!=0.{
+            let exp=clamp(multiplier.exp+ratio.exp+after.exp-before.exp,-126,126);
+            pressure=ldexp(multiplier.fract*ratio.fract*after.fract/before.fract,exp);
+        }
     }
     cells[i].stress.pressure=pressure;cells[i].stress.load=pressure;
 }

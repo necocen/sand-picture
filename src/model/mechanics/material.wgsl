@@ -50,33 +50,40 @@ fn common_resistance(c:vec3<f32>,powder:PowderShare,plate:vec2<f32>,film:f32)->f
     let r=gap_resistance(c.yz,powder,plate,film);let slip=1.-dot(c.yz,r.entrained);
     return c.x*r.liquid*slip*slip+dot(c.yz,r.plate);
 }
-fn inverse(m:mat3x3<f32>)->mat3x3<f32> {
-    let a=cross(m[1],m[2]);let b=cross(m[2],m[0]);let c=cross(m[0],m[1]);return transpose(mat3x3<f32>(a,b,c))*(1./dot(m[0],a));
-}
-
-// The resistance per phase volume, built row by row so that nothing is
-// divided by a trace fraction. The table is read at `lookup`, the weights
-// and the absent-phase rows stay c's; predict passes c itself (its reading
-// of the packed side at a packing's face is switched off).
-fn intrinsic_resistance_lookup(c:vec3<f32>,lookup:vec3<f32>,powder:PowderShare,plate:vec2<f32>,film:f32)->mat3x3<f32> {
-    let r=gap_resistance(lookup.yz,powder,plate,film);let carried=c.yz*r.entrained;let fluid=c.x*r.liquid;
-    let water=vec3<f32>(r.liquid,-r.liquid*carried);
-    let fine=vec3<f32>(-fluid*r.entrained.x,
-        fluid*r.entrained.x*carried.x+r.plate.x+c.z*r.exchange,
-        fluid*r.entrained.x*carried.y-c.z*r.exchange);
-    let heavy=vec3<f32>(-fluid*r.entrained.y,
-        fluid*r.entrained.y*carried.x-c.y*r.exchange,
-        fluid*r.entrained.y*carried.y+r.plate.y+c.y*r.exchange);
-    return transpose(mat3x3<f32>(water,fine,heavy));
-}
 // With inertia: (R + diag(rho)/dt)^-1, an identity row for an absent phase.
+// H = A + r.liquid * u * w^T where A is block-diagonal (water inertia scalar
+// plus 2x2 grain plate+inertia+exchange block) and u*w^T is rank-1. Inverting
+// by Cramer's rule cancels O(r.liquid^3) ~ 1e36 terms in f32 when a narrow
+// bubble film (film_narrowness up to 1e4) meets packed powder, yielding a
+// negative or zero determinant (NaN). Exact Sherman-Morrison inversion keeps
+// every intermediate strictly positive and achieves full f32 precision.
 fn hydraulic_response_lookup(c:vec3<f32>,lookup:vec3<f32>,powder:PowderShare,plate:vec2<f32>,film:f32)->mat3x3<f32> {
-    var h=intrinsic_resistance_lookup(c,lookup,powder,plate,film);let mass=RHO/cfg.dt;
-    for(var j=0u;j<3u;j++) {h[j][j]+=mass[j];}
-    for(var row=0u;row<3u;row++) {
-        if c[row]==0. {for(var col=0u;col<3u;col++){h[col][row]=select(0.,1.,col==row);}}
+    let r=gap_resistance(lookup.yz,powder,plate,film);let mass=RHO/cfg.dt;
+    let p0=select(0.,1.,c.x>0.);let p1=select(0.,1.,c.y>0.);let p2=select(0.,1.,c.z>0.);
+    let a00_inv=select(1.,cfg.dt/RHO.x,c.x>0.);
+    let d1=select(1.,r.plate.x+mass.y,c.y>0.);
+    let d2=select(1.,r.plate.y+mass.z,c.z>0.);
+    let k12=select(0.,c.z*r.exchange,c.y>0.);
+    let k21=select(0.,c.y*r.exchange,c.z>0.);
+    let sc=max(max(d1,d2),max(k12,k21));
+    let sd1=d1/sc;let sd2=d2/sc;let sk12=k12/sc;let sk21=k21/sc;
+    let inv_det_s=1./(sd1*sd2+sd1*sk21+sd2*sk12);
+    let ag00=((sd2+sk21)*inv_det_s)/sc;let ag01=(sk12*inv_det_s)/sc;
+    let ag10=(sk21*inv_det_s)/sc;let ag11=((sd1+sk12)*inv_det_s)/sc;
+    if r.liquid<=0.||p0==0.{
+        return mat3x3<f32>(vec3<f32>(a00_inv,0.,0.),vec3<f32>(0.,ag00,ag10),vec3<f32>(0.,ag01,ag11));
     }
-    return inverse(h);
+    let u1=-p1*c.x*r.entrained.x;let u2=-p2*c.x*r.entrained.y;
+    let w1=-p1*c.y*r.entrained.x;let w2=-p2*c.z*r.entrained.y;
+    let q0=a00_inv;let q1=ag00*u1+ag01*u2;let q2=ag10*u1+ag11*u2;
+    let z0=a00_inv;let z1=w1*ag00+w2*ag10;let z2=w1*ag01+w2*ag11;
+    let sg=w1*q1+w2*q2;
+    let inv_r=1./r.liquid;let denom=inv_r+(a00_inv+sg);let alpha=1./denom;
+    let m00=a00_inv*((inv_r+sg)/denom);
+    let m01=-alpha*q0*z1;let m02=-alpha*q0*z2;
+    let m10=-alpha*q1*z0;let m11=ag00-alpha*q1*z1;let m12=ag01-alpha*q1*z2;
+    let m20=-alpha*q2*z0;let m21=ag10-alpha*q2*z1;let m22=ag11-alpha*q2*z2;
+    return mat3x3<f32>(vec3<f32>(m00,m10,m20),vec3<f32>(m01,m11,m21),vec3<f32>(m02,m12,m22));
 }
 fn common_resistance_lookup(c:vec3<f32>,lookup:vec3<f32>,powder:PowderShare,plate:vec2<f32>,film:f32)->f32 {
     let r=gap_resistance(lookup.yz,powder,plate,film);let slip=1.-dot(c.yz,r.entrained);
@@ -98,10 +105,11 @@ fn coarse_constraint(c:vec3<f32>,inverse_contact:f32,powder:PowderShare,plate:ve
     let p=c.y/mobile;let q=c.x/mobile;let pair=c.x*p;
     let slip=1.-dot(c.yz,r.entrained);let z=1.+c.x*r.entrained.x;
     let base_d=p*r.liquid*z*z+q*(r.plate.x+c.z*r.exchange)+(p*RHO.x+q*RHO.y)/cfg.dt;
-    var inverse_d=1./base_d;var contact_fraction=0.;
+    var inverse_d=select(0.,1./base_d,base_d>0.);var contact_fraction=0.;
     if inverse_contact>=0.{
         let added=c.z*q;let denominator=base_d*inverse_contact+added;
-        inverse_d=inverse_contact/denominator;contact_fraction=added/denominator;
+        if denominator>0.{inverse_d=inverse_contact/denominator;contact_fraction=added/denominator;}
+        else{inverse_d=0.;contact_fraction=1.;}
     }
     let l=-r.liquid*slip*z+r.plate.x+(RHO.y-RHO.x)/cfg.dt;
     let coupling=l*inverse_d;let direction=vec3<f32>(-p,q,0.);
@@ -111,7 +119,7 @@ fn coarse_constraint(c:vec3<f32>,inverse_contact:f32,powder:PowderShare,plate:ve
     let schur=c.x*r.liquid*fluid*fluid+dot(c.yz*r.plate,v.yz*v.yz)
         +c.y*c.z*r.exchange*difference*difference+dot(c*RHO,v*v)/cfg.dt
         +pair*(l*inverse_d)*l*contact_fraction;
-    return CoarseConstraint(direction,pair,1./schur,inverse_d,coupling);
+    return CoarseConstraint(direction,pair,select(0.,1./schur,schur>0.),inverse_d,coupling);
 }
 
 @group(0) @binding(8) var<storage,read_write> transport:array<Transport>;
@@ -178,7 +186,7 @@ fn particle_pressure(solid:f32,wet:f32,gamma:f32,theta:f32,compliance:f32,old_bu
     if free_theta>=dilation_rate(phi,gamma,0.){return 0.;}
     // The largest possible dilation, gamma/.48, bounds the monotone root
     // without an arbitrary stress or velocity ceiling.
-    var lo=0.;var hi=max(0.,(gamma/.48-free_theta)/compliance);
+    var lo=0.;var hi=min(max(0.,(gamma/.48-free_theta)/compliance),1e30);
     if gamma>0.{
         let strain=select(.28,.48,free_theta>=0.);
         let equilibrium_target=phi*(1.-strain*free_theta/gamma);
@@ -203,10 +211,12 @@ fn particle_pressure(solid:f32,wet:f32,gamma:f32,theta:f32,compliance:f32,old_bu
 fn particle_shear(solid:f32,wet:f32,pressure:f32,gamma:f32,mu:f32)->f32 {
     if pressure<=0.||solid<=0.||wet<=0.{return 0.;}
     let phi=solid/wet;let per_grain=pressure/solid;let viscous=9.4000000000000000e-4*gamma;
-    let contact=mu+.38*viscous/(.005*(pressure/wet)+viscous);
+    let denom=.005*(pressure/wet)+viscous;
+    let contact=mu+select(0.,.38*viscous/max(denom,1e-30),viscous>0.&&denom>0.);
     // The volume stays outside the constitutive arithmetic: merged, the two
     // square roots of bulk stresses can underflow in their product.
-    return pressure*(contact+2.5*sqrt(phi)*sqrt(viscous/per_grain));
+    let ratio=select(0.,viscous/max(per_grain,1e-30),viscous>0.&&per_grain>0.);
+    return pressure*(contact+2.5*sqrt(phi)*sqrt(ratio));
 }
 // The radial return of the shear norm beyond the static limit mu P, under
 // the compliance's absolute-row bound: one scalar root, no global sweeps.
@@ -232,6 +242,10 @@ fn joint_state(phi:f32,trial:f32,beta:f32,t:f32,mu:f32)->vec3<f32> {
     let z=1.-t;let tt=t*t;let zz=z*z;let eta_beta=.00094*beta;
     let friction=mu*zz+.38*tt*zz/(.005*zz+tt)+2.5*phi*t*z;
     let denominator=eta_beta*friction+phi*tt;
+    if !(denominator>0.){
+        if tt==0.&&mu>0.{return vec3<f32>(trial/mu,0.,trial);}
+        return vec3<f32>(0.);
+    }
     let pressure=trial*(eta_beta*zz/denominator);
     let gamma=(beta*trial)*(phi*tt/denominator);
     let stress=trial*(eta_beta*friction/denominator);
@@ -242,7 +256,7 @@ fn joint_return(solid:f32,wet:f32,theta:f32,alpha:f32,beta:f32,old_bulk:f32,tria
     // No volume response: theta is exactly zero when all relative modes
     // are closed. The finite-flow root is phi_eq=phi below phi_m; above it
     // the minimum admissible static yield stress arrests the shear rate.
-    if alpha==0.&&theta==0.{
+    if alpha<=0.&&theta==0.{
         if trial<=0.{return vec2<f32>(0.);}
         let t=max(0.,1.-phi/CRITICAL_PACKING);
         return solid*joint_state(phi,trial,beta,t,mu).xz;
@@ -256,7 +270,7 @@ fn joint_return(solid:f32,wet:f32,theta:f32,alpha:f32,beta:f32,old_bulk:f32,tria
     if phi<CRITICAL_PACKING {
         let compacting=joint_state(phi,trial,beta,lo,mu);
         if free_theta+alpha*compacting.x<=0.{return solid*compacting.xz;}
-    }else if free_theta+alpha*(trial/mu)<=0.{
+    }else if alpha>0.&&free_theta+alpha*(trial/mu)<=0.{
         return vec2<f32>(solid*(-free_theta/alpha),trial_bulk);
     }
     for(var iteration=0u;iteration<12u;iteration++){

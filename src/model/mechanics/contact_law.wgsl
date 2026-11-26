@@ -26,10 +26,13 @@ fn grain_contact_inverse(f:u32,c:vec3<f32>)->f32 {
     // underflow, turning the otherwise well-defined static limit into 0/0.
     if gamma==0.{return 0.;}
     let diameter=dot(c.yz,GRAIN_DIAMETER)/solid;
-    let viscous=.00094*gamma;let friction=grain_friction(c.yz)+.38*viscous/(.005*pressure+viscous);
+    let viscous=.00094*gamma;let denom=.005*pressure+viscous;
+    let friction=grain_friction(c.yz)+select(0.,.38*viscous/max(denom,1e-30),viscous>0.&&denom>0.);
     // Contact part of the current granular shear law; do not count its fluid
     // stress term a second time as interparticle contact resistance.
-    return (solid*diameter*diameter)*(gamma/(10.2*friction*pressure));
+    let fp=10.2*friction*pressure;
+    if !(fp>0.){return 0.;}
+    return (solid*diameter*diameter)*(gamma/fp);
 }
 // The predictor's response with the packed side's drag coefficients
 // (material.wgsl, hydraulic_response_lookup); the contact step is the same.

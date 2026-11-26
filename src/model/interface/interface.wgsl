@@ -38,14 +38,16 @@ fn label_liquid_aperture(f:u32)->f32 {
 // The Euclidean norm, scaled before squaring against overflow and underflow.
 fn scaled_norm(v:vec2<f32>)->f32 {
     let a=abs(v);let scale=max(a.x,a.y);
-    if scale==0.{return 0.;}
+    if !(scale>0.&&scale<1e35){return 0.;}
     let q=v/scale;return scale*sqrt(dot(q,q));
 }
 // The ratio of two positive volumes with their binary exponents split off, so
 // that a compiler reassociating it with a small mobility cannot underflow it.
 fn phase_ratio(numerator:f32,denominator:f32)->f32 {
+    if numerator<=0.||denominator<=0.{return 0.;}
     let n=frexp(numerator);let d=frexp(denominator);
-    return ldexp(n.fract/d.fract,n.exp-d.exp);
+    if d.fract==0.{return 0.;}
+    return ldexp(n.fract/d.fract,clamp(n.exp-d.exp,-126,126));
 }
 
 // An identity's layer in a cell is (amount, identity, 0, an observation of

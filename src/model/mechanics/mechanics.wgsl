@@ -33,7 +33,8 @@ struct ShearLoad { velocity:vec3<f32>,common_force:f32,relative:f32,bound:f32 }
 fn response_product(force:f32,mobility:f32,amount:f32)->f32 {
     if force==0.||mobility==0.||amount<=0.{return 0.;}
     let f=frexp(force);let m=frexp(mobility);let a=frexp(amount);
-    return ldexp((f.fract*m.fract)/a.fract,f.exp+m.exp-a.exp);
+    if a.fract==0.{return 0.;}
+    return ldexp((f.fract*m.fract)/a.fract,clamp(f.exp+m.exp-a.exp,-126,126));
 }
 fn bulk_velocity_response(f:u32,force:f32)->vec3<f32> {
     let face=faces[f];let amount=face.composition.w*(face.composition.y+face.composition.z);
@@ -368,14 +369,17 @@ fn joint_drag(f:u32)->vec2<f32>{
         out.water_momentum.y=r.coupling;out.water_momentum.w=r.relative_inverse;
         out.response.w=r.common_inverse;out.velocity.w=mean_velocity;
     }else if c.x>0.&&c.y+c.z>0. {
-        let effective=rg-rp*(dot(c,rg)/dot(c,rp));
-        relative_mobility=max(dot(c.yz/(c.y+c.z),effective.yz),0.);
-        if c.x<c.y+c.z {
-            // The same Schur block as c_w/c_s times the liquid's conditional
-            // self response (C*M is symmetric): on the dry side this form
-            // keeps the small c_w factor exactly.
-            let conditional=m[0].x-c.x*rp.x*(rp.x/dot(c,rp));
-            relative_mobility=(c.x/(c.y+c.z))*max(0.,conditional);
+        let crp=dot(c,rp);
+        if crp>0.{
+            let effective=rg-rp*(dot(c,rg)/crp);
+            relative_mobility=max(dot(c.yz/(c.y+c.z),effective.yz),0.);
+            if c.x<c.y+c.z {
+                // The same Schur block as c_w/c_s times the liquid's conditional
+                // self response (C*M is symmetric): on the dry side this form
+                // keeps the small c_w factor exactly.
+                let conditional=m[0].x-c.x*rp.x*(rp.x/crp);
+                relative_mobility=(c.x/(c.y+c.z))*max(0.,conditional);
+            }
         }
     }
     out.composition=vec4<f32>(c,.5*amount);
@@ -617,11 +621,11 @@ fn return_grains(i:u32,predictor:bool) {
     let y=edge_bound(p-axis(1u),p)+edge_bound(p+axis(1u),p);
     let local=GAP_SHEAR*velocity_bound(p);
     let compliance=max(max((x.x+y.y)/(2.*cfg.h),(x.y+y.x)/(2.*cfg.h)),max(local.x,local.y));
-    if compliance>0.{tau+=solid*strain/compliance;}
+    if compliance>1e-30{tau+=solid*strain/compliance;}
     // Together where the cell has a shear compliance and a volume response
     // (or no dilation rate at all), else the pressure first: the same laws.
     let trial=scaled_norm(tau);var pressure=0.;var returned=0.;let mu=grain_friction(grains(c));
-    if compliance>0.&&(diagonal>0.||div==0.){
+    if compliance>1e-30&&(diagonal>0.||div==0.){
         let state=joint_return(solid,wet,div,diagonal,compliance,c.stress.pressure,trial,mu);
         pressure=state.x;returned=state.y;
     }else{
