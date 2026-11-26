@@ -272,32 +272,13 @@ fn surface_pair(left:u32){
     }
     share=c.bed.xy/solid;packing=solid/c.bed.z;
     if packing<=0.||packing>=1.{return;}
-    // The flow runs the column's top out last laid first (peel), with
-    // differential stopping by species friction (Makse et al. 1997): on a
-    // slope between the white's friction (0.32) and the black's (0.60), smooth
-    // white grains keep rolling farther downslope while angular black grains
-    // arrest preferentially until the black-enriched upper flank steepens and
-    // avalanches over the white layer. Under a pocket the bed's surface has no
-    // record of its own: its sand leaves as the cell holds it.
+    // The flow runs the column's top out last laid first (peel): what
+    // arrived since the record was written, then the record's slices. An
+    // update moves no more than the moving layer holds. Under a pocket the
+    // bed's surface has no record of its own (the column's goes on over the
+    // pocket): its sand leaves as the cell holds it.
     let amount=min(path.aperture*packing*abs(flux)*cfg.dt/cfg.h/cfg.h,moving_depth(depth)/cfg.h*packing);
-    var requested=amount*share;
-    if path.source==top{
-        if abs(cfg.lateral)<3.0{
-            let layer=peel(donor,moving_depth(depth)/cfg.h*packing);
-            let deficit=max(SPECIES_FRICTION-vec2<f32>(abs(slope)),vec2<f32>(0.));
-            let mobility=1./(1.+3.*deficit/(SPECIES_FRICTION.y-SPECIES_FRICTION.x));
-            let weighted=layer*mobility;let wsum=weighted.x+weighted.y;
-            if wsum>0.{
-                var req=min(layer,amount*(weighted/wsum));
-                let rem=amount-(req.x+req.y);
-                if rem>0.{
-                    let spare=max(layer-req,vec2<f32>(0.));let ssum=spare.x+spare.y;
-                    if ssum>0.{req+=spare*min(1.,rem/ssum);}
-                }
-                requested=req;
-            }else{requested=peel(donor,amount);}
-        }else{requested=peel(donor,amount);}
-    }
+    var requested=amount*share;if path.source==top{requested=peel(donor,amount);}
     let room=bed_height(donor)*packing/max(requested.x+requested.y,1e-30);
     let moved=transfer_surface(donor,receiver,requested*min(1.,room));
     let domain=(moved.x+moved.y)/packing;
