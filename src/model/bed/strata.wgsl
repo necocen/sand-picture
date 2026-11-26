@@ -106,6 +106,12 @@ fn coarse_share(grains:vec2<f32>,otherwise:f32)->f32{
 // of the times within one drainage matters, and a clock counting for days
 // would stop advancing in f32). Slices above the height are never read.
 @compute @workgroup_size(128) fn clear_strata(@builtin(global_invocation_id) id:vec3<u32>){
-    let x=id.x;if x>=cfg.nx{return;}let base=strata_base(x);
+    let x=id.x;
+    if x<MAX_SIDE{
+        terrain[x]=vec4<f32>(0.);
+        terrain[MAX_SIDE+x]=vec4<f32>(0.);
+        terrain[2u*MAX_SIDE+x]=vec4<f32>(0.);
+    }
+    if x>=cfg.nx{return;}let base=strata_base(x);
     strata[base]=vec2<f32>(0.);strata[base+1u]=vec2<f32>(0.);strata[base+2u]=vec2<f32>(0.);
 }

@@ -28,6 +28,7 @@ struct Fit {
 struct Corner {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) quad_uv: vec2<f32>,
 }
 
 @vertex
@@ -54,15 +55,15 @@ fn vertex(@builtin(vertex_index) index: u32) -> Corner {
     } else if q == 3u {
         tex_uv = vec2<f32>(uv.y, 1.0 - uv.x);
     }
-    return Corner(vec4<f32>(pos, 0.0, 1.0), tex_uv);
+    return Corner(vec4<f32>(pos, 0.0, 1.0), tex_uv, uv);
 }
 
 @fragment
 fn fragment(in: Corner) -> @location(0) vec4<f32> {
     var color = textureSample(picture, picture_sampler, in.uv);
     if fit.frame.x > 0.001 {
-        let edge_x = min(in.uv.x, 1.0 - in.uv.x) / max(fit.frame.y, 1e-6);
-        let edge_y = min(in.uv.y, 1.0 - in.uv.y) / max(fit.frame.z, 1e-6);
+        let edge_x = min(in.quad_uv.x, 1.0 - in.quad_uv.x) / max(fit.frame.y, 1e-6);
+        let edge_y = min(in.quad_uv.y, 1.0 - in.quad_uv.y) / max(fit.frame.z, 1e-6);
         let dist_px = min(edge_x, edge_y);
         let rim = (1.0 - smoothstep(1.0, 2.5, dist_px)) * 0.65 * fit.frame.x;
         let glass_edge = vec3<f32>(0.16, 0.19, 0.23);

@@ -691,4 +691,52 @@ mod tests {
         let (_, act) = det.step(Some([0.0, g, 0.0]), true, 2, false, 0.008);
         assert_eq!(act, QuarterAction::SetViewQuarter(0));
     }
+
+    #[test]
+    fn quarter_turn_detector_survives_full_sideways_flip_and_return_cycle() {
+        let g = 9.81_f32;
+        let mut det = QuarterTurnDetector::default();
+        let mut q = 0u8;
+
+        // Helper to hold a raw screen-frame gravity vector until a discrete turn fires.
+        let mut hold_until_turn = |raw: [f32; 3], expected: GridTurn, expected_q: u8| {
+            let mut got = None;
+            for _ in 0..40 {
+                let (eff, act) = det.step(Some(raw), false, q, false, 0.008);
+                if act != QuarterAction::None {
+                    got = Some((eff.unwrap(), act));
+                    break;
+                }
+            }
+            let (eff, act) = got.expect("expected quarter/half turn");
+            assert_eq!(
+                act,
+                QuarterAction::Turn {
+                    grid_turn: expected,
+                    next_view_quarter: expected_q,
+                }
+            );
+            assert!(
+                eff[1] > 9.0 && eff[0].abs() < 1e-4,
+                "post-turn gravity must point straight down in new frame: {eff:?}"
+            );
+            q = expected_q;
+        };
+
+        // Upright (q=0) -> 90 deg CW (q=1) -> 180 deg sideways flip (q=3) -> 90 deg CW back to upright (q=0).
+        hold_until_turn([g, 0.0, 0.0], GridTurn::RotateCw90, 1);
+        hold_until_turn([-g, 0.0, 0.0], GridTurn::Invert180, 3);
+        hold_until_turn([0.0, g, 0.0], GridTurn::RotateCw90, 0);
+
+        // Full 4-wall CW tour: 0 -> 1 -> 2 -> 3 -> 0.
+        hold_until_turn([g, 0.0, 0.0], GridTurn::RotateCw90, 1);
+        hold_until_turn([0.0, -g, 0.0], GridTurn::RotateCw90, 2);
+        hold_until_turn([-g, 0.0, 0.0], GridTurn::RotateCw90, 3);
+        hold_until_turn([0.0, g, 0.0], GridTurn::RotateCw90, 0);
+
+        // OS 180-deg flip while sideways (q=1 -> q=3) keeps grid transposed without extra invert.
+        let (eff, act) = det.step(Some([-g, 0.0, 0.0]), true, 1, false, 0.008);
+        assert_eq!(act, QuarterAction::SetViewQuarter(3));
+        assert!(eff.unwrap()[1] > 9.0);
+    }
 }

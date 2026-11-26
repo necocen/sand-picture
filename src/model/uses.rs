@@ -26,7 +26,7 @@ pub const USES: &[(Program, &str, &[&str])] = &[
     (Program::Model, "cache_contact", &["cfg", "cells", "faces", "geometry"]),
     (Program::Model, "capture_bed_source", &["cfg", "cells", "arrival"]),
     (Program::Model, "choose_groups", &["cfg", "scratch", "geometry"]),
-    (Program::Model, "clear_strata", &["cfg", "strata"]),
+    (Program::Model, "clear_strata", &["cfg", "terrain", "strata"]),
     (Program::Model, "clear_trace_gas", &["cfg", "cells", "geometry", "labels"]),
     (Program::Model, "column_cells", &["cfg", "cells", "scratch", "gaps", "labels"]),
     (Program::Model, "compose_layer_flux", &["cfg", "cells", "scratch", "faces", "geometry", "transport", "carry_plan", "members"]),

@@ -41,7 +41,7 @@ const FOAM_SIGMA: f32 = 0.0170;      // Surfactant-water interfacial tension (N/
 const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubbles (cells)
 const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
 const FOAM_SAND_LEVEL: f32 = 0.25;   // Packed sand outer boundary contour (avoids clipping gas in raster)
-const FOAM_MAX_NBRS: u32 = 24u;
+const FOAM_MAX_NBRS: u32 = 128u;
 
 var<workgroup> sh_pos: array<vec2<f32>, FOAM_VERTS>;
 var<workgroup> sh_pred: array<vec2<f32>, FOAM_VERTS>;
@@ -52,6 +52,7 @@ var<workgroup> sh_nbrs: array<u32, FOAM_MAX_NBRS>;
 var<workgroup> sh_nbr_count: u32;
 var<workgroup> sh_centroid: vec2<f32>;
 var<workgroup> sh_vel: vec2<f32>;
+var<workgroup> sh_sep: vec2<f32>;
 var<workgroup> sh_area: f32;
 var<workgroup> sh_perim: f32;
 var<workgroup> sh_free_perim: f32;
@@ -226,15 +227,15 @@ fn foam_step(
             var cx = 0.0;
             var cy = 0.0;
             var per = 0.0;
-            var min_y = f32(cfg.ny);
-            var max_y = 0.0;
+            var min_p_cur = vec2<f32>(f32(cfg.nx), f32(cfg.ny));
+            var max_p_cur = vec2<f32>(0.0, 0.0);
             var uf_sum = vec2<f32>(0.0);
             var uf_w = 0.0;
             for (var m = 0u; m < FOAM_VERTS; m++) {
                 let p0 = sh_pos[m];
                 let p1 = sh_pos[(m + 1u) % FOAM_VERTS];
-                min_y = min(min_y, p0.y);
-                max_y = max(max_y, p0.y);
+                min_p_cur = min(min_p_cur, p0);
+                max_p_cur = max(max_p_cur, p0);
                 let cr = p0.x * p1.y - p1.x * p0.y;
                 a2 += cr;
                 cx += (p0.x + p1.x) * cr;
@@ -243,6 +244,8 @@ fn foam_step(
                 uf_sum += sh_uf[m].xy;
                 uf_w += sh_uf[m].z;
             }
+            let min_y = min_p_cur.y;
+            let max_y = max_p_cur.y;
             let area = max(0.5 * a2, 1e-4);
             sh_area = area;
             sh_perim = max(per, 1e-3);
@@ -257,7 +260,66 @@ fn foam_step(
             let was_held = atomicLoad(&sh_held) >= 3u;
             let at_ceiling = (up_dir.y > 0.5 && max_y >= f32(cfg.ny) - 0.35)
                 || (up_dir.y < -0.5 && min_y <= 0.35);
+            // Excluded-volume centroid separation: prevents corner-crowded bubbles
+            // from collapsing concentrically onto each other while allowing tight
+            // ceilings to form crisp multi-layer foam rafts that spread smoothly
+            // into a horizontal monolayer whenever open ceiling is available.
+            let e_self_raw = max(0.5 * (max_p_cur - min_p_cur), vec2<f32>(0.45));
+            let tang_ceil = vec2<f32>(up_dir.y, -up_dir.x);
+            let away_wall = select(-1.0, 1.0, sh_centroid.x < 0.5 * f32(cfg.nx));
+            var sep = vec2<f32>(0.0);
+            for (var m = 0u; m < sh_nbr_count; m++) {
+                let nb = sh_nbrs[m];
+                let d = sh_centroid - foam[nb].centroid;
+                let dist = length(d);
+                var dir = vec2<f32>(select(-1.0, 1.0, bi > nb), 0.0);
+                if dist > 1e-3 {
+                    dir = d / dist;
+                }
+                let e_nb_raw = max(0.5 * (foam[nb].bbox_max - foam[nb].bbox_min), vec2<f32>(0.45));
+                let r_nb = sqrt(max(foam[nb].target_area, 0.1) / 3.14159265);
+                // When unheld near the open ceiling, use at least circular r_eq so
+                // vertically squashed bubbles expand back to natural round/flat shapes,
+                // without demanding wider-than-circular spacing that pinches tight roofs.
+                let e_self = select(e_self_raw, max(e_self_raw, vec2<f32>(r_eq)), at_ceiling && !was_held);
+                let e_nb = select(e_nb_raw, max(e_nb_raw, vec2<f32>(r_nb)), at_ceiling && !was_held);
+                let min_sep = select(0.78, 0.90, at_ceiling && !was_held)
+                    * (length(e_self * dir) + length(e_nb * dir));
+                if dist < min_sep {
+                    let pen = min_sep - dist;
+                    var push_dir = dir;
+                    if at_ceiling && !was_held && dot(dir, up_dir) > 0.25 {
+                        // A lower bubble buoyantly pressing up into a ceiling bubble
+                        // nudges it sideways along the glass without crushing it flat.
+                        let t_comp = dot(dir, tang_ceil);
+                        let side_sign = select(away_wall, select(-1.0, 1.0, t_comp >= 0.0), abs(t_comp) > 0.15);
+                        push_dir = normalize(0.75 * tang_ceil * side_sign + 0.25 * dir);
+                    }
+                    sep += push_dir * min(0.24 * pen, 0.22);
+                } else if at_ceiling && !was_held {
+                    // Gently slide upper bubbles laterally when another bubble sits directly under them.
+                    let nb_below = dot(foam[nb].centroid - sh_centroid, up_dir) < -0.25;
+                    let h_ov = min(max_p_cur.x, foam[nb].bbox_max.x) - max(min_p_cur.x, foam[nb].bbox_min.x);
+                    let v_gap = abs(d.y) - (e_self_raw.y + e_nb_raw.y);
+                    if nb_below && h_ov > 0.25 && v_gap < 0.30 {
+                        let lat = select(away_wall, select(-1.0, 1.0, d.x >= 0.0), abs(d.x) > 0.30);
+                        sep += tang_ceil * (lat * 0.06);
+                    }
+                }
+            }
+            let sep_len = length(sep);
+            if sep_len > 0.28 {
+                sep *= 0.28 / sep_len;
+            }
+            if sep_len > 1e-4 && foam_solid_at(sh_centroid + sep) > FOAM_SAND_LEVEL {
+                sep = vec2<f32>(0.0);
+            }
+            sh_sep = sep;
             var v_tgt = uf_mean + up_dir * select(0.55 * v_rise, 0.16 * v_rise, was_held);
+            if at_ceiling && !was_held && length(sep) > 1e-4 {
+                let v_spread = clamp((sep / max(dt_sub, 1e-4)) * cfg.h * 0.20, vec2<f32>(-0.10), vec2<f32>(0.10));
+                v_tgt += v_spread;
+            }
             if was_held {
                 // Capillary meniscus friction damps lateral sweep but still allows
                 // held bubbles to creep up sloping sand roofs and shift in return
@@ -302,7 +364,7 @@ fn foam_step(
             // Blend local ambient fluid velocity softly so sand-plume return currents sway the raft.
             let uf_loc = select(sh_vel, sh_uf[k].xy, sh_uf[k].z > 0.5);
             let v_vert = mix(sh_vel, uf_loc, 0.16);
-            let pred = p_curr + (v_vert / cfg.h) * dt_sub + dn_total * n_out;
+            let pred = p_curr + (v_vert / cfg.h) * dt_sub + sh_sep + dn_total * n_out;
             sh_pred[k] = pred;
             sh_tmp[k] = pred;
         }
@@ -384,7 +446,7 @@ fn foam_step(
                 let res = foam_sdf_bubble(p, nb);
                 if res.x < FOAM_FILM_GAP {
                     let pen = FOAM_FILM_GAP - res.x;
-                    p += vec2<f32>(res.y, res.z) * (0.52 * pen);
+                    p += vec2<f32>(res.y, res.z) * min(0.48 * pen, 0.24);
                     contact = max(contact, 0.85);
                     if foam[nb].centroid.y > sh_centroid.y && foam[nb].held != 0u {
                         held_k += 3u;
@@ -446,6 +508,25 @@ fn foam_step(
             }
             p = clamp(p, vec2<f32>(FOAM_WALL_PAD), vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD));
             sh_pos[k] = p;
+        }
+        workgroupBarrier();
+
+        // One light post-contact curvature pass keeps crowded ceiling/corner
+        // bubbles smooth and convex without rounding away flat soap films.
+        var smooth_p = vec2<f32>(0.0);
+        if k < FOAM_VERTS {
+            let p_l = sh_pos[(k + FOAM_VERTS - 1u) % FOAM_VERTS];
+            let p_c = sh_pos[k];
+            let p_r = sh_pos[(k + 1u) % FOAM_VERTS];
+            smooth_p = clamp(
+                mix(p_c, 0.5 * (p_l + p_r), 0.14),
+                vec2<f32>(FOAM_WALL_PAD),
+                vec2<f32>(f32(cfg.nx) - FOAM_WALL_PAD, f32(cfg.ny) - FOAM_WALL_PAD),
+            );
+        }
+        workgroupBarrier();
+        if k < FOAM_VERTS {
+            sh_pos[k] = smooth_p;
         }
         workgroupBarrier();
     }

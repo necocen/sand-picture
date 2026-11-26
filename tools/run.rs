@@ -181,6 +181,7 @@ fn main() {
     let mut dump: Vec<u64> = Vec::new();
     let mut light = None;
     let mut loaded: Option<(PathBuf, u64)> = None;
+    let mut load_transposed = false;
     let mut turns: Option<Vec<u64>> = None;
     let mut rotates: Vec<(bool, u64)> = Vec::new();
     let mut shakes: Vec<u64> = Vec::new();
@@ -233,6 +234,7 @@ fn main() {
                 let (folder, step) = value.rsplit_once(',').expect("--load FOLDER,STEP");
                 loaded = Some((folder.into(), step.parse().expect("--load FOLDER,STEP")));
             }
+            "--transposed" => load_transposed = true,
             other => panic!("unknown argument {other:?}"),
         }
     }
@@ -249,6 +251,12 @@ fn main() {
     );
     let start = match &loaded {
         Some((folder, step)) => {
+            if load_transposed
+                || std::fs::read_to_string(folder.join("grid.txt"))
+                    .is_ok_and(|s| s.trim() == "180x270")
+            {
+                model.set_transposed(&gpu.queue, true);
+            }
             load(&gpu, &model, folder);
             *step
         }
@@ -266,6 +274,8 @@ fn main() {
             write_pictures(&gpu, pictures, &folder);
         }
         write(&gpu, model, &folder, false);
+        let [gx, gy] = model.grid();
+        std::fs::write(folder.join("grid.txt"), format!("{gx}x{gy}\n")).unwrap();
     };
     if dump.contains(&start) {
         dump_all(&model, &mut pictures, start);

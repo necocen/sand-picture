@@ -122,6 +122,9 @@ fn exchange_from_source(x:u32){
     }
     let i=first*cfg.nx+x;let c=arrival[i];let m=grains(c);
     let solid=m.x+m.y;let free=free_wet(c);if solid<=0.||free<=0.{return;}
+    // Never lock a supercritical cliff or overhang into rigid static bed:
+    // keep it mobile so it slumps naturally under full 2D granular mechanics.
+    if bed_cliff_unstable(i32(x),i32(first)){return;}
     let density=solid/free;let rests=on_pocket(x,first);
     let momentum=arriving_momentum(i);
     terrain[2u*cfg.nx+x].w=dot(momentum,normal)/solid;
@@ -172,6 +175,7 @@ fn exchange_from_source(x:u32){
     // suspension it sweeps. Where gas closes a face to the coarse grain, or
     // the tank's top leaves no room, nothing is captured in this update.
     for(var row=first+1u;row<cfg.ny&&overflow>0.;row++){
+        if bed_cliff_unstable(i32(x),i32(row)){return;}
         let f=2u*((row-1u)*cfg.nx+x)+1u;
         if !grain_crosses(f,GRAIN_DIAMETER.y){return;}
         let a=arrival[row*cfg.nx+x];let wet=free_wet(a);let g=grains(a);let s=g.x+g.y;

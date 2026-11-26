@@ -255,8 +255,11 @@ fn layout() -> Layout {
         )),
         foam.invert,
         foam.raster,
-        interface.apertures,
         bed.clear_strata,
+        bed.geometry,
+        bed.occupancy,
+        bed.passage,
+        interface.apertures,
     ];
     let cells_commit = plans.add(Plan::new(
         Program::Invert,
@@ -279,8 +282,11 @@ fn layout() -> Layout {
         stream_commit,
         foam.rotate_cw,
         foam.raster,
-        interface.apertures,
         bed.clear_strata,
+        bed.geometry,
+        bed.occupancy,
+        bed.passage,
+        interface.apertures,
     ];
     let rotate_ccw = vec![
         plans.add(Plan::new(Program::Invert, "rotate_cells_ccw", cell_groups)),
@@ -293,8 +299,11 @@ fn layout() -> Layout {
         stream_commit,
         foam.rotate_ccw,
         foam.raster,
-        interface.apertures,
         bed.clear_strata,
+        bed.geometry,
+        bed.occupancy,
+        bed.passage,
+        interface.apertures,
     ];
     let prepare = [
         vec![
@@ -400,7 +409,10 @@ impl Model {
         self.transposed
     }
 
-    fn set_transposed(&mut self, queue: &wgpu::Queue, transposed: bool) {
+    /// Switches the grid configuration between upright (`270x180`) and
+    /// transposed (`180x270`). Used internally on 90-degree turns and by
+    /// offline tools restoring a transposed state dump.
+    pub fn set_transposed(&mut self, queue: &wgpu::Queue, transposed: bool) {
         self.transposed = transposed;
         let [nx, ny] = self.grid();
         let dims: Vec<u8> = [nx, ny].into_iter().flat_map(u32::to_le_bytes).collect();

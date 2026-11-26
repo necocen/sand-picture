@@ -101,24 +101,31 @@ fn surface_normal(x:i32)->vec2<f32>{
     let width=select(2.,1.,x==0||x==i32(cfg.nx)-1);
     return normalize(vec2<f32>(-(r-l)/width,1.));
 }
-// Bed without connection to the floor returns to the mobile inventory: a
-// lifted column's, what lies above a column's top row, and any steep vertical
-// cliff face (> 3 cells above an adjacent column's bed) directly exposed to
-// open water (e.g. right after a 90-degree rotation).
-fn cliff_exposed(x:i32,y:i32)->bool{
-    for(var dx=-1;dx<=1;dx+=2){
-        let nx_i=x+dx;
-        if nx_i<0||nx_i>=i32(cfg.nx){continue;}
-        if f32(y)<=terrain[u32(nx_i)].x+3.{continue;}
-        let c=cells[u32(y)*cfg.nx+u32(nx_i)];
-        let solid=max(c.volume.fine,0.)+max(c.volume.coarse,0.)+max(c.bed.x,0.)+max(c.bed.y,0.);
-        if c.volume.gas<.25&&solid<.25{return true;}
+// Mohr-Coulomb static stability envelope for floor-connected rigid bed:
+// cohesionless submerged sand cannot stand statically steeper than ~49 deg
+// (normal upright dunes stay <= 28 deg, slope <= 0.53). A cell at `(x, y)`
+// loses lateral confinement when a side neighbor (1 cell or 4 cells away)
+// has neither packed grains in contact (`LOOSE_PACKING`) nor a buttressing
+// bubble (`gas >= 0.25`) AND its bed lies more than 2.0 cells (at dx=1) or
+// 6.1 cells (at dx=4, slope 1.15 + 1.5 toe) below `y`.
+fn cell_confined(x:i32,y:i32)->bool{
+    let c=cells[u32(y)*cfg.nx+u32(x)];
+    let solid=max(c.volume.fine,0.)+max(c.volume.coarse,0.)+max(c.bed.x,0.)+max(c.bed.y,0.);
+    return c.volume.gas>=.25||solid>=LOOSE_PACKING;
+}
+fn bed_cliff_unstable(x:i32,y:i32)->bool{
+    for(var dir=-1;dir<=1;dir+=2){
+        let x1=x+dir;
+        if x1<0||x1>=i32(cfg.nx){continue;}
+        if !cell_confined(x1,y)&&f32(y)>terrain[u32(x1)].x+2.0{return true;}
+        let x4=x+4*dir;
+        if x4>=0&&x4<i32(cfg.nx)&&!cell_confined(x4,y)&&f32(y)>terrain[u32(x4)].x+6.1{return true;}
     }
     return false;
 }
 @compute @workgroup_size(128) fn bed_release(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}let p=point(i);
-    if terrain[u32(p.x)].x<=0.||f32(p.y)>terrain[u32(p.x)].y||cliff_exposed(p.x,p.y){release_bed(i);}
+    if terrain[u32(p.x)].x<=0.||f32(p.y)>terrain[u32(p.x)].y||bed_cliff_unstable(p.x,p.y){release_bed(i);}
 }
 // `height`: the bed's surface in cells from the floor; `top`: its highest
 // row; `open`: the row where it ends, whose free part takes the next sand
