@@ -114,7 +114,7 @@ fn foam_sdf_bubble(p: vec2<f32>, bi: u32) -> vec3<f32> {
         let b = foam[bi].verts[(k + 1u) % FOAM_VERTS];
         let e = b - a;
         let len2 = dot(e, e);
-        let t = select(0.0, clamp(dot(p - a, e) / len2, 0.0, 1.0), len2 > 1e-10);
+        let t = select(0.0, clamp(dot(p - a, e) / max(len2, 1e-10), 0.0, 1.0), len2 > 1e-10);
         let closest = a + t * e;
         let diff = p - closest;
         let d2 = dot(diff, diff);
@@ -207,7 +207,7 @@ fn foam_step(
     let dt_sub = cfg.dt / f32(FOAM_SUBSTEPS);
     let g_vec = vec2<f32>(cfg.lateral, -cfg.gravity);
     let g_mag = length(g_vec);
-    let up_dir = select(vec2<f32>(0.0, 1.0), -g_vec / g_mag, g_mag > 1e-4);
+    let up_dir = select(vec2<f32>(0.0, 1.0), -g_vec / max(g_mag, 1e-4), g_mag > 1e-4);
     let r_eq = sqrt(max(target_area, 0.1) / 3.14159265);
     let v_rise = min(0.115, 0.042 * r_eq + 0.032) * (g_mag / STANDARD_GRAVITY);
 
@@ -256,7 +256,7 @@ fn foam_step(
                 for (var m = 0u; m < FOAM_VERTS; m++) { avg += sh_pos[m]; }
                 sh_centroid = avg / f32(FOAM_VERTS);
             }
-            let uf_mean = select(vec2<f32>(0.0), uf_sum / uf_w, uf_w > 0.5);
+            let uf_mean = select(vec2<f32>(0.0), uf_sum / max(uf_w, 1e-6), uf_w > 0.5);
             let was_held = atomicLoad(&sh_held) >= 3u;
             let at_ceiling = (up_dir.y > 0.5 && max_y >= f32(cfg.ny) - 0.35)
                 || (up_dir.y < -0.5 && min_y <= 0.35);
@@ -551,7 +551,7 @@ fn foam_step(
             cx += (p0.x + p1.x) * cr;
             cy += (p0.y + p1.y) * cr;
         }
-        let cent = select(0.5 * (bmin + bmax), vec2<f32>(cx, cy) / (3.0 * a2), abs(a2) > 1e-5);
+        let cent = select(0.5 * (bmin + bmax), vec2<f32>(cx, cy) / select(1.0, 3.0 * a2, abs(a2) > 1e-5), abs(a2) > 1e-5);
         foam_next[bi].target_area = target_area;
         foam_next[bi].drain_time = foam[bi].drain_time;
         foam_next[bi].slot = foam[bi].slot;
@@ -645,6 +645,7 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             foam_next[tid].drain_time = 0.0;
         }
     }
+    storageBarrier();
     workgroupBarrier();
 
     // Thread 0 performs size-dependent film-drainage coalescence, Rayleigh-Taylor
@@ -847,6 +848,7 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             }
         }
     }
+    storageBarrier();
     workgroupBarrier();
 
     // Commit ping-ponged bubbles to `foam` and record component areas in `labels`.
@@ -945,7 +947,7 @@ fn foam_raster(
         if f > 1e-5 {
             let n = slot_norm[l];
             let l1_sum = abs(n.x) + abs(n.y);
-            let n_l1 = select(vec2<f32>(0.0, 1.0), n / l1_sum, l1_sum > 1e-6);
+            let n_l1 = select(vec2<f32>(0.0, 1.0), n / max(l1_sum, 1e-6), l1_sum > 1e-6);
             let alpha = intercept(n_l1, clamp(f, 0.0, 1.0));
             let plane = vec4<f32>(n_l1, alpha, 0.0);
             geometry[layer_index(i, l)] = vec4<f32>(f, f32(l + 1u), 0.0, keep_w);
@@ -1194,6 +1196,7 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
         }
         sh_air_scale = scale;
     }
+    storageBarrier();
     workgroupBarrier();
 
     if tid < MAX_BUBBLES {

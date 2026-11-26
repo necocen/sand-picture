@@ -325,11 +325,11 @@ fn solve_coarsest(l:Level,i:u32){
     var previous=1.;var z=coarse_response(l,i,n);var sums=totals(vec2<f32>(r[i]*r[i],r[i]*z),i);
     let initial=sums.x;
     for(var step=0u;step<8u;step++){
-        if sums.x<=initial*1e-12||initial==0.{break;}
-        let rz=sums.y;var beta=0.;if step>0u{beta=rz/previous;}
+        if sums.x<=initial*1e-12||initial<=1e-30{break;}
+        let rz=sums.y;var beta=0.;if step>0u&&previous>1e-30{beta=clamp(rz/previous,0.,1e6);}
         direction[i]=z+beta*direction[i];workgroupBarrier();var ad=0.;
         if i<n{ad=sparse_product(l,i);}
-        let denominator=totals(vec2<f32>(direction[i]*ad,0.),i).x;if denominator<=0.{break;}let alpha=rz/denominator;
+        let denominator=totals(vec2<f32>(direction[i]*ad,0.),i).x;if denominator<=1e-30{break;}let alpha=clamp(rz/denominator,-1e6,1e6);
         x[i]+=alpha*direction[i];r[i]-=alpha*ad;workgroupBarrier();previous=rz;
         z=coarse_response(l,i,n);sums=totals(vec2<f32>(r[i]*r[i],r[i]*z),i);
     }

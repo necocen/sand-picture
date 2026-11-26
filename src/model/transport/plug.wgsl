@@ -422,7 +422,7 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
             }
             geometry[SET_IN_ROW*cfg.n+i].y=supply;geometry[SET_IN_ROW*cfg.n+i].z=link;
         }
-        workgroupBarrier();
+        storageBarrier();
     }
     for(var first=0u;first<cells_walked;first+=width){
         // A turn whose rows and the row below them hold no link has nothing
@@ -465,6 +465,7 @@ fn plug_receive(r:u32,x:i32,gy:i32,parts:vec3<f32>,fines:vec3<f32>){
             plug_left[r]=step.left;plug_centre[r]=step.centre;plug_right[r]=step.right;plug_fine[r]=step.fine;
             plug_up_left[r]=step.up.x;plug_up_centre[r]=step.up.y;plug_up_right[r]=step.up.z;plug_up_fine[r]=step.up_fine;
         }
+        storageBarrier();
         workgroupBarrier();
     }
 }
