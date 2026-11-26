@@ -113,7 +113,7 @@ fn viscous_laplacian(p:vec2<i32>,a:u32,phase:u32)->f32 {
                 velocity[a]+=weight*speed;amount[a]+=weight;
             }
         }}
-        for(var a=0u;a<2u;a++){if amount[a]>0.{velocity[a]/=amount[a];}}
+        for(var a=0u;a<2u;a++){if amount[a]>1e-30{velocity[a]/=amount[a];}else{velocity[a]=0.;}}
         if phase==3u&&slips{velocity+=slip;}
         cells[i].momentum[phase]=volume[phase]*velocity;
     }

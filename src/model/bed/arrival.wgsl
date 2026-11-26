@@ -162,7 +162,8 @@ fn exchange_from_source(x:u32){
         // white's grit and its free powder are two species here.
         let rise_num=grit*reach.x+powder*powder_reach+m.y*reach.y;
         let rise_den=free*(BED_PACKING-density);
-        let rise=select(0.,select(free,rise_num/rise_den,rise_den>0.),rise_num>0.);
+        var rise=0.;
+        if rise_num>0.{if rise_den>0.{rise=rise_num/rise_den;}else{rise=free;}}
         fraction=min(vec2<f32>(1.),(vec2<f32>(rise)+reach)/free);
         powder_fraction=vec2<f32>(fraction.x,min(1.,(rise+powder_reach)/free));
         if m.x>0.{fraction.x=(grit*fraction.x+powder*powder_fraction.y)/m.x;}

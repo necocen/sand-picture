@@ -15,7 +15,7 @@ fn incident_velocity(i:u32,phase:u32)->vec2<f32>{
         let f=faces[2u*at(base)];let amount=f.composition.w*f.composition[phase];
         if amount>0.&&f.support.w==0.{velocity.x+=amount*f.volume[phase];weight+=amount;}
     }
-    if weight>0.{velocity.x/=weight;}
+    if weight>1e-30{velocity.x/=weight;}else{velocity.x=0.;}
     if valid(p+axis(1u)){
         let f=faces[2u*i+1u];
         if f.composition.w*f.composition[phase]>0.{velocity.y=f.volume[phase];}

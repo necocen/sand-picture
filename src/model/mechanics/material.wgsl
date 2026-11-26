@@ -242,7 +242,7 @@ fn joint_state(phi:f32,trial:f32,beta:f32,t:f32,mu:f32)->vec3<f32> {
     let z=1.-t;let tt=t*t;let zz=z*z;let eta_beta=.00094*beta;
     let friction=mu*zz+.38*tt*zz/(.005*zz+tt)+2.5*phi*t*z;
     let denominator=eta_beta*friction+phi*tt;
-    if !(denominator>0.){
+    if !(denominator>0.&&denominator<1e34){
         if tt==0.&&mu>0.{return vec3<f32>(trial/mu,0.,trial);}
         return vec3<f32>(0.);
     }
@@ -285,7 +285,7 @@ fn joint_return(solid:f32,wet:f32,theta:f32,alpha:f32,beta:f32,old_bulk:f32,tria
 // The grains' mean velocity relative to the mixture on a face.
 fn compression_speed(f:u32,predictor:bool)->f32 {
     let c=faces[f].composition.xyz;let solid=c.y+c.z;
-    if phase_locked(f)||c.x<=0.||solid<TRACE_VOLUME{return 0.;}
+    if phase_locked(f)||c.x<=0.||solid<TRACE_VOLUME||faces[f].composition.w*solid<TRACE_VOLUME{return 0.;}
     return -(c.x/solid)*relative_at_velocity(f,contact_velocity(f,predictor)).x;
 }
 

@@ -8,7 +8,8 @@
 // below TRACE_VOLUME, whose velocity is leftover momentum over a vanishing
 // amount.
 fn traced_grains(face:Face)->vec2<f32>{
-    let g=face.composition.yz;return select(vec2<f32>(0.),g,g>=vec2<f32>(TRACE_VOLUME));
+    let g=face.composition.yz;
+    return select(vec2<f32>(0.),g,min(g,face.composition.w*g)>=vec2<f32>(TRACE_VOLUME));
 }
 // Per cell: the weights of its grain velocity per axis, its stress force
 // and the bound of that force's absolute row, both per bulk volume (per
@@ -34,7 +35,7 @@ fn response_product(force:f32,mobility:f32,amount:f32)->f32 {
     if force==0.||mobility==0.||amount<=0.{return 0.;}
     let f=frexp(force);let m=frexp(mobility);let a=frexp(amount);
     if a.fract==0.{return 0.;}
-    return ldexp((f.fract*m.fract)/a.fract,clamp(f.exp+m.exp-a.exp,-126,126));
+    return ldexp((f.fract*m.fract)/a.fract,clamp(f.exp+m.exp-a.exp,-126,100));
 }
 fn bulk_velocity_response(f:u32,force:f32)->vec3<f32> {
     let face=faces[f];let amount=face.composition.w*(face.composition.y+face.composition.z);
@@ -543,13 +544,12 @@ fn prepare_velocity(i:u32,predictor:bool) {
         if !valid(base)||!valid(base+axis(a)){continue;}
         let f=2u*at(base)+a;let face=faces[f];let g=traced_grains(face);let solid=g.x+g.y;
         if solid<=0.{continue;}
-        sum[a]+=transverse_weight(d)*face.coarse_momentum.z*face.composition.w*dot(g,grain_sample(f,predictor).yz);
         if weights[a]>0.{
-            let weight=transverse_weight(d)*face.coarse_momentum.z*face.composition.w*solid/weights[a];
+            let weight=transverse_weight(d)*clamp(phase_ratio(face.coarse_momentum.z*face.composition.w*solid,weights[a]),0.,1.);
+            sum[a]+=weight*(dot(g,grain_sample(f,predictor).yz)/solid);
             bound[a]+=weight*face.coarse_momentum.w;
         }
     }}}
-    for(var a=0u;a<2u;a++){if weights[a]>0.{sum[a]/=weights[a];}}
     put_grain_velocity(i,sum);
     put_grain_velocity_bound(i,bound);
 }
