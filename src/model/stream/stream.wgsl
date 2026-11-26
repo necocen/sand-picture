@@ -48,7 +48,7 @@ fn rhs(p:vec2<i32>)->f32 {
 // |grad(alpha)| (I - n n^T) as (xx, xy, yy). The gradient is scaled before
 // it is squared, so that tiny amplitudes keep their linear response.
 fn gradient_tensor(g:vec2<f32>)->vec3<f32> {
-    let scale=max(abs(g.x),abs(g.y));if scale==0.{return vec3<f32>(0.);}
+    let scale=max(abs(g.x),abs(g.y));if !(scale>0.&&scale<1e35){return vec3<f32>(0.);}
     let u=g/scale;
     return (scale/length(u))*vec3<f32>(u.y*u.y,-u.x*u.y,u.x*u.x);
 }
@@ -371,7 +371,8 @@ fn solve_coarsest(l:Level,base:u32,rhs_base:u32,i:u32){
     let initial=sums.x;
     for(var step=0u;step<8u;step++){
         if sums.x<=initial*1e-12||!(initial>0.&&initial<1e34){break;}
-        let rz=sums.y;var beta=0.;if step>0u&&previous>0.&&previous<1e34{beta=clamp(rz/previous,0.,1e6);}
+        let rz=sums.y;if !(abs(rz)<1e34){break;}
+        var beta=0.;if step>0u&&previous>0.&&previous<1e34{beta=clamp(rz/previous,0.,1e6);}
         direction[i]=z+beta*direction[i];workgroupBarrier();var ad=0.;
         if i<n{ad=sparse_product(l,i);}
         let denominator=totals(vec2<f32>(direction[i]*ad,0.),i).x;if !(denominator>0.&&denominator<1e34){break;}let alpha=clamp(rz/denominator,-1e6,1e6);
@@ -486,7 +487,7 @@ fn block_prediction(i:u32,j:u32)->vec2<f32>{
     let mixed=a-d;let weak=(a-g)+(d-g);let denominator=weak-(mixed/stiff)*mixed;
     // A rounded block that is singular or not positive has no minimum of
     // its own: the row's scalar prediction stands.
-    if denominator<=0.{return vec2<f32>(0.);}
+    if !(denominator>1e-12*stiff){return vec2<f32>(0.);}
     let l=external_rhs(left,right);let r=orientation*external_rhs(right,left);
     let mean=(l+r-(mixed/stiff)*(l-r))/denominator;
     let difference=(l-r-mixed*mean)/stiff;

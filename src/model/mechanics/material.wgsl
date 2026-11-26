@@ -136,7 +136,7 @@ fn put_stress(i:u32,value:vec4<f32>,suction:f32) {cells[i].stress=GrainStress(va
 // demand: pore-water suction, an effective stress that leaves their total
 // stress alone. A cell without compliance carries its pressure whole.
 fn load_part(solid:f32,theta:f32,alpha:f32,old_bulk:f32,pressure_bulk:f32)->f32 {
-    if alpha<=0.||solid<=0.{return pressure_bulk;}
+    if alpha<=1e-30||solid<=0.{return pressure_bulk;}
     let free_theta=theta-alpha*(old_bulk/solid);
     return clamp(-free_theta/alpha*solid,0.,pressure_bulk);
 }
@@ -178,10 +178,10 @@ fn particle_pressure(solid:f32,wet:f32,gamma:f32,theta:f32,compliance:f32,old_bu
     let phi=solid/wet;let old=old_bulk/solid;
     if phi<CRITICAL_PACKING {
         let gap=CRITICAL_PACKING-phi;let admissible=.00094*gamma*phi/(gap*gap);
-        if compliance<=0.{return solid*min(old,admissible);}
+        if compliance<=1e-30{return solid*min(old,admissible);}
         if theta-compliance*old+compliance*admissible<=0.{return solid*admissible;}
     }
-    if compliance<=0.{return old_bulk;}
+    if compliance<=1e-30{return old_bulk;}
     let free_theta=theta-compliance*old;
     if free_theta>=dilation_rate(phi,gamma,0.){return 0.;}
     // The largest possible dilation, gamma/.48, bounds the monotone root
@@ -224,7 +224,7 @@ fn shear_return(trial:f32,solid:f32,wet:f32,pressure:f32,compliance:f32,mu:f32)-
     if pressure<=0.||trial<=0.{return 0.;}
     let static_limit=mu*pressure;
     if trial<=static_limit{return trial;}
-    if compliance<=0.{return static_limit;}
+    if compliance<=1e-30{return static_limit;}
     var lo=static_limit;
     let free_gamma=compliance*((trial-static_limit)/solid);
     var hi=min(trial,particle_shear(solid,wet,pressure,free_gamma,mu));
@@ -252,11 +252,11 @@ fn joint_state(phi:f32,trial:f32,beta:f32,t:f32,mu:f32)->vec3<f32> {
     return vec3<f32>(pressure,gamma,stress);
 }
 fn joint_return(solid:f32,wet:f32,theta:f32,alpha:f32,beta:f32,old_bulk:f32,trial_bulk:f32,mu:f32)->vec2<f32> {
-    let phi=solid/wet;let trial=trial_bulk/solid;
+    let phi=solid/wet;let trial=min(trial_bulk/solid,1e30);
     // No volume response: theta is exactly zero when all relative modes
     // are closed. The finite-flow root is phi_eq=phi below phi_m; above it
     // the minimum admissible static yield stress arrests the shear rate.
-    if alpha<=0.&&theta==0.{
+    if alpha<=1e-30&&theta==0.{
         if trial<=0.{return vec2<f32>(0.);}
         let t=max(0.,1.-phi/CRITICAL_PACKING);
         return solid*joint_state(phi,trial,beta,t,mu).xz;
@@ -270,8 +270,8 @@ fn joint_return(solid:f32,wet:f32,theta:f32,alpha:f32,beta:f32,old_bulk:f32,tria
     if phi<CRITICAL_PACKING {
         let compacting=joint_state(phi,trial,beta,lo,mu);
         if free_theta+alpha*compacting.x<=0.{return solid*compacting.xz;}
-    }else if alpha>0.&&free_theta+alpha*(trial/mu)<=0.{
-        return vec2<f32>(solid*(-free_theta/alpha),trial_bulk);
+    }else if alpha>1e-30&&free_theta+alpha*(trial/mu)<=0.{
+        return vec2<f32>(solid*min(-free_theta/alpha,1e30),trial_bulk);
     }
     for(var iteration=0u;iteration<12u;iteration++){
         let t=.5*(lo+hi);let state=joint_state(phi,trial,beta,t,mu);

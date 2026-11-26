@@ -25,7 +25,7 @@
 @compute @workgroup_size(128) fn free_powder(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.n{return;}
     let c=cells[i];let g=grains(c);let water=max(c.volume.water,0.);let wet=water+g.x+g.y;
-    if g.x<=0.||water<=0.||c.powder.free>=c.powder.mobile{return;}
+    if g.x<=1e-30||water<=1e-30||c.powder.free>=c.powder.mobile{return;}
     let slip=c.momentum[1]/g.x-c.momentum[0]/water;
     let settling=TERMINAL_SPEED.x*length(vec3<f32>(cfg.lateral,cfg.gravity,plate_gravity()))/STANDARD_GRAVITY;
     if length(slip)<=settling{return;}

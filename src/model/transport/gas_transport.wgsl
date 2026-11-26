@@ -54,6 +54,7 @@ fn bubble_slip(i:u32)->vec2<f32>{
     var volume=0.;
     for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){let q=p+vec2<i32>(x,y);if valid(q){volume+=label_fraction(q,label);}}}
     // The sphere's diameter over the gap b, its volume the gas times h^2 b.
+    if volume<=0.||water<=0.{return vec2<f32>(0.);}
     let ratio=pow(6.*volume*cfg.h*cfg.h/(3.14159265*PLATE_GAP*PLATE_GAP),1./3.);
     if ratio>=1.{return vec2<f32>(0.);}
     let level=ratio*f32(BUBBLE_LEVELS);let k=min(u32(level),BUBBLE_LEVELS-1u);
@@ -87,7 +88,7 @@ fn identity_velocity(p:vec2<i32>,label:f32)->vec2<f32>{
     var momentum=vec2<f32>(0.);var mass=0.;
     for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
         let q=p+vec2<i32>(x,y);if !valid(q){continue;}
-        let c=cells[at(q)];let g=c.volume.gas;if g<=0.{continue;}
+        let c=cells[at(q)];let g=c.volume.gas;if g<=1e-30{continue;}
         let share=label_fraction(q,label);momentum+=share*c.momentum[3]/g;mass+=share;
     }}
     if mass<=0.{return vec2<f32>(0.);}

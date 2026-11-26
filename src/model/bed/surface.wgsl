@@ -24,11 +24,12 @@ fn surface_rate(slope:f32,height:f32,packing:f32,share:vec2<f32>,bed_powder:Powd
     // bed's thickness. Under submerged gravity alone d is
     // b (tan(theta) - mu)/mu_w (Jop et al. 2005).
     let qa=KINETIC_FRICTION*packing*normal/PLATE_GAP;
+    if !(qa>0.){return result;}
     let qb=packing*(mu*normal-drive)+2.*KINETIC_FRICTION*pressure0/PLATE_GAP;
     let qc=mu*pressure0-boundary;
     let discriminant=qb*qb-4.*qa*qc;if discriminant<=0.{return result;}
     let depth=min(height*n.y,max(0.,(-qb+sqrt(discriminant))/(2.*qa)));
-    if depth<=0.{return result;}
+    if depth<=1e-12{return result;}
     // The packet's volume returns as suspension over the bed, not through
     // its pores: two lanes of the depth d with no net volume flow, the bed's
     // u/v = 1 - z/d and the exterior's 1 - 7 z/d + 6 (z/d)^2, continuous at
@@ -42,7 +43,7 @@ fn surface_rate(slope:f32,height:f32,packing:f32,share:vec2<f32>,bed_powder:Powd
     // The surface speed the pair's last flux left: depth that yields anew
     // starts at rest, and the history is not advected.
     var old_speed=0.;
-    if previous.x>0.{
+    if previous.x>1e-12{
         old_speed=max(0.,direction*2.*previous.y/previous.x)
             *min(1.,previous.x/depth);
     }
@@ -57,15 +58,17 @@ fn surface_rate(slope:f32,height:f32,packing:f32,share:vec2<f32>,bed_powder:Powd
     let wall=KINETIC_FRICTION*(pressure0*depth+packing*normal*depth*depth/3.)/PLATE_GAP;
     let static_shear=mu*(pressure0+packing*normal*depth*.5);
     let available=forcing-wall-static_shear;if available<=0.{return result;}
-    var lo=0.;var hi=available/((resistance+inertia)*depth/3.);
+    let drag=(resistance+inertia)*depth/3.;if !(drag>0.&&drag<1e34){return result;}
+    var lo=0.;var hi=available/drag;
     for(var iteration=0u;iteration<16u;iteration++){
         let speed=.5*(lo+hi);let viscous=WATER_VISCOSITY*speed/depth;var shear=0.;
         for(var q=0u;q<4u;q++){
             let z=depth*(f32(q)+.5)/4.;let pressure=pressure0+packing*normal*z;
-            let rate=.38*viscous/(.005*pressure+viscous);
-            shear+=.25*(pressure*(mu+rate)+2.5*packing*sqrt(pressure*viscous));
+            let rdenom=.005*pressure+viscous;
+            let rate=select(0.,.38*viscous/max(rdenom,1e-30),viscous>0.&&rdenom>0.);
+            shear+=.25*(pressure*(mu+rate)+2.5*packing*sqrt(max(pressure*viscous,0.)));
         }
-        let opposed=wall+shear+(resistance+inertia)*depth*speed/3.;
+        let opposed=wall+shear+drag*speed;
         if opposed>forcing{hi=speed;}else{lo=speed;}
     }
     result.domain_flux=direction*depth*.5*(lo+hi)*.5;
@@ -255,7 +258,7 @@ fn surface_pair(left:u32){
     let flux=rate.domain_flux;let depth=rate.depth;
     // A layer that does not flow leaves no depth in the history: the depth
     // at which a still face would yield is no moving layer.
-    if flux==0.{return;}
+    if !(abs(flux)>0.){return;}
     // The flux's direction chooses the donor (a stream's traction can drive
     // the layer uphill); the rate is not solved again for it.
     let forward=flux>0.;
@@ -268,6 +271,7 @@ fn surface_pair(left:u32){
         if solid<=0.||c.bed.z<=0.{return;}
     }
     share=c.bed.xy/solid;packing=solid/c.bed.z;
+    if packing<=0.||packing>=1.{return;}
     // The flow runs the column's top out last laid first (peel), with
     // differential stopping by species friction (Makse et al. 1997): on a
     // slope between the white's friction (0.32) and the black's (0.60), smooth

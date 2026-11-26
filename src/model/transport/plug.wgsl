@@ -64,6 +64,7 @@ fn plug_flows(i:u32)->bool{
 // standing as it was.
 fn plug_set_in(i:u32,c:Cell,want:f32){
     let g=grains(c);let solid=g.x+g.y;let wet=max(c.volume.water,0.)+solid;
+    if solid<=0.||wet<=0.{return;}
     let phi=min(solid/wet,CLOSE_PACKING);
     let front=breaching_rate(g,white_powder(c),phi)*inclination_factor(-1.,grain_friction(g))*cfg.dt/cfg.h;
     let freed=max(phi-CRITICAL_PACKING,.01)*wet;
@@ -286,7 +287,7 @@ fn plug_give(i:u32,x:i32,y:i32,record:vec4<f32>,k:f32,asked:vec3<f32>)->PlugStep
             if linked{
                 shares=plug_return(i,x,y);
                 for(var d=0;d<3;d++){
-                    if shares[d]>0.{surplus=min(surplus,plug_room(cells[at(vec2<i32>(x+d-1,y+1))])/(3.*shares[d]));}
+                    if shares[d]>1e-12{surplus=min(surplus,plug_room(cells[at(vec2<i32>(x+d-1,y+1))])/(3.*shares[d]));}
                 }
             }else{surplus=min(surplus,plug_open_room(above));}
         }

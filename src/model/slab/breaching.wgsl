@@ -169,15 +169,16 @@ fn roof_body(i:u32)->u32{
 // the resistance: a mean of the conductivities would let the coarse pores
 // carry the water past the fines. The white's whole powder fills its pores.
 fn packing_conductivity(g:vec2<f32>,powder:PowderShare,phi:f32)->f32{
-    let solid=g.x+g.y;if solid<=0.||phi<=0.{return 0.;}
+    let solid=g.x+g.y;if solid<=0.||phi<=0.||cfg.gravity<=0.{return 0.;}
     let porosity=1.-min(phi,CLOSE_PACKING);var inverse_root=0.;
     let speeds=packing_speeds(powder)*(cfg.gravity/STANDARD_GRAVITY);
     for(var phase=0u;phase<2u;phase++){
         let weight=g[phase]/solid;if weight<=0.{continue;}
         let delta=(RHO[phase+1u]-RHO.x)/RHO.x;
         let k=speeds[phase]*(1./delta)*porosity*porosity*porosity/(10.*phi*phi);
-        inverse_root+=weight/sqrt(k);
+        if k>0.{inverse_root+=weight/sqrt(k);}
     }
+    if !(inverse_root>0.){return 0.;}
     return 1./(inverse_root*inverse_root);
 }
 // The speed (m/s) at which a face of the mixture `g` packed to `phi`
@@ -242,7 +243,8 @@ fn side_face_up(donor:vec2<i32>,receiver:vec2<i32>)->f32{
 // at phi = 1/(HINDRANCE+2), about a fifth.
 fn batch_flux_at(g:vec2<f32>,powder:PowderShare,phi:f32)->f32{
     let solid=g.x+g.y;if solid<=0.||phi<=0.{return 0.;}
-    let porosity=max(1.-phi,0.);var flux=0.;let speeds=settling_speeds(powder);
+    let porosity=max(1.-phi,0.);if porosity<=0.{return 0.;}
+    var flux=0.;let speeds=settling_speeds(powder);
     for(var phase=0u;phase<2u;phase++){flux+=g[phase]/solid*speeds[phase];}
     return flux*phi*pow(porosity,HINDRANCE+1.);
 }

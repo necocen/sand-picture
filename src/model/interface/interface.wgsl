@@ -13,16 +13,19 @@
 
 // The intercept at which n . x <= alpha covers `fraction` of the unit cell.
 fn intercept(n:vec2<f32>,fraction:f32)->f32 {
-    let a=min(abs(n.x),abs(n.y));let b=max(abs(n.x),abs(n.y));let c=min(fraction,1.-fraction);var t=0.;
-    if a>0.&&c<a/(2.*b){t=sqrt(2.*a*b*c);}else{t=b*c+.5*a;}
+    let a=min(abs(n.x),abs(n.y));let b=max(abs(n.x),abs(n.y));
+    if b<=0.{return 0.;}
+    let c=max(min(fraction,1.-fraction),0.);var t=0.;
+    if a>0.&&c<a/(2.*b){t=sqrt(max(2.*a*b*c,0.));}else{t=b*c+.5*a;}
     return select(t-.5*(a+b),.5*(a+b)-t,fraction>.5);
 }
 fn rectangle_fraction(n:vec2<f32>,alpha:f32,lo:vec2<f32>,hi:vec2<f32>)->f32 {
     let width=abs(n*(hi-lo));let a=min(width.x,width.y);let b=max(width.x,width.y);
+    if b<=0.{return 0.;}
     let t=alpha-dot(n,.5*(lo+hi))+.5*(a+b);
     if t<=0.{return 0.;}if t>=a+b{return 1.;}
-    let q=min(t,a+b-t);var c=0.;
-    if a>0.&&q<a{c=q*q/(2.*a*b);}else{c=(q-.5*a)/b;}
+    let q=min(t,a+b-t);var c=0.;let ab2=2.*a*b;
+    if a>0.&&q<a&&ab2>0.{c=q*q/ab2;}else{c=(q-.5*a)/b;}
     return select(c,1.-c,t>.5*(a+b));
 }
 @compute @workgroup_size(128) fn reconstruct_interface(@builtin(global_invocation_id) id:vec3<u32>) { paired_reconstruct(id.x,true); }

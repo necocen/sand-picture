@@ -325,7 +325,7 @@ fn joint_drag(f:u32)->vec2<f32>{
     // The transport's inventories carry signed roundoff: clamped at zero.
     let total=max(fractions(l)+fractions(r),vec3<f32>(0.));
     let amount=total.x+total.y+total.z;
-    if amount<=0.{faces[f]=out;return;}let c=total/amount;
+    if amount<=1e-30{faces[f]=out;return;}let c=total/amount;
     var present=select(vec3<f32>(0.),vec3<f32>(1.),c>vec3<f32>(0.));
     let friction=face_friction(p,a,i,j,c.y+c.z);let plate=vec2<f32>(friction.y)+joint_drag(f);
     let film=film_narrowness(out.coarse_momentum.z);
@@ -625,7 +625,7 @@ fn return_grains(i:u32,predictor:bool) {
     // Together where the cell has a shear compliance and a volume response
     // (or no dilation rate at all), else the pressure first: the same laws.
     let trial=scaled_norm(tau);var pressure=0.;var returned=0.;let mu=grain_friction(grains(c));
-    if compliance>1e-30&&(diagonal>0.||div==0.){
+    if compliance>1e-30&&(diagonal>1e-30||div==0.){
         let state=joint_return(solid,wet,div,diagonal,compliance,c.stress.pressure,trial,mu);
         pressure=state.x;returned=state.y;
     }else{

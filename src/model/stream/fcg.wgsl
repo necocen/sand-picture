@@ -66,8 +66,8 @@ fn total_partials(lane:u32)->vec2<f32>{
     let sums=total_partials(lane);
     if lane==0u{
         let s=scalars();let previous=fcg[s];var beta=0.;
-        if previous>0.&&previous<1e34{beta=clamp((sums.x-sums.y)/previous,0.,1e6);}
-        fcg[s]=sums.x;fcg[s+1u]=beta;
+        if previous>0.&&previous<1e34&&abs(sums.x)<1e34&&abs(sums.y)<1e34{beta=clamp((sums.x-sums.y)/previous,0.,1e6);}
+        fcg[s]=select(0.,sums.x,abs(sums.x)<1e34);fcg[s+1u]=beta;
     }
 }
 @compute @workgroup_size(128) fn fcg_direction(@builtin(global_invocation_id) id:vec3<u32>){
@@ -83,7 +83,8 @@ fn total_partials(lane:u32)->vec2<f32>{
 }
 // alpha = z.r / p.q, summed by every workgroup alike from the same parts.
 @compute @workgroup_size(128) fn fcg_update(@builtin(global_invocation_id) id:vec3<u32>,@builtin(local_invocation_index) lane:u32){
-    let sums=total_partials(lane);var alpha=0.;if sums.x>0.&&sums.x<1e34{alpha=clamp(fcg[scalars()]/sums.x,-1e6,1e6);}
+    let sums=total_partials(lane);let rz=fcg[scalars()];var alpha=0.;
+    if sums.x>0.&&sums.x<1e34&&abs(rz)<1e34{alpha=clamp(rz/sums.x,-1e6,1e6);}
     let i=id.x;if i>=vertices(){return;}
     fcg[fx_(i)]+=alpha*fcg[fp_(i)];fcg[fo_(i)]=fcg[fr_(i)];
     let r=fcg[fr_(i)]-alpha*fcg[fq_(i)];fcg[fr_(i)]=r;precondition(i,r);

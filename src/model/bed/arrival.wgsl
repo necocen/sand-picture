@@ -127,7 +127,7 @@ fn exchange_from_source(x:u32){
     if bed_cliff_unstable(i32(x),i32(first)){return;}
     let density=solid/free;let rests=on_pocket(x,first);
     let momentum=arriving_momentum(i);
-    terrain[2u*cfg.nx+x].w=dot(momentum,normal)/solid;
+    if solid>1e-30{terrain[2u*cfg.nx+x].w=dot(momentum,normal)/solid;}
     // `reach`: the distance a species moves toward the sloped surface in
     // this update, in cell heights. The white moves at the volume mean of
     // its grit (with its bound powder) and its free powder; each of the two
@@ -160,7 +160,9 @@ fn exchange_from_source(x:u32){
         // takes, of each species, the suspension it sweeps and what reaches
         // it: the deposit takes the composition of the arriving flux. The
         // white's grit and its free powder are two species here.
-        let rise=(grit*reach.x+powder*powder_reach+m.y*reach.y)/(free*(BED_PACKING-density));
+        let rise_num=grit*reach.x+powder*powder_reach+m.y*reach.y;
+        let rise_den=free*(BED_PACKING-density);
+        let rise=select(0.,select(free,rise_num/rise_den,rise_den>0.),rise_num>0.);
         fraction=min(vec2<f32>(1.),(vec2<f32>(rise)+reach)/free);
         powder_fraction=vec2<f32>(fraction.x,min(1.,(rise+powder_reach)/free));
         if m.x>0.{fraction.x=(grit*fraction.x+powder*powder_fraction.y)/m.x;}

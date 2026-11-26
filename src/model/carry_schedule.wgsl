@@ -42,7 +42,7 @@ var<workgroup> speeds:array<u32,128>;
                     outgoing+=max(select(-1.,1.,k%2u==0u)*faces[ids[k]].data[4].w,0.);
                 }}
             }
-            if free>0.&&outgoing>0.{amount=outgoing/free;}
+            if free>1e-12&&outgoing>0.{amount=min(outgoing/free,1e6);}
         }
         if x+1u<cfg.nx{speed=max(speed,max(abs(faces[2u*i].data[4].w),abs(faces[2u*i].data[1].w)));}
         if y+1u<cfg.ny{speed=max(speed,max(abs(faces[2u*i+1u].data[4].w),abs(faces[2u*i+1u].data[1].w)));}
@@ -59,7 +59,7 @@ var<workgroup> speeds:array<u32,128>;
     // One subdivision more than the Courant number's whole part, so that
     // each stays below one; within the grid's budget, and with no floor (a
     // quiet update carries once).
-    plan.required=u32(floor(bitcast<f32>(atomicLoad(&plan.maximum))))+1u;
+    plan.required=u32(floor(clamp(bitcast<f32>(atomicLoad(&plan.maximum)),0.,1e6)))+1u;
     plan.steps=min(cfg.substeps,plan.required);
     plan.dispatch=vec3<u32>((cfg.n+63u)/64u,1u,1u);
     plan.sum_steps+=plan.steps;plan.updates+=1u;plan.max_required=max(plan.max_required,plan.required);

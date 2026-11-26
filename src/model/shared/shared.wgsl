@@ -107,7 +107,8 @@ fn fractions(c:Cell)->vec3<f32> {return vec3<f32>(max(0.,c.volume.water),grains(
 // face a carrier of Courant number `courant` crosses: the wet mixture's
 // composition, not the cell's volumes, which change as gas sweeps past.
 fn wet_concentration(p:vec2<i32>,a:u32,courant:f32)->vec2<f32> {
-    let middle=cell(p);let wet=free_wet(middle);let center=grains(middle)/wet;
+    let middle=cell(p);let wet=free_wet(middle);if wet<=0.{return vec2<f32>(0.);}
+    let center=grains(middle)/wet;
     let left=cell(p-axis(a));let right=cell(p+axis(a));
     if wet<.5||free_wet(left)<.5||free_wet(right)<.5{return center;}
     let l=grains(left)/free_wet(left);let r=grains(right)/free_wet(right);

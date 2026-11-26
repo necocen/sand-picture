@@ -11,14 +11,14 @@
 // shares, so that no product of two grain amounts is formed.
 fn compression_response(f:u32)->f32{
     let face=faces[f];let c=face.composition.xyz;let solid=c.y+c.z;let wet=face.composition.w;
-    if phase_locked(f)||c.x<=0.||solid<TRACE_VOLUME||wet<=0.{return 0.;}
+    if phase_locked(f)||c.x<=0.||solid<TRACE_VOLUME||wet*solid<TRACE_VOLUME{return 0.;}
     if coarse_locked(f){
-        let mobile=c.x+c.y;
-        return (c.x/solid)*(c.y/mobile)*face.water_momentum.w/(wet*solid);
+        let mobile=c.x+c.y;let denom=wet*solid;if !(denom>0.){return 0.;}
+        return (c.x/solid)*(c.y/mobile)*face.water_momentum.w/denom;
     }
-    if face.response.w<=0.{return 0.;}
+    let denom=face.response.w*wet;if !(denom>0.){return 0.;}
     let r=face.response.xyz;let g=face.grain_response.xyz;let share=c.yz/solid;
-    return (c.x/solid)*(share.x*(r.x*g.y-r.y*g.x)+share.y*(r.x*g.z-r.z*g.x))/(face.response.w*wet);
+    return (c.x/solid)*(share.x*(r.x*g.y-r.y*g.x)+share.y*(r.x*g.z-r.z*g.x))/denom;
 }
 // Its response through the common flow. The pressure pushes the common
 // motion by contrast times the force (grain_load) against the face's weight,
@@ -35,13 +35,14 @@ fn compression_response(f:u32)->f32{
 // slab. A gliding face's wet phases stand, and no pressure pushes its gas.
 fn common_compression_response(f:u32)->f32{
     let face=faces[f];let c=face.composition.xyz;let solid=c.y+c.z;let wet=face.composition.w;
-    if phase_locked(f)||glides(f)||c.x<=0.||solid<TRACE_VOLUME||wet<=0.||face.response.w<=0.{return 0.;}
+    if phase_locked(f)||glides(f)||c.x<=0.||solid<TRACE_VOLUME||wet*solid<TRACE_VOLUME||face.response.w<=0.{return 0.;}
     let own=solve_conductance(f);if own<=0.{return 0.;}
     let i=f/2u;let j=at(point(i)+axis(f%2u));
     let behind=vec2<f32>(other_conductance(i,f),other_conductance(j,f));
     if behind.x<=0.||behind.y<=0.{return 0.;}
+    let denom=1.+own/behind.x+own/behind.y;if !(denom>0.&&denom<1e34){return 0.;}
     let contrast=pressure_common_response(f);
-    return contrast*contrast*face.response.w/wet/(1.+own/behind.x+own/behind.y);
+    return contrast*contrast*face.response.w/wet/denom;
 }
 // The flow solve's conductance of a face (prepare_stream), zero when closed.
 fn solve_conductance(f:u32)->f32{
@@ -130,7 +131,7 @@ fn relax_pressure(t:u32,color:u32,last:bool){
             coupled+=coupling*(own-pressure_shift(other));
         }}
         let theta=problem.x+coupled/material.y;
-        if problem.z>0.&&(problem.y>0.||theta==0.){
+        if problem.z>1e-30&&(problem.y>1e-30||theta==0.){
             let state=joint_return(material.x,material.y,theta,problem.y,problem.z,old,problem.w,mu);
             pressure=state.x;returned=state.y;
         }else{
