@@ -4,7 +4,7 @@
 
 @AGENTS.md
 
-## いまの状態（2026-11-26）
+## いまの状態（2026-11-27）
 
 - 模型と計算の組み立て、近似と限界、描き方の約束は [docs/design.md](docs/design.md)。個々の規則とその理由は kernel の
   コメント（`src/model`・`src/view` の `*.wgsl`）にあり、別の仕様書は持たない。模型や描き方を変えたら、同じ commit で
@@ -83,4 +83,6 @@
 - `trunk build` / `mise run web`：Web 向けのビルドと、http://127.0.0.1:8080 での配信。ビルドは `dist/licenses.txt`
   （使っている crate と Aphros の著作権表示。`tools/notices.py`）と `dist/ogp.png` も作る。
 - `mise run deploy`：Web 向けにビルドして Cloudflare Workers に置く（https://suna.necocen.info 。設定は `wrangler.toml`、
-  配るのは `dist/` の静的ファイルだけ）。外へ出す操作なので、ユーザーに頼まれたときだけ行う。
+  配るのは `dist/` の静的ファイルだけ）。`main` への push（または手動実行）では `.github/workflows/deploy.yml` が
+  同じ `mise run deploy` を CI で実行する（リポジトリシークレット `CLOUDFLARE_API_TOKEN`・`CLOUDFLARE_ACCOUNT_ID` を使用）。
+  ローカルから外へ出す操作は、ユーザーに頼まれたときだけ行う。

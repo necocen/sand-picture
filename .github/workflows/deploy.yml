@@ -1,0 +1,60 @@
+name: Deploy Web
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "docs/**"
+      - "tests/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install tools from mise.toml (trunk)
+        uses: jdx/mise-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js for wrangler
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache trunk downloads (wasm-bindgen, wasm-opt)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trunk
+          key: trunk-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'mise.toml') }}
+          restore-keys: trunk-${{ runner.os }}-
+
+      - name: Check formatting and wasm clippy
+        run: |
+          cargo fmt --check
+          cargo clippy --target wasm32-unknown-unknown --bin sand-picture -- -D warnings
+
+      - name: Build and deploy to Cloudflare Workers
+        run: mise run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

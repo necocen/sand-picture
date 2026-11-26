@@ -100,6 +100,7 @@ cargo run --release --example rotation_check    # 90° CW/CCW transpose, sideway
 | `tests/` | The regression guide and its baseline of hashes |
 | `src/bin/sand_picture.rs`, `src/bin/sand_picture/` | The window: build progress, updates, keys, control panel, tilt/rotation sensor, kept picture |
 | `index.html`, `Trunk.toml`, `wrangler.toml` | The web build and Cloudflare Workers static deployment |
+| `.github/workflows/deploy.yml` | CI deployment to Cloudflare Workers on push to `main` or manual dispatch |
 | `records/` | Experiment records and their output: git-ignored, never committed |
 
 ## Licence
