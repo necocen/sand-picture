@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn the_stored_bubbles_keep_their_gas() {
         let stored: f64 = stored_air().iter().flatten().map(|&v| f64::from(v)).sum();
-        assert!(stored > 500., "{stored} cells of air");
+        assert!(stored > 350., "{stored} cells of air");
         let scene = Scene::product();
         let mut total = 0_f64;
         for (c, layers) in scene.cells.iter().zip(&scene.gas_layers) {

@@ -173,8 +173,8 @@ impl Screen {
         );
     }
 
-    /// Switches the kept texture between `[w, h]` (`270x180`) and `[h, w]`
-    /// (`180x270`) when the simulation grid rotates by 90 degrees.
+    /// Switches the kept texture between `[w, h]` (`216x144`) and `[h, w]`
+    /// (`144x216`) when the simulation grid rotates by 90 degrees.
     pub fn set_transposed(&mut self, gpu: &GpuContext, transposed: bool) -> bool {
         if self.transposed == transposed {
             return false;

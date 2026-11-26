@@ -119,8 +119,8 @@ impl Fields {
         }
     }
 
-    /// Updates the coarse-cycle level dimensions for normal (`270x180`) or
-    /// transposed (`180x270`) grid orientation.
+    /// Updates the coarse-cycle level dimensions for normal (`216x144`) or
+    /// transposed (`144x216`) grid orientation.
     pub fn set_transposed(&self, queue: &wgpu::Queue, transposed: bool) {
         let sizes = levels();
         queue.write_buffer(&self.hierarchy, 0, &hierarchy_bytes(&sizes, transposed));

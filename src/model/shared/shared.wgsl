@@ -72,7 +72,7 @@ const WATER_VISCOSITY:f32=.00094;
 // that slides between the plates (2/b).
 const GAP_SHEAR=2./.001;
 // The grid's dimensions live in cfg.nx and cfg.ny so the tank can rotate by
-// exact 90-degree quarter turns (270x180 <-> 180x270) in place.
+// exact 90-degree quarter turns (216x144 <-> 144x216) in place.
 fn point(i:u32)->vec2<i32> {return vec2<i32>(vec2<u32>(i%cfg.nx,i/cfg.nx));}
 fn valid(p:vec2<i32>)->bool {return all(p>=vec2<i32>(0)) && p.x<i32(cfg.nx) && p.y<i32(cfg.ny);}
 fn at(p:vec2<i32>)->u32 {return u32(p.y)*cfg.nx+u32(p.x);}

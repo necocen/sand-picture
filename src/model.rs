@@ -66,9 +66,9 @@ pub enum GridTurn {
     None,
     /// Exact 180-degree rotation (same grid dimensions).
     Invert180,
-    /// Exact 90-degree clockwise rotation (transposes `270x180 <-> 180x270`).
+    /// Exact 90-degree clockwise rotation (transposes `216x144 <-> 144x216`).
     RotateCw90,
-    /// Exact 90-degree counter-clockwise rotation (transposes `270x180 <-> 180x270`).
+    /// Exact 90-degree counter-clockwise rotation (transposes `216x144 <-> 144x216`).
     RotateCcw90,
 }
 
@@ -92,7 +92,7 @@ pub struct Model {
     adjust_air_steps: Vec<usize>,
     /// The kernel that writes summary sand/air metrics for auto-flip detection.
     measure_kernel: usize,
-    /// True when the simulation grid is currently transposed (`180x270`).
+    /// True when the simulation grid is currently transposed (`144x216`).
     transposed: bool,
     /// What the person's hands are doing to the picture, if anything.
     motion: Option<Motion>,
@@ -398,19 +398,19 @@ impl Model {
         self.prepare(device, queue);
     }
 
-    /// Current active grid dimensions `[nx, ny]` (`[270, 180]` or `[180, 270]`).
+    /// Current active grid dimensions `[nx, ny]` (`[216, 144]` or `[144, 216]`).
     pub fn grid(&self) -> [u32; 2] {
         let [nx, ny] = CELLS.map(|v| v as u32);
         if self.transposed { [ny, nx] } else { [nx, ny] }
     }
 
-    /// True when the grid is currently rotated 90 or 270 degrees (`180x270`).
+    /// True when the grid is currently rotated 90 or 270 degrees (`144x216`).
     pub fn is_transposed(&self) -> bool {
         self.transposed
     }
 
-    /// Switches the grid configuration between upright (`270x180`) and
-    /// transposed (`180x270`). Used internally on 90-degree turns and by
+    /// Switches the grid configuration between upright (`216x144`) and
+    /// transposed (`144x216`). Used internally on 90-degree turns and by
     /// offline tools restoring a transposed state dump.
     pub fn set_transposed(&mut self, queue: &wgpu::Queue, transposed: bool) {
         self.transposed = transposed;

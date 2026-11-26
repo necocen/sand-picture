@@ -142,7 +142,7 @@ impl Views {
     }
 
     /// Updates both the simulation grid `(nx, ny)` and picture size `(w, h)`
-    /// when the tank rotates 90 degrees (`270x180 <-> 180x270`).
+    /// when the tank rotates 90 degrees (`216x144 <-> 144x216`).
     pub fn set_grid_and_size(&mut self, queue: &wgpu::Queue, grid: [u32; 2], size: [u32; 2]) {
         let words: Vec<u8> = [grid[0], grid[1], size[0], size[1]]
             .into_iter()
@@ -191,7 +191,7 @@ mod tests {
         // No coarser than the reference, no finer than a grain.
         assert_eq!(picture_size([720, 480]), [1440, 960]);
         assert_eq!(picture_size([1440, 900]), [1440, 960]);
-        assert_eq!(picture_size([6000, 4000]), [2727, 1818]);
+        assert_eq!(picture_size([6000, 4000]), [2181, 1454]);
     }
 
     #[test]

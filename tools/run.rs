@@ -32,7 +32,7 @@ mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
-use sand_picture::model::{DT, GridTurn, Model, Scene, Stage};
+use sand_picture::model::{CELLS, DT, GridTurn, Model, Scene, Stage};
 use sand_picture::view::{Mode, REFERENCE_SIZE};
 use std::path::{Path, PathBuf};
 
@@ -253,7 +253,7 @@ fn main() {
         Some((folder, step)) => {
             if load_transposed
                 || std::fs::read_to_string(folder.join("grid.txt"))
-                    .is_ok_and(|s| s.trim() == "180x270")
+                    .is_ok_and(|s| s.trim() == format!("{}x{}", CELLS[1], CELLS[0]))
             {
                 model.set_transposed(&gpu.queue, true);
             }

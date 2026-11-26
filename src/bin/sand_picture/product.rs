@@ -22,8 +22,8 @@ const AUTO_DONE_ABOVE_FRAC: f64 = 0.015;
 const AUTO_STALL_SECONDS: f64 = 30.0;
 /// Viewing pause after completion before auto-flipping the picture.
 const AUTO_VIEW_PAUSE: Duration = Duration::from_secs(8);
-/// Air area change per Air - / Air + click (cells^2, ~8% of default).
-const AIR_STEP: f32 = 35.0;
+/// Air area change per Air - / Air + click (cells^2, ~7.5% of default).
+const AIR_STEP: f32 = 28.0;
 
 enum ReadbackState {
     Idle,
@@ -159,7 +159,7 @@ impl Product {
         self.view_quarter
     }
 
-    /// True when the simulation grid is currently transposed (`180x270`).
+    /// True when the simulation grid is currently transposed (`144x216`).
     pub fn is_transposed(&self) -> bool {
         self.model.is_transposed()
     }

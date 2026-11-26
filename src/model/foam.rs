@@ -27,12 +27,13 @@ fn push_u32(out: &mut Vec<u8>, v: u32) {
 }
 
 /// Default target total air area (cells^2) matching the polydisperse single-layer foam
-/// (108% of the earlier 435 cells^2 baseline): richer bubble barrier while keeping
-/// worst-case horizontal span safely below wall-to-wall sealing across flips.
-pub const DEFAULT_AIR_AREA: f32 = 470.0;
+/// scaled proportionally to the 216-cell tank width (0.8x of the 270-cell baseline):
+/// richer bubble barrier while keeping worst-case horizontal span safely below
+/// wall-to-wall sealing across flips.
+pub const DEFAULT_AIR_AREA: f32 = 376.0;
 /// Bounds for dynamic user air adjustment (cells^2).
-pub const MIN_AIR_AREA: f32 = 150.0;
-pub const MAX_AIR_AREA: f32 = 720.0;
+pub const MIN_AIR_AREA: f32 = 120.0;
+pub const MAX_AIR_AREA: f32 = 580.0;
 /// Steady-state Rayleigh-Taylor breakup area threshold (cells^2), matching `foam.wgsl`.
 const STEADY_SPLIT_AREA: f32 = 16.5;
 

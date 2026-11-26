@@ -1,12 +1,12 @@
 //! End-to-end GPU stress test for full 360-degree Z_4 rotation sequences:
-//! 1. Rotate 90 deg CW (`270x180 -> 180x270`) and let sand accumulate on the
+//! 1. Rotate 90 deg CW (`216x144 -> 144x216`) and let sand accumulate on the
 //!    side wall (`60 s` default, `180 s` with `--long`).
-//! 2. From the settled sideways state, invert 180 deg (`180x270`) and verify
+//! 2. From the settled sideways state, invert 180 deg (`144x216`) and verify
 //!    clean drainage and bubble retention.
-//! 3. From the settled sideways state, return 90 deg CW to upright (`270x180`),
+//! 3. From the settled sideways state, return 90 deg CW to upright (`216x144`),
 //!    verify bubbles spread cleanly without collapsing into a corner and steep
 //!    cliffs slump cleanly, then invert 180 deg upright.
-//! 4. From the settled sideways state, return 90 deg CCW to upright (`270x180`)
+//! 4. From the settled sideways state, return 90 deg CCW to upright (`216x144`)
 //!    and verify no overhanging bed cave or corner bubble collapse.
 //!
 //! Usage (outside sandbox; needs GPU):
@@ -15,7 +15,7 @@ mod common;
 
 use common::{Pictures, headless, picture_name, read, wait, write_png};
 use mikage::GpuContext;
-use sand_picture::model::{DEFAULT_AIR_AREA, DT, GridTurn, Model, Scene};
+use sand_picture::model::{CELLS, DEFAULT_AIR_AREA, DT, GridTurn, Model, Scene};
 use sand_picture::view::{Mode, REFERENCE_SIZE};
 use std::path::{Path, PathBuf};
 
@@ -210,16 +210,19 @@ fn main() {
     let baseline_sand = measure_state(&gpu, &model).total_sand;
     let mut failures = Vec::new();
 
+    let upright = CELLS.map(|v| v as u32);
+    let sideways = [upright[1], upright[0]];
+
     // Start as the app does: invert upright for 1 s, then rotate 90 deg CW.
     model.start_turn();
     step_model(&gpu, &mut model, per_sec);
     assert!(model.start_quarter_turn(true), "quarter turn CW must start");
-    assert_eq!(model.grid(), [270, 180]);
+    assert_eq!(model.grid(), upright);
 
-    // Stage 1: accumulate sand on the side wall (180x270).
+    // Stage 1: accumulate sand on the side wall (sideways).
     let stage1_mid = 15 * per_sec;
     step_model(&gpu, &mut model, stage1_mid);
-    assert_eq!(model.grid(), [180, 270]);
+    assert_eq!(model.grid(), sideways);
     let s1_mid = measure_state(&gpu, &model);
     check_invariants("side_15s", &s1_mid, baseline_sand, 0.55, &mut failures);
     record_views(&gpu, &model, &mut pictures, record.as_deref(), "side_15s");
@@ -249,10 +252,10 @@ fn main() {
 
     let settled_side = snapshot(&gpu, &model);
 
-    // Stage 2: invert 180 deg while sideways (180x270 -> 180x270).
+    // Stage 2: invert 180 deg while sideways.
     assert!(model.start_turn(), "sideways 180 flip must start");
     step_model(&gpu, &mut model, follow_secs * per_sec);
-    assert_eq!(model.grid(), [180, 270]);
+    assert_eq!(model.grid(), sideways);
     let s2 = measure_state(&gpu, &model);
     check_invariants(
         &format!("side_flip180_{follow_secs}s"),
@@ -275,12 +278,12 @@ fn main() {
         &format!("side_flip180_{follow_secs}s"),
     );
 
-    // Stage 3: restore settled sideways state, return 90 deg CW to upright (270x180),
+    // Stage 3: restore settled sideways state, return 90 deg CW to upright,
     // then invert 180 deg upright.
     restore(&gpu, &mut model, &settled_side);
     assert!(model.start_quarter_turn(true), "return CW must start");
     step_model(&gpu, &mut model, follow_secs * per_sec);
-    assert_eq!(model.grid(), [270, 180]);
+    assert_eq!(model.grid(), upright);
     let s3 = measure_state(&gpu, &model);
     check_invariants(
         &format!("return_cw_{follow_secs}s"),
@@ -318,11 +321,11 @@ fn main() {
         &format!("return_cw_flip_{follow_secs}s"),
     );
 
-    // Stage 4: restore settled sideways state, return 90 deg CCW to upright (270x180).
+    // Stage 4: restore settled sideways state, return 90 deg CCW to upright.
     restore(&gpu, &mut model, &settled_side);
     assert!(model.start_quarter_turn(false), "return CCW must start");
     step_model(&gpu, &mut model, follow_secs * per_sec);
-    assert_eq!(model.grid(), [270, 180]);
+    assert_eq!(model.grid(), upright);
     let s4 = measure_state(&gpu, &model);
     check_invariants(
         &format!("return_ccw_{follow_secs}s"),

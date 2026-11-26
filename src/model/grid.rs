@@ -2,11 +2,11 @@
 //! transport subdivisions, grain-pressure relaxation and flow iterations.
 
 /// Inner width and height of the tank in metres. The plates are 1 mm apart.
-pub const TANK: [f64; 2] = [0.3, 0.2];
+pub const TANK: [f64; 2] = [0.24, 0.16];
 
 /// Square cells across and up the tank, 1.11 mm wide: wider than the plate
 /// gap, over which the depth-averaged model varies.
-pub const CELLS: [usize; 2] = [270, 180];
+pub const CELLS: [usize; 2] = [216, 144];
 
 /// Conjugate-gradient iterations of an update's first and second flow
 /// solves. The rims of the bubbles converge slowest. The first solve starts
@@ -53,8 +53,8 @@ mod tests {
 
     #[test]
     fn the_settings_of_the_fine_grid() {
-        assert_eq!(subdivisions(), 12);
-        assert_eq!(pressure_pairs(), 35);
+        assert_eq!(subdivisions(), 9);
+        assert_eq!(pressure_pairs(), 28);
         let decay = (f64::from(pressure_omega()) - 1.).powi(pressure_pairs() as i32);
         assert!(decay <= 0.05 && decay > 0.04, "{decay}");
     }

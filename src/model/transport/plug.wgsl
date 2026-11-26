@@ -4,10 +4,10 @@
 // carry (stage TransportPrepare), plug_descent after it (stage TraceGas).
 
 // The walk's threads and column-owned row handoff capacity (covers both
-// 270x180 and 180x270).
+// 216x144 and 144x216).
 const PLUG_THREADS:u32=256u;
-const PLUG_COLS:u32=270u;
-const PLUG_WORDS:u32=9u;
+const PLUG_COLS:u32=216u;
+const PLUG_WORDS:u32=7u;
 fn plug_deposit(c:Cell)->bool{return max(c.bed.x,0.)+max(c.bed.y,0.)>0.;}
 // A packed body's cell: free grains at the critical packing of their wet
 // part or more, or a body's last layer (body_faces); no deposit, and no

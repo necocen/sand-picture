@@ -1037,7 +1037,7 @@ fn invert_foam(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // 4b. Exact 90-degree CW/CCW rotation of all closed curves when the grid
-// transposes (270x180 <-> 180x270). `cfg.nx, cfg.ny` hold the NEW dimensions.
+// transposes (216x144 <-> 144x216). `cfg.nx, cfg.ny` hold the NEW dimensions.
 fn rotate_foam_quarter(bi: u32, cw: bool) {
     if bi >= MAX_BUBBLES { return; }
     if foam[bi].alive == 0u { return; }
@@ -1116,7 +1116,7 @@ fn foam_adjust_air(@builtin(local_invocation_id) lid: vec3<u32>) {
         }
         var scale = 1.0;
         if cfg.air_delta < 0.0 && total > 1.0 {
-            let goal = max(total + cfg.air_delta, 120.0);
+            let goal = max(total + cfg.air_delta, 100.0);
             scale = clamp(goal / total, 0.25, 1.0);
         } else if cfg.air_delta > 0.0 {
             var rem = cfg.air_delta;
