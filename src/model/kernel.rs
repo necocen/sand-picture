@@ -10,12 +10,6 @@ use super::uses::uses;
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
-/// A fixed workgroup count.
-#[derive(Clone)]
-pub enum Groups {
-    Fixed(u32),
-}
-
 /// What a kernel is made from.
 #[derive(Clone)]
 pub struct Plan {
@@ -24,7 +18,7 @@ pub struct Plan {
     /// The words of the kernel's own `cfg`, for a kernel that has one in the
     /// place of the model's: the flow solver's level, colour and grid.
     pub config: Option<Vec<u32>>,
-    pub groups: Groups,
+    pub groups: u32,
 }
 impl Plan {
     /// A kernel that runs `entry` of `program` over the buffers the entry
@@ -34,7 +28,7 @@ impl Plan {
             program,
             entry,
             config: None,
-            groups: Groups::Fixed(groups),
+            groups,
         }
     }
 
@@ -194,9 +188,7 @@ impl Pipelines {
                 entries: &entries,
             }),
             pipeline: pipeline.clone(),
-            groups: match plan.groups {
-                Groups::Fixed(groups) => groups,
-            },
+            groups: plan.groups,
             own_config: own,
         }
     }

@@ -1,33 +1,7 @@
-// The carry's capacities, by transport group (a subdivision's third and
-// fifth kernels): the share of the high fluxes' increase over the low ones
-// that a group's stocks can pay, and the sand and gas it has room to gain.
+// The carry's capacities, by transport group (`material_capacity`): the share
+// of the high fluxes' increase over the low ones that a group's stocks can
+// pay, and the sand it has room to gain.
 
-// For each gas identity, the share of the sweeps' increase over the low
-// flux that the group's stock pays (the group label's z).
-@compute @workgroup_size(128) fn gas_capacity(@builtin(global_invocation_id) id:vec3<u32>){
-    if carry_plan.current>=carry_plan.steps{return;}
-    let i=id.x;if i>=cfg.n||group_owner(i)!=i{return;}
-    if group_payload(i).volume.w<=0.{return;}
-    var increase:array<f32,GAS_SLOTS>;var low_out:array<f32,GAS_SLOTS>;
-    for(var member=0u;member<group_count(i);member++){
-      let p=point(group_member(i,member));
-      for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
-        let base=p-select(axis(a),vec2<i32>(0),side==1u);if !valid(base)||!valid(base+axis(a)){continue;}
-        let f=2u*at(base)+a;if internal_face(f){continue;}
-        let sign=select(-1.,1.,side==1u);let origin=1u-side;
-        let amount=common_carrier(f);let upwind=origin==select(1u,0u,amount>=0.);
-        let donor=select(at(base+axis(a)),at(base),origin==0u);
-        let inventory=group_payload(donor).volume;let labels=group_label_index(donor,0u);
-        for(var l=0u;l<GAS_SLOTS;l++){
-            let low=sign*upwind_label_flux(upwind,amount,inventory,scratch[labels+l].x);low_out[l]+=low;
-            increase[l]+=max(sign*source_gas_flux(f,l,origin)-low,0.);
-        }
-      }}
-    }
-    for(var l=0u;l<GAS_SLOTS;l++){
-        let slot=group_label_index(i,l);scratch[slot].z=capacity_ratio(scratch[slot].x-low_out[l],increase[l]);
-    }
-}
 // The outgoing ratio of each phase and the receiving ratio. Hard grains do
 // not pack past the random close packing: 0.64 for equal spheres (Scott
 // and Kilgour 1969), about 0.62-0.66 for this mixture in the 1 mm gap

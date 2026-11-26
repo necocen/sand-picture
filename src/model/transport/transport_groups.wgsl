@@ -97,15 +97,7 @@ fn group_payload(i:u32)->GroupPayload{
     out.momentum[2]=scratch[base+2u].xy;out.momentum[3]=scratch[base+2u].zw;
     let carried=scratch[base+3u];out.stress=carried.yz;out.powder=carried.wx;return out;
 }
-// The group's gas of identity l + 1: (amount, identity, the share of the
-// sweeps' increase that the stock pays (gas_capacity), 0).
-fn group_label_index(i:u32,l:u32)->u32{
-    let owner=group_owner(i);
-    return GROUP_LABEL_ROW*cfg.n+GAS_SLOTS*owner+l;
-}
-fn group_label(i:u32,l:u32)->vec4<f32>{return scratch[group_label_index(i,l)];}
-// Owner i gathers its members' payload and gas identities for this
-// subdivision.
+// Owner i gathers its members' payload for this subdivision.
 fn cache_group(i:u32){
     var value=native_payload(i);let count=group_count(i);
     for(var member=1u;member<count;member++){
@@ -117,11 +109,6 @@ fn cache_group(i:u32){
     scratch[base+1u]=vec4<f32>(value.momentum[0],value.momentum[1]);
     scratch[base+2u]=vec4<f32>(value.momentum[2],value.momentum[3]);
     scratch[base+3u]=vec4<f32>(value.powder.y,value.stress,value.powder.x);
-    for(var l=0u;l<GAS_SLOTS;l++){
-        var amount=geometry[layer_index(i,l)].x;
-        for(var member=1u;member<count;member++){amount+=geometry[layer_index(group_member(i,member),l)].x;}
-        scratch[group_label_index(i,l)]=vec4<f32>(amount,f32(l+1u),0.,0.);
-    }
 }
 // The momentum the amount `amount` of a phase carries out of a payload.
 fn payload_momentum(c:GroupPayload,amount:f32,phase:u32)->vec2<f32>{

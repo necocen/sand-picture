@@ -36,7 +36,7 @@ pub enum Stage {
     TransportPrepare,
     TransportCarry,
     PlugDescent,
-    /// Prototype A: Lagrangian closed-curve deformable foam bubbles.
+    /// Lagrangian closed-curve deformable foam bubbles.
     Foam,
     InterfaceApertures,
 }

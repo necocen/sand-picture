@@ -113,7 +113,7 @@ fn vertex_tensor(c:vec4<u32>,present:vec4<u32>,inside:vec4<f32>)->vec3<f32> {
     if inside.y>0.{present.y=corner_slots(c.y);}
     if inside.z>0.{present.z=corner_slots(c.z);}
     if inside.w>0.{present.w=corner_slots(c.w);}
-    // Prototype A: surface tension is solved semi-implicitly on the 2D closed
+    // Surface tension is solved semi-implicitly on the 2D closed
     // curves (`foam_step`), so the flow solver drops the stiff VOF capillary
     // tensor and keeps only interior gas viscosity damping and bed boundaries.
     value=vec3<f32>(0.);

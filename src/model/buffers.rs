@@ -35,7 +35,7 @@ pub struct Buffers {
     pub strata: wgpu::Buffer,
     /// The bubbles' relabelling: components, films' counts, cells' words.
     pub labels: wgpu::Buffer,
-    /// Prototype A: 2D Lagrangian closed-curve deformable foam bubbles (ping-pong).
+    /// 2D Lagrangian closed-curve deformable foam bubbles (ping-pong).
     pub foam: wgpu::Buffer,
     pub foam_next: wgpu::Buffer,
     /// Fixed-point (1/1024 cell) summary metrics written on demand by `measure_sand`:
@@ -59,9 +59,6 @@ pub struct Buffers {
     pub arrival: wgpu::Buffer,
     /// The slots between bubbles per cell (slab/joints.wgsl).
     pub gaps: wgpu::Buffer,
-    /// The contact fits' list of cells and its indirect workgroup count.
-    pub contact_list: wgpu::Buffer,
-    pub contact_groups: wgpu::Buffer,
 
     /// The flow solver's fields: the streamfunction is state, the rest work.
     pub stream: stream::Fields,
@@ -146,15 +143,6 @@ impl Buffers {
             schedule: blank("common transport schedule", 48),
             arrival: blank("finite arrival source", cells * 96),
             gaps: blank("slots between bubbles per cell", cells * 16),
-            contact_list: blank("contact fit list", 4 * (1 + cells)),
-            contact_groups: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("contact fit workgroups"),
-                size: 12,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::INDIRECT
-                    | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
             stream: stream::Fields::new(device),
         };
         buffers.fill(queue, scene, foam::DEFAULT_AIR_AREA);
@@ -183,8 +171,6 @@ impl Buffers {
             "metrics" => &self.metrics,
             "carry_plan" | "plan" => &self.schedule,
             "gaps" => &self.gaps,
-            "contact_work" => &self.contact_list,
-            "contact_fit_groups" => &self.contact_groups,
             "potential" | "solution" => &self.stream.solution,
             other => self.stream.get(other),
         }
@@ -265,8 +251,6 @@ impl Buffers {
             &self.metrics,
             &self.schedule,
             &self.gaps,
-            &self.contact_list,
-            &self.contact_groups,
         ]
         .into_iter()
         .chain(self.stream.all())

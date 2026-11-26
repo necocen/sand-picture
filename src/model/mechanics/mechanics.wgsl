@@ -506,7 +506,7 @@ fn entry_resistance(f:u32)->f32{
     faces[f].coarse_momentum.w=shear.bound;
     var force=load.w;let gas_fraction=face_gas(f);var gas_weight=0.;var gas_force=0.;
     if gas_fraction>0. {
-        // Prototype A: Lagrangian closed-curve bubbles (`foam_step`) already solve
+        // Lagrangian closed-curve bubbles (`foam_step`) already solve
         // buoyancy, Young-Laplace surface tension, and plate meniscus drag. Stationary
         // bubbles act as impermeable Brinkman obstacles (`5e6`) so water flows cleanly
         // around them through wet throats; moving bubbles couple with water-inertia

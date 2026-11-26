@@ -1,4 +1,4 @@
-//! Prototype A: 2D Lagrangian closed-curve deformable foam bubble network.
+//! 2D Lagrangian closed-curve deformable foam bubble network.
 //!
 //! Each bubble is represented as a closed CCW polygon of `FOAM_VERTS` vertices
 //! in cell coordinates `[0, NX] x [0, NY]`, carrying its exact conserved area,

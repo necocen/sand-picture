@@ -1,4 +1,4 @@
-// Prototype A: 2D Lagrangian closed-curve deformable foam bubble network.
+// 2D Lagrangian closed-curve deformable foam bubble network.
 //
 // Replaces 9-slot VOF gas advection, PLIC/contact reconstruction, connected-component
 // relabelling, and stiff 5x5 VOF surface tension with explicit 28-vertex closed curves:

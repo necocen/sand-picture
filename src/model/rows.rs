@@ -67,15 +67,12 @@ pub const SCRATCH: &[Use] = &[
     // Per face, the first projection's velocity.
     ("FACE_PREDICTION", 2),
     // The transport's groups: what a cell asks of a group, the group's
-    // union-find parent, a cell's group (owner, size, free inventory), the
-    // group's contents and its gas by identity.
+    // union-find parent, a cell's group (owner, size, free inventory), and
+    // the group's contents.
     ("GROUP_REQUEST", 1),
     ("GROUP_PARENT", 1),
     ("GROUP_MAP", 1),
     ("GROUP_PAYLOAD", 4),
-    ("GROUP_LABEL", SLOTS),
-    // Per face, the gas flux by identity.
-    ("FLUX", 2 * SLOTS),
     // Each group's outgoing ratio per phase, and its receiving ratio
     // (transport_work.wgsl).
     ("OUTGOING_CAPACITY", 1),
