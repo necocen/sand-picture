@@ -11,23 +11,39 @@ fn traced_grains(face:Face)->vec2<f32>{
     let g=face.composition.yz;
     return select(vec2<f32>(0.),g,min(g,face.composition.w*g)>=vec2<f32>(TRACE_VOLUME));
 }
+fn grain_stress_axis_weight(p:vec2<i32>,a:u32)->f32{
+    let step_a=axis(a);let step_t=axis(1u-a);var w=0.;
+    for(var d=-1;d<=1;d++){
+        let tw=transverse_weight(d);
+        let b0=p+d*step_t-step_a;
+        if valid(b0)&&valid(b0+step_a){
+            let f=faces[2u*at(b0)+a];let g=traced_grains(f);
+            w+=tw*f.coarse_momentum.z*f.composition.w*(g.x+g.y);
+        }
+        let b1=p+d*step_t;
+        if valid(b1)&&valid(b1+step_a){
+            let f=faces[2u*at(b1)+a];let g=traced_grains(f);
+            w+=tw*f.coarse_momentum.z*f.composition.w*(g.x+g.y);
+        }
+    }
+    return w;
+}
 // Per cell: the weights of its grain velocity per axis, its stress force
 // and the bound of that force's absolute row, both per bulk volume (per
 // grain volume a nearly empty cell's are unbounded), and its pressure mode.
 @compute @workgroup_size(128) fn prepare_grain_stress(@builtin(global_invocation_id) id:vec3<u32>) {
-    let i=id.x;if i>=cfg.n{return;}let p=point(i);var weights=vec2<f32>(0.);
-    for(var a=0u;a<2u;a++){for(var d=-1;d<=1;d++){for(var side=0u;side<2u;side++){
-        let base=p+d*axis(1u-a)-select(axis(a),vec2<i32>(0),side==1u);
-        if !valid(base)||!valid(base+axis(a)){continue;}
-        let f=faces[2u*at(base)+a];let g=traced_grains(f);
-        weights[a]+=transverse_weight(d)*f.coarse_momentum.z*f.composition.w*(g.x+g.y);
-    }}}
-    let force=stress_force(p);var normalized=vec2<f32>(0.);var bound=vec2<f32>(0.);
-    let amount_bound=(grain_amount(p-axis(0u))+grain_amount(p+axis(0u))+grain_amount(p-axis(1u))+grain_amount(p+axis(1u)))/(2.*cfg.h)+GAP_SHEAR*grain_amount(p);
-    normalized=force;bound=vec2<f32>(amount_bound);
+    let i=id.x;if i>=cfg.n{return;}let p=point(i);
+    let weights=vec2<f32>(grain_stress_axis_weight(p,0u),grain_stress_axis_weight(p,1u));
     put_grain_weights(i,weights);put_pressure_mode(i,select(0.,1.,normal_pressure_mode(p)));
-    put_grain_force(i,normalized);
-    put_grain_force_bound(i,bound);
+    if weights.x<=0.&&weights.y<=0.{
+        put_grain_force(i,vec2<f32>(0.));
+        put_grain_force_bound(i,vec2<f32>(0.));
+        return;
+    }
+    let force=stress_force(p);
+    let amount_bound=(grain_amount(p-axis(0u))+grain_amount(p+axis(0u))+grain_amount(p-axis(1u))+grain_amount(p+axis(1u)))/(2.*cfg.h)+GAP_SHEAR*grain_amount(p);
+    put_grain_force(i,force);
+    put_grain_force_bound(i,vec2<f32>(amount_bound));
 }
 struct ShearLoad { velocity:vec3<f32>,common_force:f32,relative:f32,bound:f32 }
 // force * mobility / amount; split exponents keep a trace amount in range.
@@ -138,40 +154,48 @@ fn overburden_stress(i:u32)->f32{
     }
     return LATERAL_STRESS_RATIO*min(weight,saturation);
 }
+// An isolated 1-3 cell speck floating in open water or clinging to the top
+// glass (no bed, bubble, or packed body of >= 3 neighbors around it) cannot
+// arch against the glass plates and must fall under gravity.
+fn speck_supported(i:u32,c:Cell)->bool{
+    let p=point(i);
+    if p.x==0||p.x==i32(cfg.nx)-1||p.y==0{return true;}
+    var packed_nbrs=0u;
+    for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
+        if dx==0&&dy==0{continue;}
+        let q=p+vec2<i32>(dx,dy);
+        if !valid(q){continue;}
+        let cj=cells[at(q)];
+        if cj.bed.z>0.||cj.volume.gas>0.10{return true;}
+        let gj=grains(cj);let sj=gj.x+gj.y;let wj=max(cj.volume.water,0.)+sj;
+        if wj>0.&&sj>=FREEZING_PACKING*wj{
+            packed_nbrs+=1u;
+            if packed_nbrs>=3u{return true;}
+        }
+    }}
+    return false;
+}
 // The friction limit of a cell's layer (Pa): mu times the larger of its wet
 // contact pressure plus dilatancy suction and of K sigma_v.
 fn friction_limit(i:u32,c:Cell,mu:f32)->f32{
+    let cached=scratch[OVERBURDEN_ROW*cfg.n+i];
+    if cached.y<=0.{return 0.;}
     let wet=dense_volume(i);let g=grains(c);
-    if wet<=.01||g.x+g.y<=.005{return 0.;}
-    // An isolated 1-3 cell speck floating in open water or clinging to the top
-    // glass (no bed, bubble, or packed body of >= 3 neighbors around it) cannot
-    // arch against the glass plates and must fall under gravity.
-    let p=point(i);
-    if p.x>0&&p.x<i32(cfg.nx)-1&&p.y>0{
-        var supported=false;var packed_nbrs=0u;
-        for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
-            if dx==0&&dy==0{continue;}
-            let q=p+vec2<i32>(dx,dy);
-            if !valid(q){continue;}
-            let cj=cells[at(q)];
-            let gj=grains(cj);let sj=gj.x+gj.y;let wj=max(cj.volume.water,0.)+sj;
-            if cj.bed.z>0.||cj.volume.gas>0.10{supported=true;}
-            if wj>0.&&sj>=FREEZING_PACKING*wj{packed_nbrs+=1u;}
-        }}
-        if !supported&&packed_nbrs<3u{return 0.;}
-    }
     // A layer whose support flows away slides to fill the voids on its load
     // alone: the suction resists the shear of a packing that must dilate,
     // not a filling the kinematic model imposes. Only in the slow flow an
     // orifice admits (voids no faster than the packing breaches): above a
     // free fall the layer keeps its dilatancy strength.
-    let voids=void_speed(i);
-    let suction=select(c.stress.suction,0.,voids>CREEP&&voids<breaching_speed(i));
-    let load=select(c.stress.pressure,0.,free_face(i));
+    var suction=c.stress.suction;
+    if suction!=0.{
+        let voids=void_speed(i);
+        if voids>CREEP&&voids<breaching_speed(i){suction=0.;}
+    }
+    let load=select(c.stress.pressure,0.,cached.z>0.);
     // Tipped toward flat, the grains' submerged weight across the gap lies
     // on the lower plate: half of it on each plate's friction.
     let across=.5*dot(g,RHO.yz-vec2<f32>(RHO.x))/wet*plate_gravity()*PLATE_GAP;
-    return mu*(max(max(load+suction,0.)/wet,overburden_stress(i))+across);
+    return mu*(max(max(load+suction,0.)/wet,cached.x)+across);
 }
 // A packed cell beside open water through which the grains it releases fall
 // away (body_faces) is breaching and bears no normal effective stress: the
@@ -209,6 +233,8 @@ const VOID_SPREAD:f32=.26*PLATE_GAP;
 // with nothing to fill it, lose its dilatancy suction (friction_limit) and
 // loosen. Sand that is no link stands on nothing packed: the carry moves it.
 fn void_speed(i:u32)->f32{
+    let set_in=geometry[SET_IN_ROW*cfg.n+i];
+    if set_in.z<=0.{return 0.;}
     let p=point(i);if p.y==0{return 0.;}
     let own=grains(cells[i]);let solid=own.x+own.y;if solid<=0.{return 0.;}
     if bubble_inside(cells[at(p-axis(1u))]){return 0.;}
@@ -218,9 +244,7 @@ fn void_speed(i:u32)->f32{
         let down=max(-grain_speed(c).y,0.)*min((g.x+g.y)/solid,1.);
         speed+=select(k,1.-2.*k,dx==0)*down;
     }
-    let set_in=geometry[SET_IN_ROW*cfg.n+i];
-    if set_in.z>0.{return speed*set_in.y;}
-    return 0.;
+    return speed*set_in.y;
 }
 fn traction(i:u32)->Traction{
     let c=cells[i];let state=geometry[HOLD_ROW*cfg.n+i];
@@ -327,9 +351,39 @@ fn joint_drag(f:u32)->vec2<f32>{
     let total=max(fractions(l)+fractions(r),vec3<f32>(0.));
     let amount=total.x+total.y+total.z;
     if amount<=1e-30{faces[f]=out;return;}let c=total/amount;
+    let film=film_narrowness(out.coarse_momentum.z);
+    if c.y+c.z<=0.{
+        let inv=1./(table[0].x*film+RHO.x/cfg.dt);
+        let vl=max(l.volume.water,0.);let vr=max(r.volume.water,0.);
+        let vw=vl+vr;
+        var old_w=0.;
+        if vw>0.{
+            let mw=select(0.,l.momentum[0][a],vl>0.)+select(0.,r.momentum[0][a],vr>0.);
+            old_w=mw/vw;
+        }
+        let lap=viscous_laplacian_water(p,a,l,r,old_w);
+        let fw=RHO.x*old_w/cfg.dt+9.4000000000000000e-4*lap/(cfg.h*cfg.h);
+        let uw=inv*fw;
+        var locked=false;
+        if l.volume.gas>0.||r.volume.gas>0.{
+            locked=(a==0u&&plug_wall(i,j))||bubble_on_packing(f);
+        }
+        if !locked&&a==1u{
+            let lim=JAMMING_WIDTH*GRAIN_DIAMETER.y;
+            if vl*cfg.h<lim&&raft_film(i){locked=true;}
+            else if vr*cfg.h<lim&&raft_film(j){locked=true;}
+        }
+        let mode=select(0.,2.,locked);
+        out.water_momentum.z=mode;
+        out.composition=vec4<f32>(c,.5*amount);
+        out.response=select(vec4<f32>(inv,0.,0.,inv),vec4<f32>(inv),locked);
+        out.grain_response=vec4<f32>(0.);
+        out.velocity=select(vec4<f32>(uw,0.,0.,uw),vec4<f32>(uw),locked);
+        faces[f]=out;
+        return;
+    }
     var present=select(vec3<f32>(0.),vec3<f32>(1.),c>vec3<f32>(0.));
     let friction=face_friction(p,a,i,j,c.y+c.z);let plate=vec2<f32>(friction.y)+joint_drag(f);
-    let film=film_narrowness(out.coarse_momentum.z);
     let wl=max(fractions(l),vec3<f32>(0.));let wr=max(fractions(r),vec3<f32>(0.));
     let sl=wl.x+wl.y+wl.z;let sr=wr.x+wr.y+wr.z;
     let pl=select(0.,(wl.y+wl.z)/max(sl,1e-30),sl>0.);let pr=select(0.,(wr.y+wr.z)/max(sr,1e-30),sr>0.);
@@ -344,13 +398,17 @@ fn joint_drag(f:u32)->vec2<f32>{
     // bottom of a film between bubbles): free to slip, grains and water would
     // counter-flow there with a momentum the transport never carries away.
     var mode=grain_face_mode(f,c);if (a==0u&&plug_wall(i,j))||bubble_on_packing(f)||(a==1u&&(raft_film(i)||raft_film(j))){mode=2.;}out.water_momentum.z=mode;
-    var old=vec3<f32>(0.);for(var phase=0u;phase<3u;phase++){old[phase]=face_history(p,a,phase);}
+    var old=vec3<f32>(0.);
+    if present.x>0.{old.x=face_history(p,a,0u);}
+    if present.y>0.{old.y=face_history(p,a,1u);}
+    if present.z>0.{old.z=face_history(p,a,2u);}
     // Inertia, and the weight relative to the water's. The water's own weight
     // is a gradient the pressure takes whole; the stream solve weighs a force
     // over the mobile dual volume and reads it over the free area, which
     // differ on a face touching a bed cell, so carried whole the weight would
     // curl over every step of the deposit and drive the water up its slopes.
-    var force=RHO*present*old/cfg.dt-(RHO-vec3<f32>(RHO.x))*present*select(-cfg.lateral,cfg.gravity,a==1u);let lap=viscous_laplacian(p,a,0u);
+    var force=RHO*present*old/cfg.dt-(RHO-vec3<f32>(RHO.x))*present*select(-cfg.lateral,cfg.gravity,a==1u);
+    var lap=0.;if present.x>0.{lap=viscous_laplacian_water(p,a,l,r,old.x);}
     force+=vec3<f32>(9.4000000000000000e-4*present.x*lap/(cfg.h*cfg.h),present.yz*friction.x);
     var u=m*force;var rp=m*present;var rg=m*vec3<f32>(0.,present.y,present.z);
     var relative_mobility=0.;
@@ -496,15 +554,23 @@ fn entry_resistance(f:u32)->f32{
     var weight=0.;if face.response.w>0.{weight=face.composition.w/face.response.w;}
     // face.volume keeps the preferred velocities until project_faces sets
     // the final ones: no cell repeats the shear scatter for its faces.
-    let shear=shear_force(f);let load=grain_load(f,weight,shear);let u=load.xyz;faces[f].volume=vec4<f32>(u,0.);
-    if coarse_locked(f){
-        let solid=face.composition.w*(face.composition.y+face.composition.z);
-        let normal=response_product(relative_pressure_force(f),face.water_momentum.w,solid);
-        // w holds the unprojected relative drive until project_faces.
-        faces[f].volume.w=face.water_momentum.x+normal+shear.relative;
+    let solid=face.composition.y+face.composition.z;
+    var force=weight*face.velocity.w;
+    if solid<=0.{
+        faces[f].volume=vec4<f32>(face.velocity.xyz,0.);
+        faces[f].coarse_momentum.w=0.;
+    }else{
+        let shear=shear_force(f);let load=grain_load(f,weight,shear);let u=load.xyz;faces[f].volume=vec4<f32>(u,0.);
+        if coarse_locked(f){
+            let amount=face.composition.w*solid;
+            let normal=response_product(relative_pressure_force(f),face.water_momentum.w,amount);
+            // w holds the unprojected relative drive until project_faces.
+            faces[f].volume.w=face.water_momentum.x+normal+shear.relative;
+        }
+        faces[f].coarse_momentum.w=shear.bound;
+        force=load.w;
     }
-    faces[f].coarse_momentum.w=shear.bound;
-    var force=load.w;let gas_fraction=face_gas(f);var gas_weight=0.;var gas_force=0.;
+    let gas_fraction=face_gas(f);
     if gas_fraction>0. {
         // Lagrangian closed-curve bubbles (`foam_step`) already solve
         // buoyancy, Young-Laplace surface tension, and plate meniscus drag. Stationary
@@ -518,15 +584,16 @@ fn entry_resistance(f:u32)->f32{
         let moving=smoothstep(.0005,.004,abs(u_gas));
         let impedance=mix(mix(RHO.x/cfg.dt,5e6,block),RHO.x/cfg.dt,moving);
         let max_force=gas_fraction*RHO.x*STANDARD_GRAVITY;
-        gas_weight=gas_fraction*impedance;
-        gas_force=clamp(gas_weight*u_gas,-max_force,max_force);
+        let gas_weight=gas_fraction*impedance;
+        let gas_force=clamp(gas_weight*u_gas,-max_force,max_force);
+        // On a gliding face the sand strip stands and the gas strip moves at the
+        // face's mean velocity times glide_ratio: seen by the mean, its weight
+        // is the gas's times that ratio squared and its force the gas's times it.
+        if glides(f){let ratio=glide_ratio(f);weight=gas_weight*ratio*ratio;force=gas_force*ratio;}
+        else{weight+=gas_weight;force+=gas_force;}
+        weight+=entry_resistance(f);
     }
-    // On a gliding face the sand strip stands and the gas strip moves at the
-    // face's mean velocity times glide_ratio: seen by the mean, its weight
-    // is the gas's times that ratio squared and its force the gas's times it.
-    if glides(f){let ratio=glide_ratio(f);weight=gas_weight*ratio*ratio;force=gas_force*ratio;}
-    else{weight+=gas_weight;force+=gas_force;}
-    weight+=boundary_shear(f)+entry_resistance(f);
+    weight+=boundary_shear(f);
     let area=free_area(f);
     if area<=0.{faces[f].coarse_momentum.x=0.;faces[f].coarse_momentum.y=0.;return;}
     faces[f].coarse_momentum.x=(weight/area)/area*cfg.dt/997.;
@@ -538,18 +605,29 @@ fn entry_resistance(f:u32)->f32{
 // A cell's grain velocity per axis and the bound of its shear response: the
 // means over its faces with the weights of prepare_grain_stress.
 fn prepare_velocity(i:u32,predictor:bool) {
-    if i>=cfg.n{return;}let p=point(i);var sum=vec2<f32>(0.);var bound=vec2<f32>(0.);let weights=grain_work(i).weights;
-    for(var a=0u;a<2u;a++){for(var d=-1;d<=1;d++){for(var side=0u;side<2u;side++){
-        let base=p+d*axis(1u-a)-select(axis(a),vec2<i32>(0),side==1u);
-        if !valid(base)||!valid(base+axis(a)){continue;}
-        let f=2u*at(base)+a;let face=faces[f];let g=traced_grains(face);let solid=g.x+g.y;
-        if solid<=0.{continue;}
-        if weights[a]>0.{
-            let weight=transverse_weight(d)*clamp(phase_ratio(face.coarse_momentum.z*face.composition.w*solid,weights[a]),0.,1.);
-            sum[a]+=weight*(dot(g,grain_sample(f,predictor).yz)/solid);
-            bound[a]+=weight*face.coarse_momentum.w;
+    if i>=cfg.n{return;}let weights=grain_work(i).weights;
+    if weights.x<=0.&&weights.y<=0.{
+        put_grain_velocity(i,vec2<f32>(0.));
+        put_grain_velocity_bound(i,vec2<f32>(0.));
+        return;
+    }
+    let p=point(i);var sum=vec2<f32>(0.);var bound=vec2<f32>(0.);
+    for(var a=0u;a<2u;a++){
+        if weights[a]<=0.{continue;}
+        let step_a=axis(a);let step_t=axis(1u-a);
+        for(var d=-1;d<=1;d++){
+            let tw=transverse_weight(d);
+            for(var side=0u;side<2u;side++){
+                let base=p+d*step_t-select(step_a,vec2<i32>(0),side==1u);
+                if !valid(base)||!valid(base+step_a){continue;}
+                let f=2u*at(base)+a;let face=faces[f];let g=traced_grains(face);let solid=g.x+g.y;
+                if solid<=0.{continue;}
+                let weight=tw*clamp(phase_ratio(face.coarse_momentum.z*face.composition.w*solid,weights[a]),0.,1.);
+                sum[a]+=weight*(dot(g,grain_sample(f,predictor).yz)/solid);
+                bound[a]+=weight*face.coarse_momentum.w;
+            }
         }
-    }}}
+    }
     put_grain_velocity(i,sum);
     put_grain_velocity_bound(i,bound);
 }
@@ -632,7 +710,7 @@ fn return_grains(i:u32,predictor:bool) {
         pressure=particle_pressure(solid,wet,scaled_norm(strain),div,diagonal,c.stress.pressure);
         returned=shear_return(trial,solid,wet,pressure,compliance,mu);
     }
-    if !predictor{cache_pressure_problem(i,div,diagonal,compliance,tau,vec3<f32>(solid,wet,scaled_norm(strain)),pressure);}
+    if !predictor{cache_pressure_problem(i,div,diagonal,compliance,tau,vec3<f32>(solid,wet,scaled_norm(strain)),pressure,mu);}
     // The law's pressure above the load is unmet dilation demand: a skeleton
     // that shears and cannot dilate. It is pore-water suction, booked with
     // the Darcy suction of the dilation that does happen; only the load is

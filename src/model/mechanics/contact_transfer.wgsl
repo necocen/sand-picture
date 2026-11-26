@@ -3,8 +3,13 @@
 // from the last stress solve. Project its retained traction into the new
 // row in the positive response metric, without carrying it to other cells.
 @compute @workgroup_size(128) fn transfer_contact(@builtin(global_invocation_id) id:vec3<u32>){
-    let i=id.x;if i>=cfg.n{return;}let p=point(i);
-    let old=geometry[SOLVE_APERTURE_ROW*cfg.n+i];let history=geometry[SOLVE_STATE_ROW*cfg.n+i];
+    let i=id.x;if i>=cfg.n{return;}
+    let history=geometry[SOLVE_STATE_ROW*cfg.n+i];
+    if history.x<=0.||history.y<=0.{
+        cells[i].stress.pressure=0.;cells[i].stress.load=0.;return;
+    }
+    let p=point(i);
+    let old=geometry[SOLVE_APERTURE_ROW*cfg.n+i];
     var overlap=0.;var diagonal=0.;
     for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
         let base=p-select(axis(a),vec2<i32>(0),side==1u);

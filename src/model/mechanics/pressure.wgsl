@@ -75,33 +75,41 @@ fn cache_pressure_couplings(i:u32){
         scratch[PRESSURE_COUPLING_ROW*cfg.n+f]=vec4<f32>(coupling,0.,0.,0.);
     }
     var factor=0.;if wet>0.&&!(grain_work(i).pressure_mode==0.){factor=1./wet;}
-    scratch[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(c.stress.pressure,factor,0.,0.);
+    scratch[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(c.stress.pressure,factor,0.,-c.stress.pressure*factor);
     scratch[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(0.);
 }
 // The local problem of a cell whose return applies (dilation rate at the
 // solved flow, pressure response, shear compliance, trial strength), its
-// material (grain and wet volume, shear-rate norm), its first iterate and
-// its trial stress.
-fn cache_pressure_problem(i:u32,theta:f32,alpha:f32,beta:f32,trial:vec2<f32>,material:vec3<f32>,pressure:f32){
+// material (grain and wet volume, shear-rate norm, friction mu), its first
+// iterate and its trial stress.
+fn cache_pressure_problem(i:u32,theta:f32,alpha:f32,beta:f32,trial:vec2<f32>,material:vec3<f32>,pressure:f32,mu:f32){
     scratch[PRESSURE_PROBLEM_ROW*cfg.n+i]=vec4<f32>(theta,alpha,beta,scaled_norm(trial));
-    scratch[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(material,1.);
-    scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(pressure,0.);
+    scratch[PRESSURE_MATERIAL_ROW*cfg.n+i]=vec4<f32>(material,mu);
+    let base=scratch[PRESSURE_ITERATE_ROW*cfg.n+i];
+    let p0=max(pressure,0.);
+    scratch[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(base.x,base.y,p0,(p0-base.x)*base.y);
     scratch[PRESSURE_TRIAL_ROW*cfg.n+i]=vec4<f32>(trial,0.,0.);
 }
-fn pressure_iterate(i:u32)->f32{return scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z;}
 // Change of the wet pressure on the faces since the flow solve.
-fn pressure_shift(i:u32)->f32{
-    let base=scratch[PRESSURE_ITERATE_ROW*cfg.n+i];return (base.z-base.x)*base.y;
-}
-fn coupled_last(i:u32,p:vec2<i32>)->f32{
-    let own=pressure_shift(i);var coupled=0.;
-    for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
-        let base=p-select(axis(a),vec2<i32>(0),side==1u);
-        if !valid(base)||!valid(base+axis(a)){continue;}
-        let f=2u*at(base)+a;let coupling=scratch[PRESSURE_COUPLING_ROW*cfg.n+f].x;if coupling==0.{continue;}
-        let other=select(at(base),at(base+axis(a)),side==1u);
-        coupled+=coupling*(own-pressure_shift(other));
-    }}
+fn pressure_shift(i:u32)->f32{return scratch[PRESSURE_ITERATE_ROW*cfg.n+i].w;}
+fn coupled_shift(i:u32,p:vec2<i32>,own:f32)->f32{
+    var coupled=0.;
+    if p.x>0{
+        let left=i-1u;let c=scratch[PRESSURE_COUPLING_ROW*cfg.n+2u*left].x;
+        if c!=0.{coupled+=c*(own-pressure_shift(left));}
+    }
+    if p.x+1<i32(cfg.nx){
+        let c=scratch[PRESSURE_COUPLING_ROW*cfg.n+2u*i].x;
+        if c!=0.{coupled+=c*(own-pressure_shift(i+1u));}
+    }
+    if p.y>0{
+        let down=i-cfg.nx;let c=scratch[PRESSURE_COUPLING_ROW*cfg.n+2u*down+1u].x;
+        if c!=0.{coupled+=c*(own-pressure_shift(down));}
+    }
+    if p.y+1<i32(cfg.ny){
+        let c=scratch[PRESSURE_COUPLING_ROW*cfg.n+2u*i+1u].x;
+        if c!=0.{coupled+=c*(own-pressure_shift(i+cfg.nx));}
+    }
     return coupled;
 }
 // The cell of colour `color` (x + y even or odd) that sweep thread t serves:
@@ -118,31 +126,30 @@ fn colour_cell(t:u32,color:u32)->u32{
 // stress, that of a local solve.
 fn relax_pressure(t:u32,color:u32,last:bool){
     let i=colour_cell(t,color);if i>=cfg.n{return;}
+    let material=scratch[PRESSURE_MATERIAL_ROW*cfg.n+i];
+    if material.w<=0.{return;}
     let p=point(i);
-    let problem=scratch[PRESSURE_PROBLEM_ROW*cfg.n+i];let material=scratch[PRESSURE_MATERIAL_ROW*cfg.n+i];
-    var pressure=0.;var returned=0.;let old=pressure_iterate(i);let mu=grain_friction(grains(cells[i]));
-    if material.w>0.{
-        let own=pressure_shift(i);var coupled=0.;
-        for(var a=0u;a<2u;a++){for(var side=0u;side<2u;side++){
-            let base=p-select(axis(a),vec2<i32>(0),side==1u);
-            if !valid(base)||!valid(base+axis(a)){continue;}
-            let f=2u*at(base)+a;let coupling=scratch[PRESSURE_COUPLING_ROW*cfg.n+f].x;if coupling==0.{continue;}
-            let other=select(at(base),at(base+axis(a)),side==1u);
-            coupled+=coupling*(own-pressure_shift(other));
-        }}
-        let theta=problem.x+coupled/material.y;
-        if problem.z>1e-30&&(problem.y>1e-30||theta==0.){
-            let state=joint_return(material.x,material.y,theta,problem.y,problem.z,old,problem.w,mu);
-            pressure=state.x;returned=state.y;
-        }else{
-            pressure=particle_pressure(material.x,material.y,material.z,theta,problem.y,old);
-            returned=shear_return(problem.w,material.x,material.y,pressure,problem.z,mu);
-        }
+    let problem=scratch[PRESSURE_PROBLEM_ROW*cfg.n+i];
+    let iter=scratch[PRESSURE_ITERATE_ROW*cfg.n+i];
+    let old=iter.z;let mu=material.w;
+    let theta=problem.x+coupled_shift(i,p,iter.w)/material.y;
+    var pressure=0.;var returned=0.;
+    if problem.z>1e-30&&(problem.y>1e-30||theta==0.){
+        let state=joint_return(material.x,material.y,theta,problem.y,problem.z,old,problem.w,mu);
+        pressure=state.x;returned=state.y;
+    }else{
+        pressure=particle_pressure(material.x,material.y,material.z,theta,problem.y,old);
+        if last{returned=shear_return(problem.w,material.x,material.y,pressure,problem.z,mu);}
     }
-    if !last{scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(old+OMEGA*(pressure-old),0.);return;}
-    scratch[PRESSURE_ITERATE_ROW*cfg.n+i].z=max(pressure,0.);
-    if material.w==0.{return;}
-    let theta_last=problem.x+coupled_last(i,p)/material.y;
+    if !last{
+        let next=max(old+OMEGA*(pressure-old),0.);
+        scratch[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(iter.x,iter.y,next,(next-iter.x)*iter.y);
+        return;
+    }
+    let next=max(pressure,0.);
+    let own=(next-iter.x)*iter.y;
+    scratch[PRESSURE_ITERATE_ROW*cfg.n+i]=vec4<f32>(iter.x,iter.y,next,own);
+    let theta_last=problem.x+coupled_shift(i,p,own)/material.y;
     let darcy=dilatancy_suction(i,theta_last);
     if darcy>0.{returned=shear_return(problem.w,material.x,material.y,pressure+darcy,problem.z,mu);}
     if pressure+darcy<=0.{put_returned_stress(i,vec4<f32>(0.));put_returned_suction(i,0.);return;}

@@ -20,7 +20,7 @@ fn wet_polygon(i:u32)->WetPolygon{
     p.points[0]=vec2<f32>(-.5,-.5);p.points[1]=vec2<f32>(.5,-.5);
     p.points[2]=vec2<f32>(.5,.5);p.points[3]=vec2<f32>(-.5,.5);
     let gas=outer_gas_shapes(i);
-    /*loop: slower written out*/for(var k=0u;k<2u;k++){
+    for(var k=0u;k<2u;k++){
         if gas.present[k]>0u{p=clip_wet(p,gas.shapes[k].xy,gas.shapes[k].z);}
     }return p;
 }
@@ -46,7 +46,7 @@ fn polygon_area(p:WetPolygon)->f32{
             let p=wet_polygon(i);let area=polygon_area(p);let bed_area=fraction*area;
             out.z=area;var lower=0.;var upper=1.;
             if area>0.{
-                /*loop: slower written out*/for(var iteration=0u;iteration<24u;iteration++){
+                for(var iteration=0u;iteration<24u;iteration++){
                     let middle=.5*(lower+upper);
                     let amount=polygon_area(clip_wet(p,vec2<f32>(0.,-1.),.5-middle));
                     if amount<bed_area{lower=middle;}else{upper=middle;}
@@ -57,6 +57,12 @@ fn polygon_area(p:WetPolygon)->f32{
         out.y=(c.bed.x+c.bed.y)/c.bed.z;
     }
     geometry[BED_OCCUPANCY_ROW*cfg.n+i]=out;
+    var overburden=vec4<f32>(0.);
+    let g=grains(c);
+    if dense_volume(i)>.01&&g.x+g.y>.005&&speck_supported(i,c){
+        overburden=vec4<f32>(overburden_stress(i),1.,select(0.,1.,free_face(i)),0.);
+    }
+    scratch[OVERBURDEN_ROW*cfg.n+i]=overburden;
 }
 // The interval that cell i's bed covers of the cell's edge on `side` (-0.5
 // or 0.5) of axis a, in cell coordinates along the edge, or zero: a side
@@ -68,7 +74,7 @@ fn bed_edge_interval(i:u32,a:u32,side:f32)->vec2<f32>{
     if a==0u{span.y=min(span.y,bed.x-.5);}
     else if side>0.&&bed.x<1.{return vec2<f32>(0.);}
     let gas=outer_gas_shapes(i);
-    /*loop: slower written out*/for(var k=0u;k<2u;k++){
+    for(var k=0u;k<2u;k++){
         if gas.present[k]==0u{continue;}
         let shape=gas.shapes[k];let rhs=shape.z-shape[a]*side;let tangent=shape[1u-a];
         if tangent>0.{span.x=max(span.x,rhs/tangent);}

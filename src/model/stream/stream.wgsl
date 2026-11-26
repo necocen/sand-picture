@@ -78,7 +78,7 @@ fn corner_slots(c:u32)->u32 {
 // is part of the sum's bits.
 fn vertex_tensor(c:vec4<u32>,present:vec4<u32>,inside:vec4<f32>)->vec3<f32> {
     var value=vec3<f32>(0.);var seen=0u;
-    /*loop: slower written out*/for(var corner=0u;corner<4u;corner++){
+    for(var corner=0u;corner<4u;corner++){
         var fresh=present[corner]&~seen;seen|=present[corner];
         loop{
             if fresh==0u{break;}
@@ -129,7 +129,7 @@ fn vertex_tensor(c:vec4<u32>,present:vec4<u32>,inside:vec4<f32>)->vec3<f32> {
     // work on a divergence-free flow's right-hand side.
     if !outside_boundary(p){
         var least=1.;
-        /*loop: slower written out*/for(var corner=0u;corner<4u;corner++){
+        for(var corner=0u;corner<4u;corner++){
             var gas=0.;var slots=present[corner];
             loop{
                 if slots==0u{break;}
@@ -142,7 +142,7 @@ fn vertex_tensor(c:vec4<u32>,present:vec4<u32>,inside:vec4<f32>)->vec3<f32> {
     }
     tensor[i]=vec4<f32>(cfg.capillary*value,select(0.,1.,body_boundary(p)));
     if any(value!=vec3<f32>(0.)){
-        /*loop: slower written out*/for(var y=-1;y<=1;y++){/*loop: slower written out*/for(var x=-1;x<=1;x++){
+        for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
             let d=vec2<i32>(x,y);tensor[gradient_index(p,d)]=gradient_basis(p,d);
         }}
     }
@@ -154,30 +154,38 @@ fn vertex_tensor(c:vec4<u32>,present:vec4<u32>,inside:vec4<f32>)->vec3<f32> {
 // the old circulation can have a very large energy in the new operator.
 @compute @workgroup_size(POINT_THREADS) fn assemble(@builtin(global_invocation_id) id:vec3<u32>) {
     let i=id.x;if i>=cfg.nx*cfg.ny{return;}let p=vec2<i32>(i32(i%cfg.nx),i32(i/cfg.nx));var row:Row;
-    if boundary(p){row.a[12]=1.;rows[i]=row;solution[i]=0.;return;}
+    if boundary(p){row.a[12]=1.;rows[i]=row;solution[i]=0.;anchors[i]=FIVE_POINT_FLAG;return;}
     let x=u32(p.x);let y=u32(p.y);let e=edge(x,y,0u);let w=edge(x-1u,y,0u);let n=edge(x,y,1u);let s=edge(x,y-1u,1u);
     row.a[12]=e.x+w.x+n.x+s.x;row.rhs=rhs(p);
     if !boundary(p-vec2<i32>(1,0)){row.a[11]=-w.x;}if !boundary(p+vec2<i32>(1,0)){row.a[13]=-e.x;}
     if !boundary(p-vec2<i32>(0,1)){row.a[7]=-s.x;}if !boundary(p+vec2<i32>(0,1)){row.a[17]=-n.x;}
+    var five_point=true;
     for(var cy=-1;cy<=1;cy++){for(var cx=-1;cx<=1;cx++){
         let offset=vec2<i32>(cx,cy);let center=p+offset;if !valid(center,cfg.nx,cfg.ny){continue;}
-        let t=tensor[at(center,cfg.nx)].xyz;if all(t==vec3<f32>(0.)){continue;}let a=gradient(center,-offset);
+        let t=tensor[at(center,cfg.nx)].xyz;if all(t==vec3<f32>(0.)){continue;}
+        five_point=false;let a=gradient(center,-offset);
         for(var dy=-1;dy<=1;dy++){for(var dx=-1;dx<=1;dx++){
             let d=vec2<i32>(dx,dy);let q=center+d;if !valid(q,cfg.nx,cfg.ny)||boundary(q){continue;}
             row.a[slot(offset+d)]+=gram(a,gradient(center,d),t);
         }}
     }}
     rows[i]=row;
+    anchors[i]=select(0u,FIVE_POINT_FLAG,five_point);
     if cfg.color==1u{solution[i]=0.;}
 }
 // Rows hold exact zeros for neighbours outside the grid (assembly and
 // coarsening write only existing ones): the index is clamped, not tested.
 fn row_product(l:Level,i:u32,diagonal:bool)->f32 {
     let p=vec2<i32>(i32(i%l.nx),i32(i/l.nx));let last=vec2<i32>(i32(l.nx)-1,i32(l.ny)-1);let j=l.offset+i;
-    let x0=u32(clamp(p.x-2,0,last.x));let x1=u32(clamp(p.x-1,0,last.x));let x2=u32(p.x);
-    let x3=u32(clamp(p.x+1,0,last.x));let x4=u32(clamp(p.x+2,0,last.x));
-    let y0=l.offset+u32(clamp(p.y-2,0,last.y))*l.nx;let y1=l.offset+u32(clamp(p.y-1,0,last.y))*l.nx;let y2=l.offset+u32(p.y)*l.nx;
-    let y3=l.offset+u32(clamp(p.y+1,0,last.y))*l.nx;let y4=l.offset+u32(clamp(p.y+2,0,last.y))*l.nx;
+    let x1=u32(clamp(p.x-1,0,last.x));let x2=u32(p.x);let x3=u32(clamp(p.x+1,0,last.x));
+    let y1=l.offset+u32(clamp(p.y-1,0,last.y))*l.nx;let y2=l.offset+u32(p.y)*l.nx;let y3=l.offset+u32(clamp(p.y+1,0,last.y))*l.nx;
+    if l.offset==0u&&(anchors[i]&FIVE_POINT_FLAG)!=0u{
+        var value=rows[j].a[7]*solution[y1+x2]+rows[j].a[11]*solution[y2+x1]+rows[j].a[13]*solution[y2+x3]+rows[j].a[17]*solution[y3+x2];
+        if diagonal{value+=rows[j].a[12]*solution[y2+x2];}
+        return value;
+    }
+    let x0=u32(clamp(p.x-2,0,last.x));let x4=u32(clamp(p.x+2,0,last.x));
+    let y0=l.offset+u32(clamp(p.y-2,0,last.y))*l.nx;let y4=l.offset+u32(clamp(p.y+2,0,last.y))*l.nx;
     // The 25 terms in the stencil's order, written out: a loop over them
     // costs this GPU more than the terms themselves.
     var value=0.;
@@ -214,61 +222,107 @@ fn interpolation(l:Level,p:vec2<i32>,parent:vec2<i32>)->f32 {
     var response=1.;if l.offset==0u{response=max(0.,-tensor[at(p,l.nx)].w);}
     return response*(1.-.5*f32(distance.x))*(1.-.5*f32(distance.y));
 }
-// The coarse operator P^T A P, one thread per entry of a coarse row. A
-// workgroup serves COARSEN_ROWS rows and reads their nine children's weights
-// and rows once into workgroup memory. An entry adds its terms child by
-// child, then along the child's stencil in raster order: the order is part
-// of the sum's bits.
-var<workgroup> child_weight:array<f32,9u*COARSEN_ROWS>;
-var<workgroup> child_row:array<f32,225u*COARSEN_ROWS>;
-fn coarsen_child(l:Level,i:u32,child:u32)->vec2<i32>{
-    let parent=vec2<i32>(i32(i%l.cx),i32(i/l.cx));
-    return 2*parent+vec2<i32>(i32(child%3u)-1,i32(child/3u)-1);
+// Five coarse horizontal stencil slots (ox = -2, -1, 0, +1 in `a`, ox = +2 in `b`).
+struct X5 { a:vec4<f32>, b:f32 }
+fn x5_zero()->X5{return X5(vec4<f32>(0.),0.);}
+fn x5_add_scaled(u:X5,s:f32,v:X5)->X5{return X5(u.a+s*v.a,u.b+s*v.b);}
+fn x5_comb3(u:X5,a:f32,v:X5,b:f32,w:X5,c:f32)->X5{return X5(a*u.a+b*v.a+c*w.a,a*u.b+b*v.b+c*w.b);}
+fn restrict_x(x:i32,v0:f32,v1:f32,v2:f32,v3:f32,v4:f32)->X5{
+    if x<0{return X5(vec4<f32>(.5*v0,.5*v0+v1+.5*v2,.5*v2+v3+.5*v4,.5*v4),0.);}
+    if x==0{return X5(vec4<f32>(0.,v0+.5*v1,.5*v1+v2+.5*v3,.5*v3+v4),0.);}
+    return X5(vec4<f32>(0.,.5*v0,.5*v0+v1+.5*v2,.5*v2+v3+.5*v4),.5*v4);
 }
-@compute @workgroup_size(128) fn coarsen(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) t:u32) {
-    let l=dispatched_level();let first=group.x*COARSEN_ROWS;
-    if t<9u*COARSEN_ROWS{
-        let i=first+t/9u;var weight=0.;
-        if i<l.cx*l.cy{weight=interpolation(l,coarsen_child(l,i,t%9u),vec2<i32>(i32(i%l.cx),i32(i/l.cx)));}
-        child_weight[t]=weight;
-    }
-    for(var k=t;k<225u*COARSEN_ROWS;k+=128u){
-        let i=first+k/225u;let child=(k/25u)%9u;var a=0.;
-        if i<l.cx*l.cy{
-            let p=coarsen_child(l,i,child);
-            if valid(p,l.nx,l.ny){a=rows[l.offset+at(p,l.nx)].a[k%25u];}
+var<workgroup> coarsen_resp:array<f32,441>;
+// The coarse operator P^T A P, one thread per coarse vertex in 8x8 tiles.
+// Each fine 5x5 row is read once with static indices and restricted separably
+// along x then y with the bilinear [0.5, 1, 0.5] weights; on level 0, fine
+// interpolation responses are staged once per tile in workgroup memory and
+// pure 5-point rows skip the 20 zero entries.
+@compute @workgroup_size(64) fn coarsen(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) t:u32) {
+    let l=dispatched_level();
+    let tiles_x=(l.cx+7u)/8u;
+    let bx=i32((group.x%tiles_x)*8u);let by=i32((group.x/tiles_x)*8u);
+    let lx=i32(t&7u);let ly=i32(t>>3u);
+    if l.offset==0u{
+        let fx0=2*bx-3;let fy0=2*by-3;
+        for(var k=t;k<441u;k+=64u){
+            let q=vec2<i32>(fx0+i32(k%21u),fy0+i32(k/21u));
+            var rv=0.;
+            if valid(q,l.nx,l.ny)&&!outside_boundary(q){rv=max(0.,-tensor[at(q,l.nx)].w);}
+            coarsen_resp[k]=rv;
         }
-        child_row[k]=a;
+        workgroupBarrier();
     }
-    workgroupBarrier();
-    if t>=25u*COARSEN_ROWS{return;}
-    let entry=t%25u;let i=first+t/25u;if i>=l.cx*l.cy{return;}
-    let parent=vec2<i32>(i32(i%l.cx),i32(i/l.cx));
-    let other=parent+vec2<i32>(i32(entry%5u)-2,i32(entry/5u)-2);
-    var value=0.;
-    if valid(other,l.cx,l.cy){
-        // The weights of the column's nine fine vertices, shared by the
-        // nine children.
-        var rights:array<f32,9>;
-        for(var qy=-1;qy<=1;qy++){for(var qx=-1;qx<=1;qx++){
-            rights[u32(3*(qy+1)+qx+1)]=interpolation(l,2*other+vec2<i32>(qx,qy),other);
-        }}
-        let row=(t/25u)*9u;
-        for(var y=-1;y<=1;y++){for(var x=-1;x<=1;x++){
-            let child=u32(3*(y+1)+x+1);
-            let p=2*parent+vec2<i32>(x,y);let left=child_weight[row+child];
-            if left==0.{continue;}
-            for(var qy=-1;qy<=1;qy++){for(var qx=-1;qx<=1;qx++){
-                let q=2*other+vec2<i32>(qx,qy);let d=q-p;
-                if any(abs(d)>vec2<i32>(2))||!valid(q,l.nx,l.ny){continue;}
-                let term=left*child_row[25u*(row+child)+slot(d)];if term==0.{continue;}
-                let right=rights[u32(3*(qy+1)+qx+1)];
-                if right>0.{value+=term*right;}
-            }}
-        }}
+    let parent=vec2<i32>(bx+lx,by+ly);
+    if parent.x>=i32(l.cx)||parent.y>=i32(l.cy){return;}
+    var c_m2=x5_zero();var c_m1=x5_zero();var c_0=x5_zero();var c_p1=x5_zero();var c_p2=x5_zero();
+    for(var y=-1;y<=1;y++){
+        let py=2*parent.y+y;
+        if py<0||py>=i32(l.ny){continue;}
+        let wy=select(.5,1.,y==0);
+        for(var x=-1;x<=1;x++){
+            let px=2*parent.x+x;
+            if px<0||px>=i32(l.nx){continue;}
+            var left=wy*select(.5,1.,x==0);
+            let fine_i=at(vec2<i32>(px,py),l.nx);
+            let fine_row=l.offset+fine_i;
+            var r0=x5_zero();var r1=x5_zero();var r2=x5_zero();var r3=x5_zero();var r4=x5_zero();
+            if l.offset==0u{
+                let cr=(2*ly+y+3)*21+(2*lx+x+3);
+                let rp=coarsen_resp[u32(cr)];
+                if rp<=0.{continue;}
+                left*=rp;
+                if (anchors[fine_i]&FIVE_POINT_FLAG)!=0u{
+                    r1=restrict_x(x,0.,0.,rows[fine_row].a[7]*coarsen_resp[u32(cr-21)],0.,0.);
+                    r2=restrict_x(x,0.,rows[fine_row].a[11]*coarsen_resp[u32(cr-1)],rows[fine_row].a[12]*rp,rows[fine_row].a[13]*coarsen_resp[u32(cr+1)],0.);
+                    r3=restrict_x(x,0.,0.,rows[fine_row].a[17]*coarsen_resp[u32(cr+21)],0.,0.);
+                }else{
+                    let a=rows[fine_row].a;
+                    r0=restrict_x(x,a[0]*coarsen_resp[u32(cr-44)],a[1]*coarsen_resp[u32(cr-43)],a[2]*coarsen_resp[u32(cr-42)],a[3]*coarsen_resp[u32(cr-41)],a[4]*coarsen_resp[u32(cr-40)]);
+                    r1=restrict_x(x,a[5]*coarsen_resp[u32(cr-23)],a[6]*coarsen_resp[u32(cr-22)],a[7]*coarsen_resp[u32(cr-21)],a[8]*coarsen_resp[u32(cr-20)],a[9]*coarsen_resp[u32(cr-19)]);
+                    r2=restrict_x(x,a[10]*coarsen_resp[u32(cr-2)],a[11]*coarsen_resp[u32(cr-1)],a[12]*rp,a[13]*coarsen_resp[u32(cr+1)],a[14]*coarsen_resp[u32(cr+2)]);
+                    r3=restrict_x(x,a[15]*coarsen_resp[u32(cr+19)],a[16]*coarsen_resp[u32(cr+20)],a[17]*coarsen_resp[u32(cr+21)],a[18]*coarsen_resp[u32(cr+22)],a[19]*coarsen_resp[u32(cr+23)]);
+                    r4=restrict_x(x,a[20]*coarsen_resp[u32(cr+40)],a[21]*coarsen_resp[u32(cr+41)],a[22]*coarsen_resp[u32(cr+42)],a[23]*coarsen_resp[u32(cr+43)],a[24]*coarsen_resp[u32(cr+44)]);
+                }
+            }else{
+                let a=rows[fine_row].a;
+                r0=restrict_x(x,a[0],a[1],a[2],a[3],a[4]);
+                r1=restrict_x(x,a[5],a[6],a[7],a[8],a[9]);
+                r2=restrict_x(x,a[10],a[11],a[12],a[13],a[14]);
+                r3=restrict_x(x,a[15],a[16],a[17],a[18],a[19]);
+                r4=restrict_x(x,a[20],a[21],a[22],a[23],a[24]);
+            }
+            if y<0{
+                c_m2=x5_add_scaled(c_m2,.5*left,r0);
+                c_m1=x5_add_scaled(c_m1,left,x5_comb3(r0,.5,r1,1.,r2,.5));
+                c_0=x5_add_scaled(c_0,left,x5_comb3(r2,.5,r3,1.,r4,.5));
+                c_p1=x5_add_scaled(c_p1,.5*left,r4);
+            }else if y==0{
+                c_m1=x5_add_scaled(c_m1,left,x5_add_scaled(r0,.5,r1));
+                c_0=x5_add_scaled(c_0,left,x5_comb3(r1,.5,r2,1.,r3,.5));
+                c_p1=x5_add_scaled(c_p1,left,x5_add_scaled(r4,.5,r3));
+            }else{
+                c_m1=x5_add_scaled(c_m1,.5*left,r0);
+                c_0=x5_add_scaled(c_0,left,x5_comb3(r0,.5,r1,1.,r2,.5));
+                c_p1=x5_add_scaled(c_p1,left,x5_comb3(r2,.5,r3,1.,r4,.5));
+                c_p2=x5_add_scaled(c_p2,.5*left,r4);
+            }
+        }
     }
-    rows[l.coarse+i].a[entry]=value;
-    if entry==12u{rows[l.coarse+i].rhs=0.;solution[l.coarse+i]=0.;}
+    let xm=vec4<f32>(select(0.,1.,parent.x>=2),select(0.,1.,parent.x>=1),1.,select(0.,1.,parent.x+1<i32(l.cx)));
+    let xm2=select(0.,1.,parent.x+2<i32(l.cx));
+    let ym2=select(0.,1.,parent.y>=2);let ym1=select(0.,1.,parent.y>=1);
+    let yp1=select(0.,1.,parent.y+1<i32(l.cy));let yp2=select(0.,1.,parent.y+2<i32(l.cy));
+    var out:Row;
+    let o0=c_m2.a*(xm*ym2);out.a[0]=o0.x;out.a[1]=o0.y;out.a[2]=o0.z;out.a[3]=o0.w;out.a[4]=c_m2.b*xm2*ym2;
+    let o1=c_m1.a*(xm*ym1);out.a[5]=o1.x;out.a[6]=o1.y;out.a[7]=o1.z;out.a[8]=o1.w;out.a[9]=c_m1.b*xm2*ym1;
+    let o2=c_0.a*xm;out.a[10]=o2.x;out.a[11]=o2.y;out.a[12]=o2.z;out.a[13]=o2.w;out.a[14]=c_0.b*xm2;
+    let o3=c_p1.a*(xm*yp1);out.a[15]=o3.x;out.a[16]=o3.y;out.a[17]=o3.z;out.a[18]=o3.w;out.a[19]=c_p1.b*xm2*yp1;
+    let o4=c_p2.a*(xm*yp2);out.a[20]=o4.x;out.a[21]=o4.y;out.a[22]=o4.z;out.a[23]=o4.w;out.a[24]=c_p2.b*xm2*yp2;
+    out.rhs=0.;
+    let ci=at(parent,l.cx);
+    rows[l.coarse+ci]=out;
+    solution[l.coarse+ci]=0.;
 }
 fn restrict_point(l:Level,i:u32){
     let base=vec2<i32>(i32(i%l.cx),i32(i/l.cx))*2;var b=0.;
@@ -284,10 +338,11 @@ fn prolong_point(l:Level,i:u32){
     let p=vec2<i32>(i32(i%l.nx),i32(i/l.nx));
     if l.offset==0u&&boundary(p){solution[i]=0.;return;}
     var value=0.;let base=p/2;
-    for(var y=0;y<=1;y++){for(var x=0;x<=1;x++){
-        let parent=base+vec2<i32>(x,y);let weight=interpolation(l,p,parent);
-        if weight>0.{value+=weight*solution[l.coarse+at(parent,l.cx)];}
-    }}solution[l.offset+i]+=value;
+    let p00=base;let w00=interpolation(l,p,p00);if w00>0.{value+=w00*solution[l.coarse+at(p00,l.cx)];}
+    let p10=base+vec2<i32>(1,0);let w10=interpolation(l,p,p10);if w10>0.{value+=w10*solution[l.coarse+at(p10,l.cx)];}
+    let p01=base+vec2<i32>(0,1);let w01=interpolation(l,p,p01);if w01>0.{value+=w01*solution[l.coarse+at(p01,l.cx)];}
+    let p11=base+vec2<i32>(1,1);let w11=interpolation(l,p,p11);if w11>0.{value+=w11*solution[l.coarse+at(p11,l.cx)];}
+    solution[l.offset+i]+=value;
 }
 @compute @workgroup_size(POINT_THREADS) fn prolong(@builtin(global_invocation_id) id:vec3<u32>) {
     let l=dispatched_level();if id.x<l.nx*l.ny{prolong_point(l,id.x);}
@@ -315,12 +370,21 @@ var<workgroup> coarse_rhs:array<f32,COARSE_RHS_CAP>;
 // Two workgroup sums in one tree: each component adds in the order of a
 // single sum. The tree spans the first 128 threads, which hold every point
 // of the coarsest level; the others wait at its barriers.
-fn totals(v:vec2<f32>,i:u32)->vec2<f32> {if i<128u{sums[i]=v;}workgroupBarrier();/*loop: slower written out*/for(var k=64u;k>0u;k/=2u){if i<k{sums[i]+=sums[i+k];}workgroupBarrier();}return workgroupUniformLoad(&sums[0]);}
+fn totals(v:vec2<f32>,i:u32)->vec2<f32> {if i<128u{sums[i]=v;}workgroupBarrier();for(var k=64u;k>0u;k/=2u){if i<k{sums[i]+=sums[i+k];}workgroupBarrier();}return workgroupUniformLoad(&sums[0]);}
 fn sparse_product(l:Level,i:u32)->f32 {
-    let p=vec2<i32>(i32(i%l.nx),i32(i/l.nx));var value=0.;
-    /*loop: slower written out*/for(var y=-2;y<=2;y++){/*loop: slower written out*/for(var x=-2;x<=2;x++){
-        let q=p+vec2<i32>(x,y);if valid(q,l.nx,l.ny){let j=at(q,l.nx);value+=entry(l,i,j)*direction[j];}
-    }}return value;
+    let p=vec2<i32>(i32(i%l.nx),i32(i/l.nx));let last=vec2<i32>(i32(l.nx)-1,i32(l.ny)-1);let j=l.offset+i;
+    let x0=u32(clamp(p.x-2,0,last.x));let x1=u32(clamp(p.x-1,0,last.x));let x2=u32(p.x);
+    let x3=u32(clamp(p.x+1,0,last.x));let x4=u32(clamp(p.x+2,0,last.x));
+    let y0=u32(clamp(p.y-2,0,last.y))*l.nx;let y1=u32(clamp(p.y-1,0,last.y))*l.nx;let y2=u32(p.y)*l.nx;
+    let y3=u32(clamp(p.y+1,0,last.y))*l.nx;let y4=u32(clamp(p.y+2,0,last.y))*l.nx;
+    let diag=select(rows[j].a[12],1.,rows[j].a[12]==0.);
+    var value=0.;
+    value+=rows[j].a[0]*direction[y0+x0];value+=rows[j].a[1]*direction[y0+x1];value+=rows[j].a[2]*direction[y0+x2];value+=rows[j].a[3]*direction[y0+x3];value+=rows[j].a[4]*direction[y0+x4];
+    value+=rows[j].a[5]*direction[y1+x0];value+=rows[j].a[6]*direction[y1+x1];value+=rows[j].a[7]*direction[y1+x2];value+=rows[j].a[8]*direction[y1+x3];value+=rows[j].a[9]*direction[y1+x4];
+    value+=rows[j].a[10]*direction[y2+x0];value+=rows[j].a[11]*direction[y2+x1];value+=diag*direction[y2+x2];value+=rows[j].a[13]*direction[y2+x3];value+=rows[j].a[14]*direction[y2+x4];
+    value+=rows[j].a[15]*direction[y3+x0];value+=rows[j].a[16]*direction[y3+x1];value+=rows[j].a[17]*direction[y3+x2];value+=rows[j].a[18]*direction[y3+x3];value+=rows[j].a[19]*direction[y3+x4];
+    value+=rows[j].a[20]*direction[y4+x0];value+=rows[j].a[21]*direction[y4+x1];value+=rows[j].a[22]*direction[y4+x2];value+=rows[j].a[23]*direction[y4+x3];value+=rows[j].a[24]*direction[y4+x4];
+    return value;
 }
 // The Jacobi preconditioner, from the operator's present diagonal: an
 // inverse cached earlier is wrong once a passage has closed.
@@ -405,7 +469,7 @@ fn hierarchy_level(k:u32)->Level{
     workgroupBarrier();
     for(var k=0u;k<smoothed;k++){
         let l=hierarchy_level(k);
-        /*loop: slower written out*/for(var color=0u;color<9u;color++){coarse_smooth_colour(l,base,rhs_base,color,t);workgroupBarrier();}
+        for(var color=0u;color<9u;color++){coarse_smooth_colour(l,base,rhs_base,color,t);workgroupBarrier();}
         for(var i=t;i<l.nx*l.ny;i+=POINT_THREADS){coarse_res[i]=coarse_rhs_value(l,base,rhs_base,i)-coarse_row_product(l,base,i,true);}
         workgroupBarrier();
         for(var i=t;i<l.cx*l.cy;i+=POINT_THREADS){
@@ -432,7 +496,7 @@ fn hierarchy_level(k:u32)->Level{
             coarse_sol[sbase+i]+=value;
         }
         workgroupBarrier();
-        /*loop: slower written out*/for(var color=0u;color<9u;color++){coarse_smooth_colour(l,base,rhs_base,8u-color,t);workgroupBarrier();}
+        for(var color=0u;color<9u;color++){coarse_smooth_colour(l,base,rhs_base,8u-color,t);workgroupBarrier();}
     }
     for(var i=t;i<total_sol;i+=POINT_THREADS){solution[base+i]=coarse_sol[i];}
 }
@@ -469,6 +533,13 @@ fn strongest_neighbor(i:u32)->u32{
 }
 fn external_rhs(i:u32,peer:u32)->f32{
     let p=vec2<i32>(i32(i%cfg.nx),i32(i/cfg.nx));var value=rows[i].rhs;
+    if (anchors[i]&FIVE_POINT_FLAG)!=0u{
+        if p.y>0{let j=i-cfg.nx;if j!=peer{value-=rows[i].a[7]*solution[j];}}
+        if p.x>0{let j=i-1u;if j!=peer{value-=rows[i].a[11]*solution[j];}}
+        if p.x+1<i32(cfg.nx){let j=i+1u;if j!=peer{value-=rows[i].a[13]*solution[j];}}
+        if p.y+1<i32(cfg.ny){let j=i+cfg.nx;if j!=peer{value-=rows[i].a[17]*solution[j];}}
+        return value;
+    }
     for(var y=-2;y<=2;y++){for(var x=-2;x<=2;x++){
         if x==0&&y==0{continue;}let q=p+vec2<i32>(x,y);if !valid(q,cfg.nx,cfg.ny){continue;}
         let j=at(q,cfg.nx);if j!=peer{value-=rows[i].a[slot(vec2<i32>(x,y))]*solution[j];}
@@ -494,18 +565,32 @@ fn block_prediction(i:u32,j:u32)->vec2<f32>{
     return vec2<f32>(1.,select(orientation*(mean-difference),mean+difference,i==left));
 }
 // The finest rows' anchoring, fixed by the rows alone for the whole solve:
-// the mutually strongest neighbour (low 31 bits, NO_PEER if none) and strict
-// diagonal dominance (bit 31). The cycles then search no stencils.
+// the mutually strongest neighbour (low 30 bits, NO_PEER if none), the
+// 5-point stencil flag (bit 30, written by assemble), and strict diagonal
+// dominance (bit 31). The cycles then search no stencils.
 @group(0) @binding(9) var<storage,read_write> anchors:array<u32>;
-const NO_PEER:u32=0x7fffffffu;
+const PEER_MASK:u32=0x3fffffffu;
+const FIVE_POINT_FLAG:u32=1u<<30u;
+const NO_PEER:u32=PEER_MASK;
+fn off_diagonal_sum(i:u32,five_point:bool)->f32{
+    if five_point{
+        return abs(rows[i].a[7])+abs(rows[i].a[11])+abs(rows[i].a[13])+abs(rows[i].a[17]);
+    }
+    let a=rows[i].a;
+    return abs(a[0])+abs(a[1])+abs(a[2])+abs(a[3])+abs(a[4])
+        +abs(a[5])+abs(a[6])+abs(a[7])+abs(a[8])+abs(a[9])
+        +abs(a[10])+abs(a[11])+abs(a[13])+abs(a[14])
+        +abs(a[15])+abs(a[16])+abs(a[17])+abs(a[18])+abs(a[19])
+        +abs(a[20])+abs(a[21])+abs(a[22])+abs(a[23])+abs(a[24]);
+}
 @compute @workgroup_size(POINT_THREADS) fn anchor_plan(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.nx*cfg.ny{return;}
-    let row=rows[i];var off=0.;
-    for(var k=0u;k<25u;k++){if k!=12u{off+=abs(row.a[k]);}}
+    let five=anchors[i]&FIVE_POINT_FLAG;
+    let off=off_diagonal_sum(i,five!=0u);
     var plan=NO_PEER;let peer=strongest_neighbor(i);
     if peer!=i&&strongest_neighbor(peer)==i{plan=peer;}
-    if row.a[12]>off{plan|=1u<<31u;}
-    anchors[i]=plan;
+    if rows[i].a[12]>off{plan|=1u<<31u;}
+    anchors[i]=plan|five;
 }
 // Before a cycle's sweeps: a row mutually strongest with a neighbour takes
 // the pair's solution, a strictly dominant row its Jacobi value, the others
@@ -516,7 +601,7 @@ const NO_PEER:u32=0x7fffffffu;
 // second dispatch, so that no prediction reads a new neighbour.
 @compute @workgroup_size(POINT_THREADS) fn anchor_predict(@builtin(global_invocation_id) id:vec3<u32>){
     let i=id.x;if i>=cfg.nx*cfg.ny{return;}
-    let plan=anchors[i];let peer=plan&NO_PEER;
+    let plan=anchors[i];let peer=plan&PEER_MASK;
     var value=solution[i];var paired=false;
     if peer!=NO_PEER{
         let prediction=block_prediction(i,peer);
@@ -536,8 +621,7 @@ const NO_PEER:u32=0x7fffffffu;
 // The finest equation is unchanged.
 @compute @workgroup_size(POINT_THREADS) fn scale_interpolation(@builtin(global_invocation_id) id:vec3<u32>) {
     let i=id.x;if i>=cfg.nx*cfg.ny||tensor[i].w>0.{return;}
-    let row=rows[i];var off=0.;
-    for(var k=0u;k<25u;k++){if k!=12u{off+=abs(row.a[k]);}}
-    var response=0.;if row.a[12]>0.{response=min(1.,off/row.a[12]);}
+    let diag=rows[i].a[12];
+    var response=0.;if diag>0.{response=min(1.,off_diagonal_sum(i,(anchors[i]&FIVE_POINT_FLAG)!=0u)/diag);}
     tensor[i].w=-response;
 }

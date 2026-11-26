@@ -67,19 +67,44 @@ fn face_material(p:vec2<i32>,a:u32,phase:u32)->vec2<f32> {
     if vr>0.{momentum+=r.momentum[phase][a];}
     return vec2<f32>(vl+vr,momentum);
 }
-fn viscous_laplacian(p:vec2<i32>,a:u32,phase:u32)->f32 {
-    let old=face_history(p,a,phase);var result=0.;
-    let current=face_material(p,a,phase);if current.x<=0.{return 0.;}
-    for(var d=0u;d<2u;d++){for(var side=0u;side<2u;side++){
-        let q=p+select(-axis(d),axis(d),side==1u);
-        if !valid(q)||!valid(q+axis(a)){result-=old;continue;}
-        let neighbor=face_material(q,a,phase);if neighbor.x<=0.{continue;}
-        // Harmonic conductance 2 A B/(A+B), divided by receiver amount A.
-        // Work with donor momentum, avoiding a huge trace velocity times a
-        // tiny conductance. Pair forces are opposite and dissipative.
-        let total=current.x+neighbor.x;
-        result+=2.*(neighbor.y/total-(neighbor.x/total)*old);
-    }}
+fn viscous_laplacian_water(p:vec2<i32>,a:u32,l:Cell,r:Cell,old:f32)->f32 {
+    let vl=max(l.volume.water,0.);let vr=max(r.volume.water,0.);
+    let cur_x=vl+vr;if cur_x<=0.{return 0.;}
+    let ml=select(0.,l.momentum[0][a],vl>0.);let mr=select(0.,r.momentum[0][a],vr>0.);
+    let step_a=axis(a);let step_t=axis(1u-a);let q_end=p+step_a;
+    var result=0.;
+    // Along axis a: (p - step_a, p) reuses l; (q_end, q_end + step_a) reuses r.
+    let p_back=p-step_a;
+    if !valid(p_back){result-=old;}
+    else{
+        let cb=cells[at(p_back)];let vb=max(cb.volume.water,0.);let nx=vb+vl;
+        if nx>0.{
+            let ny=select(0.,cb.momentum[0][a],vb>0.)+ml;let total=cur_x+nx;
+            result+=2.*(ny/total-(nx/total)*old);
+        }
+    }
+    let q_fwd=q_end+step_a;
+    if !valid(q_fwd){result-=old;}
+    else{
+        let cf=cells[at(q_fwd)];let vf=max(cf.volume.water,0.);let nx=vr+vf;
+        if nx>0.{
+            let ny=mr+select(0.,cf.momentum[0][a],vf>0.);let total=cur_x+nx;
+            result+=2.*(ny/total-(nx/total)*old);
+        }
+    }
+    // Transverse axis 1-a: (p - step_t, q_end - step_t) and (p + step_t, q_end + step_t).
+    let pm=p-step_t;
+    if !valid(pm)||!valid(pm+step_a){result-=old;}
+    else{
+        let nb=face_material(pm,a,0u);
+        if nb.x>0.{let total=cur_x+nb.x;result+=2.*(nb.y/total-(nb.x/total)*old);}
+    }
+    let pp=p+step_t;
+    if !valid(pp)||!valid(pp+step_a){result-=old;}
+    else{
+        let nb=face_material(pp,a,0u);
+        if nb.x>0.{let total=cur_x+nb.x;result+=2.*(nb.y/total-(nb.x/total)*old);}
+    }
     return result;
 }
 

@@ -1,6 +1,5 @@
 //! A view's picture: one triangle over the whole image, drawn by the view's
 //! fragment shader with its bindings (`vertex` and `fragment` of its source).
-use crate::wgsl;
 
 pub struct Picture {
     pipeline: wgpu::RenderPipeline,
@@ -15,7 +14,7 @@ impl Picture {
     ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
-            source: wgpu::ShaderSource::Wgsl(wgsl::compiled(source).into()),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),

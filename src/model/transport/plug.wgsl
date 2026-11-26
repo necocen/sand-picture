@@ -345,16 +345,16 @@ fn plug_receive_local(
 // supply (the share of a draw on it that reaches the top through links that
 // have given way). Row y+1's supply is kept in workgroup memory so `geometry`
 // is write-only here; the dispatch boundary before `plug_walk` publishes it.
+// Every column fits in one thread (`PLUG_COLS = 216 <= PLUG_THREADS = 256`).
 @compute @workgroup_size(PLUG_THREADS) fn plug_supply(@builtin(local_invocation_id) id:vec3<u32>){
     let nx=i32(cfg.nx);let ny=i32(cfg.ny);let k=VOID_SPREAD/cfg.h;let t=id.x;
-    for(var x=t;x<cfg.nx;x+=PLUG_THREADS){plug_supply_row[x]=1.;}
+    let in_col=t<cfg.nx;let x=i32(t);
+    if in_col{plug_supply_row[t]=1.;}
     workgroupBarrier();
+    let centre_w=select(0.,plug_centre_weight(x,k),in_col);
     for(var y=ny-1;y>=0;y--){
-        var s_out=vec2<f32>(0.);
-        var l_out=vec2<f32>(0.);
-        for(var stripe=0u;stripe<2u;stripe++){
-            let x=i32(t+stripe*PLUG_THREADS);
-            if x>=nx{continue;}
+        var s_out=0.;var l_out=0.;
+        if in_col{
             let i=at(vec2<i32>(x,y));
             let link=scratch[PLUG_ROW*cfg.n+i].z;var supply=0.;
             if link<=0.{
@@ -363,30 +363,23 @@ fn plug_receive_local(
                     supply=1.;
                     if y+1<ny{
                         let j=at(vec2<i32>(x,y+1));
-                        if scratch[PLUG_ROW*cfg.n+j].z>0.||plug_supply_row[u32(x)]<1.{supply=0.;}
+                        if scratch[PLUG_ROW*cfg.n+j].z>0.||plug_supply_row[t]<1.{supply=0.;}
                     }
                 }
+            }else if plug_flows(i){
+                let has_above=y+1<ny;
+                if x>0{supply+=k*select(1.,plug_supply_row[t-1u],has_above);}
+                supply+=centre_w*select(1.,plug_supply_row[t],has_above);
+                if x+1<nx{supply+=k*select(1.,plug_supply_row[t+1u],has_above);}
             }
-            if link>0.&&plug_flows(i){
-                for(var d=-1;d<=1;d++){
-                    var weight=k;if d==0{weight=plug_centre_weight(x,k);}
-                    let qx=x+d;
-                    if qx<0||qx>=nx{continue;}
-                    var above=1.;
-                    if y+1<ny{above=plug_supply_row[u32(qx)];}
-                    supply+=weight*above;
-                }
-            }
-            s_out[stripe]=supply;l_out[stripe]=link;
+            s_out=supply;l_out=link;
         }
         workgroupBarrier();
-        for(var stripe=0u;stripe<2u;stripe++){
-            let x=i32(t+stripe*PLUG_THREADS);
-            if x>=nx{continue;}
+        if in_col{
             let i=at(vec2<i32>(x,y));
-            plug_supply_row[u32(x)]=s_out[stripe];
-            geometry[SET_IN_ROW*cfg.n+i].y=s_out[stripe];
-            geometry[SET_IN_ROW*cfg.n+i].z=l_out[stripe];
+            plug_supply_row[t]=s_out;
+            geometry[SET_IN_ROW*cfg.n+i].y=s_out;
+            geometry[SET_IN_ROW*cfg.n+i].z=l_out;
         }
         workgroupBarrier();
     }
@@ -399,7 +392,7 @@ fn plug_row_linked(row:u32)->bool{
 // is only ever read back by the same thread, and row y-1 -> row y handoff
 // goes exclusively through workgroup memory (`workgroupBarrier()` only).
 @compute @workgroup_size(PLUG_THREADS) fn plug_walk(@builtin(local_invocation_id) id:vec3<u32>){
-    let nx=i32(cfg.nx);let ny=i32(cfg.ny);let k=VOID_SPREAD/cfg.h;let t=id.x;
+    let k=VOID_SPREAD/cfg.h;let t=id.x;
     if t<PLUG_WORDS{atomicStore(&plug_marks[t],0u);}
     workgroupBarrier();
     for(var i=t;i<cfg.n;i+=4u*PLUG_THREADS){
@@ -416,73 +409,83 @@ fn plug_row_linked(row:u32)->bool{
     workgroupBarrier();
     if t<PLUG_WORDS{plug_linked[t]=atomicLoad(&plug_marks[t]);}
     workgroupBarrier();
+    let in_col=t<cfg.nx;let x=i32(t);
     for(var y=0u;y<=cfg.ny;y++){
         let has_prev=y>0u&&plug_row_linked(y-1u);
         let has_curr=y<cfg.ny&&plug_row_linked(y);
         if !has_prev&&!has_curr{continue;}
-        var l_asked:array<vec3<f32>,2>;
-        var l_down:array<vec3<f32>,2>;
-        var l_down_fine:array<vec3<f32>,2>;
-        var l_up:array<vec3<f32>,2>;
-        var l_up_fine:array<vec3<f32>,2>;
-        var l_vf:array<array<vec2<f32>,3>,2>;
-        var l_vc:array<array<vec2<f32>,3>,2>;
-        var l_pw:array<array<vec2<f32>,3>,2>;
-        if has_prev{
-            for(var stripe=0u;stripe<2u;stripe++){
-                let xu=t+stripe*PLUG_THREADS;
-                if xu>=cfg.nx{continue;}
-                if xu>0u{
-                    let gx=xu-1u;
-                    l_asked[stripe].x=pw_ask[gx];
-                    let dn=pw_down[gx];let up=pw_up[gx];let v=pw_vel[gx];
-                    l_down[stripe].x=dn.z;l_down_fine[stripe].x=dn.w;
-                    l_up[stripe].x=up.z;l_up_fine[stripe].x=up.w;
-                    l_vf[stripe][0]=v.xy;l_vc[stripe][0]=v.zw;l_pw[stripe][0]=unpack2x16unorm(pw_pow[gx]);
+        var l_asked=vec3<f32>(0.);
+        var l_down=vec3<f32>(0.);
+        var l_down_fine=vec3<f32>(0.);
+        var l_up=vec3<f32>(0.);
+        var l_up_fine=vec3<f32>(0.);
+        var l_vf:array<vec2<f32>,3>;
+        var l_vc:array<vec2<f32>,3>;
+        var l_pw:array<vec2<f32>,3>;
+        if has_prev&&in_col{
+            if t>0u{
+                let gx=t-1u;
+                l_asked.x=pw_ask[gx];
+                let dn=pw_down[gx];let up=pw_up[gx];
+                l_down.x=dn.z;l_down_fine.x=dn.w;
+                l_up.x=up.z;l_up_fine.x=up.w;
+                if dn.z>0.||up.z>0.{
+                    let v=pw_vel[gx];
+                    l_vf[0]=v.xy;l_vc[0]=v.zw;l_pw[0]=unpack2x16unorm(pw_pow[gx]);
                 }
-                {
-                    let gx=xu;
-                    l_asked[stripe].y=pw_ask[gx];
-                    let dn=pw_down[gx];let up=pw_up[gx];let v=pw_vel[gx];
-                    l_down[stripe].y=dn.y;l_down_fine[stripe].y=dn.w;
-                    l_up[stripe].y=up.y;l_up_fine[stripe].y=up.w;
-                    l_vf[stripe][1]=v.xy;l_vc[stripe][1]=v.zw;l_pw[stripe][1]=unpack2x16unorm(pw_pow[gx]);
+            }
+            {
+                let gx=t;
+                l_asked.y=pw_ask[gx];
+                let dn=pw_down[gx];let up=pw_up[gx];
+                l_down.y=dn.y;l_down_fine.y=dn.w;
+                l_up.y=up.y;l_up_fine.y=up.w;
+                if dn.y>0.||up.y>0.{
+                    let v=pw_vel[gx];
+                    l_vf[1]=v.xy;l_vc[1]=v.zw;l_pw[1]=unpack2x16unorm(pw_pow[gx]);
                 }
-                if xu+1u<cfg.nx{
-                    let gx=xu+1u;
-                    l_asked[stripe].z=pw_ask[gx];
-                    let dn=pw_down[gx];let up=pw_up[gx];let v=pw_vel[gx];
-                    l_down[stripe].z=dn.x;l_down_fine[stripe].z=dn.w;
-                    l_up[stripe].z=up.x;l_up_fine[stripe].z=up.w;
-                    l_vf[stripe][2]=v.xy;l_vc[stripe][2]=v.zw;l_pw[stripe][2]=unpack2x16unorm(pw_pow[gx]);
+            }
+            if t+1u<cfg.nx{
+                let gx=t+1u;
+                l_asked.z=pw_ask[gx];
+                let dn=pw_down[gx];let up=pw_up[gx];
+                l_down.z=dn.x;l_down_fine.z=dn.w;
+                l_up.z=up.x;l_up_fine.z=up.w;
+                if dn.x>0.||up.x>0.{
+                    let v=pw_vel[gx];
+                    l_vf[2]=v.xy;l_vc[2]=v.zw;l_pw[2]=unpack2x16unorm(pw_pow[gx]);
                 }
             }
         }
         workgroupBarrier();
-        for(var stripe=0u;stripe<2u;stripe++){
-            let xu=t+stripe*PLUG_THREADS;
-            if xu>=cfg.nx{continue;}
-            let x=i32(xu);let yi=i32(y);
+        if in_col{
+            let yi=i32(y);
             if has_prev{
-                if y>1u{plug_receive_local(at(vec2<i32>(x,yi-2)),l_down[stripe],l_down_fine[stripe],l_vf[stripe],l_vc[stripe],l_pw[stripe]);}
-                if y<cfg.ny{plug_receive_local(at(vec2<i32>(x,yi)),l_up[stripe],l_up_fine[stripe],l_vf[stripe],l_vc[stripe],l_pw[stripe]);}
+                if y>1u&&(l_down.x>0.||l_down.y>0.||l_down.z>0.){
+                    plug_receive_local(at(vec2<i32>(x,yi-2)),l_down,l_down_fine,l_vf,l_vc,l_pw);
+                }
+                if y<cfg.ny&&(l_up.x>0.||l_up.y>0.||l_up.z>0.){
+                    plug_receive_local(at(vec2<i32>(x,yi)),l_up,l_up_fine,l_vf,l_vc,l_pw);
+                }
             }
             if has_curr{
                 let i=at(vec2<i32>(x,yi));let record=scratch[PLUG_ROW*cfg.n+i];
-                var step=PlugStep();if record.z>0.{step=plug_give(i,x,yi,record,k,l_asked[stripe]);}
-                let after=cells[i];let ag=grains(after);
-                var vf=vec2<f32>(0.);var vc=vec2<f32>(0.);var ps=vec2<f32>(0.);
-                if ag.x>TRACE_VOLUME{
-                    vf=after.momentum[1]/ag.x;
-                    let share=white_powder(after);
-                    ps=clamp(vec2<f32>(share.total,share.free),vec2<f32>(0.),vec2<f32>(1.));
+                var step=PlugStep();if record.z>0.{step=plug_give(i,x,yi,record,k,l_asked);}
+                pw_ask[t]=step.ask;
+                pw_down[t]=vec4<f32>(step.left,step.centre,step.right,step.fine);
+                pw_up[t]=vec4<f32>(step.up.x,step.up.y,step.up.z,step.up_fine);
+                if step.left>0.||step.centre>0.||step.right>0.||step.up.x>0.||step.up.y>0.||step.up.z>0.{
+                    let after=cells[i];let ag=grains(after);
+                    var vf=vec2<f32>(0.);var vc=vec2<f32>(0.);var ps=vec2<f32>(0.);
+                    if ag.x>TRACE_VOLUME{
+                        vf=after.momentum[1]/ag.x;
+                        let share=white_powder(after);
+                        ps=clamp(vec2<f32>(share.total,share.free),vec2<f32>(0.),vec2<f32>(1.));
+                    }
+                    if ag.y>TRACE_VOLUME{vc=after.momentum[2]/ag.y;}
+                    pw_vel[t]=vec4<f32>(vf,vc);
+                    pw_pow[t]=pack2x16unorm(ps);
                 }
-                if ag.y>TRACE_VOLUME{vc=after.momentum[2]/ag.y;}
-                pw_ask[xu]=step.ask;
-                pw_down[xu]=vec4<f32>(step.left,step.centre,step.right,step.fine);
-                pw_up[xu]=vec4<f32>(step.up.x,step.up.y,step.up.z,step.up_fine);
-                pw_vel[xu]=vec4<f32>(vf,vc);
-                pw_pow[xu]=pack2x16unorm(ps);
             }
         }
         workgroupBarrier();

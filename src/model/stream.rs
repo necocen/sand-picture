@@ -14,9 +14,6 @@ use wgpu::util::DeviceExt;
 /// dispatches cost more than their work.
 const COARSE_CYCLE_POINTS: u32 = 1024;
 
-/// Coarse rows per workgroup of `coarsen` (its children's rows are shared).
-pub const COARSEN_ROWS: u32 = 5;
-
 /// Threads per workgroup of the kernels that serve one point a thread and
 /// share nothing: the most a workgroup may hold, since a dispatch costs by
 /// its workgroups as well as by its points.
@@ -208,7 +205,7 @@ impl Stream {
                     i,
                     0,
                     "coarsen",
-                    (pair[1].0 * pair[1].1).div_ceil(COARSEN_ROWS),
+                    pair[1].0.div_ceil(8) * pair[1].1.div_ceil(8),
                 ))
             })
             .collect();

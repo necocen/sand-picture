@@ -13,7 +13,7 @@ fn represented_gas_area(shape:vec4<f32>)->bool {
 struct OuterGas { shapes:array<vec4<f32>,2>, present:vec2<u32> }
 fn outer_gas_shapes(i:u32)->OuterGas {
     var result:OuterGas;
-    /*loop: slower written out*/for(var l=0u;l<GAS_SLOTS;l++){
+    for(var l=0u;l<GAS_SLOTS;l++){
         if geometry[layer_index(i,l)].x<=0.{continue;}
         let shape=geometry[shape_index(i,l)];if !represented_gas_area(shape){continue;}var side=0u;
         if result.present.x>0u&&dot(result.shapes[0].xy,shape.xy)<0.{side=1u;}

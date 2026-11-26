@@ -53,6 +53,9 @@ pub const SCRATCH: &[Use] = &[
     // brings in through each face (plug.wgsl).
     ("PLUG", 1),
     ("PLUG_INFLOW", 1),
+    // Per cell, cached in prepare_bed_occupancy before each flow cycle:
+    // x = Janssen overburden stress (Pa), y = 1 if supported / not an isolated speck.
+    ("OVERBURDEN", 1),
     // The pressure sweeps: a cell's local problem, its material and whether
     // it is solved, the stored pressure with its scale and the sweeps'
     // iterate, the trial shear stress; per face, the coupling of the two

@@ -411,8 +411,8 @@ fn scene_color(p: vec2<f32>, pixel_width: f32, bubble: Bubble) -> vec3<f32> {
     // contour and normal. Elsewhere the picture changes slowly across a
     // pixel, and its middle stands for it.
     let side = select(1u, 4u, bubble.distance > -.5 * radius - scale.x && bubble.distance < scale.x);
-    /*loop: copies of the whole picture's shading*/for (var y = 0u; y < side; y++) {
-        /*loop: copies of the whole picture's shading*/for (var x = 0u; x < side; x++) {
+    for (var y = 0u; y < side; y++) {
+        for (var x = 0u; x < side; x++) {
             let offset = ((vec2<f32>(f32(x), f32(y)) + .5) / f32(side) - .5) * scale;
             let sample = Bubble(bubble.distance + dot(bubble.normal, offset), bubble.normal);
             color += scene_color(p + offset, scale.x / f32(side), sample) / f32(side * side);

@@ -28,21 +28,31 @@ fn film_narrowness(aperture:f32)->f32{
 // `plate` adds each species' plate drag per grain volume (face_friction,
 // joint_drag); `film` multiplies the water's.
 fn gap_resistance(cs:vec2<f32>,powder:PowderShare,plate:vec2<f32>,film:f32)->GapResistance {
-    let solid=cs.x+cs.y;var share=0.;if solid>0. {share=cs.x/solid;}
+    let solid=cs.x+cs.y;
+    if solid<=0.{
+        let t0=table[0];let t1=table[1];
+        return GapResistance(t0.x*film,t0.yz,t1.xy+plate,t0.w);
+    }
+    let share=cs.x/solid;
     let last=f32(cfg.table_side-1u);
     let uv=clamp(vec2<f32>(sqrt(solid/.8),share)*last,vec2<f32>(0.),vec2<f32>(last));
     let lo=min(vec2<u32>(uv),vec2<u32>(cfg.table_side-2u));let t=uv-vec2<f32>(lo);
     let read=mix(powder.free,powder.total,smoothstep(FREEZING_PACKING,LOOSE_PACKING,solid));
     let w=clamp(read,0.,1.)*f32(POWDER_LEVELS-1u);let level=min(u32(w),POWDER_LEVELS-2u);let tl=w-f32(level);
     let plane=2u*cfg.table_side*cfg.table_side;let stride=2u*cfg.table_side;
-    var rows:array<vec4<f32>,2>;
-    for(var r=0u;r<2u;r++) {
-        let j=level*plane+2u*(lo.y*cfg.table_side+lo.x)+r;let k=j+plane;
-        let below=mix(mix(table[j],table[j+2u],t.x),mix(table[j+stride],table[j+stride+2u],t.x),t.y);
-        let above=mix(mix(table[k],table[k+2u],t.x),mix(table[k+stride],table[k+stride+2u],t.x),t.y);
-        rows[r]=mix(below,above,tl);
-    }
-    return GapResistance(rows[0].x*film,rows[0].yz,rows[1].xy+plate,rows[0].w);
+    let j0=level*plane+2u*(lo.y*cfg.table_side+lo.x);let k0=j0+plane;
+    let r0=mix(
+        mix(mix(table[j0],table[j0+2u],t.x),mix(table[j0+stride],table[j0+stride+2u],t.x),t.y),
+        mix(mix(table[k0],table[k0+2u],t.x),mix(table[k0+stride],table[k0+stride+2u],t.x),t.y),
+        tl,
+    );
+    let j1=j0+1u;let k1=k0+1u;
+    let r1=mix(
+        mix(mix(table[j1],table[j1+2u],t.x),mix(table[j1+stride],table[j1+stride+2u],t.x),t.y),
+        mix(mix(table[k1],table[k1+2u],t.x),mix(table[k1+stride],table[k1+stride+2u],t.x),t.y),
+        tl,
+    );
+    return GapResistance(r0.x*film,r0.yz,r1.xy+plate,r0.w);
 }
 // The resistance of the phases moving at one velocity, which annuls the
 // exchange exactly: no large interphase entries are subtracted.

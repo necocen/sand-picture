@@ -42,10 +42,13 @@ const FOAM_FILM_GAP: f32 = 0.05;     // Soap film half-gap between touching bubb
 const FOAM_WALL_PAD: f32 = 0.05;     // Wetting water film at tank walls (cells)
 const FOAM_SAND_LEVEL: f32 = 0.25;   // Packed sand outer boundary contour (avoids clipping gas in raster)
 const FOAM_MAX_NBRS: u32 = 128u;
+const FOAM_CACHE_NBRS: u32 = 8u;
 
 var<workgroup> sh_pos: array<vec2<f32>, FOAM_VERTS>;
 var<workgroup> sh_pred: array<vec2<f32>, FOAM_VERTS>;
 var<workgroup> sh_tmp: array<vec2<f32>, FOAM_VERTS>;
+var<workgroup> sh_tmp2: array<vec2<f32>, FOAM_VERTS>;
+var<workgroup> sh_nb_verts: array<vec2<f32>, FOAM_CACHE_NBRS * FOAM_VERTS>;
 var<workgroup> sh_contact: array<f32, FOAM_VERTS>;
 var<workgroup> sh_uf: array<vec3<f32>, FOAM_VERTS>;
 var<workgroup> sh_nbrs: array<u32, FOAM_MAX_NBRS>;
@@ -58,12 +61,15 @@ var<workgroup> sh_perim: f32;
 var<workgroup> sh_free_perim: f32;
 var<workgroup> sh_held: atomic<u32>;
 var<workgroup> sh_step_alive: u32;
-// Shared bounding boxes for fast foam_raster culling (128 threads load 128 bubbles once).
+// Shared bounding boxes and workgroup tile bitmask for fast foam_raster culling.
 var<workgroup> sh_bmin: array<vec2<f32>, MAX_BUBBLES>;
 var<workgroup> sh_bmax: array<vec2<f32>, MAX_BUBBLES>;
 var<workgroup> sh_alive: array<u32, MAX_BUBBLES>;
+var<workgroup> sh_tile_mask: array<atomic<u32>, 4>;
 var<workgroup> sh_best_j: array<u32, MAX_BUBBLES>;
 var<workgroup> sh_drain_rate: array<f32, MAX_BUBBLES>;
+var<workgroup> sh_slot: array<u32, MAX_BUBBLES>;
+var<workgroup> sh_conflict: atomic<u32>;
 
 fn foam_solid_cell(cx: i32, cy: i32) -> f32 {
     let p = clamp(vec2<i32>(cx, cy), vec2<i32>(0), vec2<i32>(i32(cfg.nx) - 1, i32(cfg.ny) - 1));
@@ -71,7 +77,7 @@ fn foam_solid_cell(cx: i32, cy: i32) -> f32 {
     return max(c.volume.fine, 0.) + max(c.volume.coarse, 0.) + max(c.bed.x, 0.) + max(c.bed.y, 0.);
 }
 
-fn foam_solid_at(pos: vec2<f32>) -> f32 {
+fn foam_solid_grad(pos: vec2<f32>) -> vec3<f32> {
     let g = clamp(pos - vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(f32(cfg.nx - 1u), f32(cfg.ny - 1u)));
     let x0 = i32(floor(g.x));
     let y0 = i32(floor(g.y));
@@ -83,7 +89,14 @@ fn foam_solid_at(pos: vec2<f32>) -> f32 {
     let s10 = foam_solid_cell(x1, y0);
     let s01 = foam_solid_cell(x0, y1);
     let s11 = foam_solid_cell(x1, y1);
-    return mix(mix(s00, s10, tx), mix(s01, s11, tx), ty);
+    let val = mix(mix(s00, s10, tx), mix(s01, s11, tx), ty);
+    let gx = 0.9 * mix(s10 - s00, s11 - s01, ty);
+    let gy = 0.9 * mix(s01 - s00, s11 - s10, tx);
+    return vec3<f32>(val, gx, gy);
+}
+
+fn foam_solid_at(pos: vec2<f32>) -> f32 {
+    return foam_solid_grad(pos).x;
 }
 
 // Sample ambient open-water velocity outside the bubble so the ring average
@@ -160,7 +173,36 @@ fn foam_point_inside(p: vec2<f32>, bi: u32) -> bool {
     return (crossings & 1) != 0;
 }
 
-// 1. Advance every active closed-curve bubble by 8 x 1 ms substeps in shared memory.
+// Signed distance and outward unit normal to a cached neighbor polygon in shared memory.
+fn foam_sdf_cached(q: vec2<f32>, cache_idx: u32) -> vec3<f32> {
+    let base = cache_idx * FOAM_VERTS;
+    var min_d2 = 1e18;
+    var best_n = vec2<f32>(0.0, 1.0);
+    var crossings = 0;
+    for (var m = 0u; m < FOAM_VERTS; m++) {
+        let a = sh_nb_verts[base + m];
+        let b = sh_nb_verts[base + ((m + 1u) % FOAM_VERTS)];
+        let e = b - a;
+        let len2 = dot(e, e);
+        let t = clamp(dot(q - a, e) / max(len2, 1e-10), 0.0, 1.0);
+        let proj = a + t * e;
+        let d2 = dot(q - proj, q - proj);
+        if d2 < min_d2 {
+            min_d2 = d2;
+            let inv_l = 1.0 / sqrt(max(len2, 1e-10));
+            best_n = vec2<f32>(e.y, -e.x) * inv_l;
+        }
+        if (a.y <= q.y && b.y > q.y) || (b.y <= q.y && a.y > q.y) {
+            let x_int = a.x + (q.y - a.y) * (b.x - a.x) / (b.y - a.y);
+            if q.x < x_int { crossings += 1; }
+        }
+    }
+    let inside = (crossings & 1) != 0;
+    let dist = sqrt(min_d2);
+    return vec3<f32>(select(dist, -dist, inside), best_n);
+}
+
+// 1. Advance every active closed-curve bubble by 6 substeps in shared memory.
 @compute @workgroup_size(32)
 fn foam_step(
     @builtin(workgroup_id) wg: vec3<u32>,
@@ -198,11 +240,21 @@ fn foam_step(
             if bmin.x <= omax.x && omin.x <= bmax.x && bmin.y <= omax.y && omin.y <= bmax.y {
                 if ncnt < FOAM_MAX_NBRS {
                     sh_nbrs[ncnt] = j;
+                    sh_bmin[ncnt] = omin - vec2<f32>(0.3);
+                    sh_bmax[ncnt] = omax + vec2<f32>(0.3);
                     ncnt += 1u;
                 }
             }
         }
         sh_nbr_count = ncnt;
+    }
+    workgroupBarrier();
+
+    let cached_nbrs = min(sh_nbr_count, FOAM_CACHE_NBRS);
+    if k < FOAM_VERTS {
+        for (var m = 0u; m < cached_nbrs; m++) {
+            sh_nb_verts[m * FOAM_VERTS + k] = foam[sh_nbrs[m]].verts[k];
+        }
     }
     workgroupBarrier();
 
@@ -373,19 +425,21 @@ fn foam_step(
         workgroupBarrier();
 
         // Semi-implicit curvature surface tension + arclength equalization (Jacobi on ring).
+        // Double-buffered across sh_tmp/sh_tmp2 to halve workgroupBarrier() count.
         let ds_m = (sh_perim / f32(FOAM_VERTS)) * cfg.h;
         let lambda = clamp((FOAM_SIGMA * dt_sub) / (FOAM_GAMMA * max(ds_m * ds_m, 1e-8)), 0.02, 8.0);
         let inv_denom = 1.0 / (1.0 + 2.0 * lambda);
-        for (var it = 0u; it < FOAM_JACOBI; it++) {
-            var next_p = vec2<f32>(0.0);
+        for (var it = 0u; it < FOAM_JACOBI / 2u; it++) {
             if k < FOAM_VERTS {
                 let l = sh_tmp[(k + FOAM_VERTS - 1u) % FOAM_VERTS];
                 let r = sh_tmp[(k + 1u) % FOAM_VERTS];
-                next_p = (sh_pred[k] + lambda * (l + r)) * inv_denom;
+                sh_tmp2[k] = (sh_pred[k] + lambda * (l + r)) * inv_denom;
             }
             workgroupBarrier();
             if k < FOAM_VERTS {
-                sh_tmp[k] = next_p;
+                let l = sh_tmp2[(k + FOAM_VERTS - 1u) % FOAM_VERTS];
+                let r = sh_tmp2[(k + 1u) % FOAM_VERTS];
+                sh_tmp[k] = (sh_pred[k] + lambda * (l + r)) * inv_denom;
             }
             workgroupBarrier();
         }
@@ -397,11 +451,10 @@ fn foam_step(
             var contact = 0.0;
 
             // Sand & bed contact (snug conformation to the wavy sand underside).
-            let phi_s = foam_solid_at(p);
+            let sg = foam_solid_grad(p);
+            let phi_s = sg.x;
             if phi_s > FOAM_SAND_LEVEL {
-                let gx = foam_solid_at(p + vec2<f32>(0.45, 0.0)) - foam_solid_at(p - vec2<f32>(0.45, 0.0));
-                let gy = foam_solid_at(p + vec2<f32>(0.0, 0.45)) - foam_solid_at(p - vec2<f32>(0.0, 0.45));
-                let gp = vec2<f32>(gx, gy);
+                let gp = sg.yz;
                 let gplen = length(gp);
                 // A bubble's buoyancy (~30 Pa) exceeds the submerged weight of a thin
                 // <= 3-cell sand crust (~15 Pa) separating it from open water above
@@ -439,13 +492,18 @@ fn foam_step(
             // Neighbor bubble soap-film contact (flat shared walls + Plateau borders).
             let ncnt = sh_nbr_count;
             for (var m = 0u; m < ncnt; m++) {
-                let nb = sh_nbrs[m];
-                let omin = foam[nb].bbox_min - vec2<f32>(0.3);
-                let omax = foam[nb].bbox_max + vec2<f32>(0.3);
+                let omin = sh_bmin[m];
+                let omax = sh_bmax[m];
                 if p.x < omin.x || p.x > omax.x || p.y < omin.y || p.y > omax.y {
                     continue;
                 }
-                let res = foam_sdf_bubble(p, nb);
+                let nb = sh_nbrs[m];
+                var res: vec3<f32>;
+                if m < FOAM_CACHE_NBRS {
+                    res = foam_sdf_cached(p, m);
+                } else {
+                    res = foam_sdf_bubble(p, nb);
+                }
                 if res.x < FOAM_FILM_GAP {
                     let pen = FOAM_FILM_GAP - res.x;
                     p += vec2<f32>(res.y, res.z) * min(0.48 * pen, 0.24);
@@ -587,11 +645,12 @@ fn foam_step(
 fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
     let tid = lid.x;
 
-    // Load all bubble bboxes into workgroup shared memory once for fast pair checks & coloring.
+    // Load all bubble bboxes and slots into workgroup shared memory once for fast pair checks & coloring.
     if tid < MAX_BUBBLES {
         sh_alive[tid] = foam_next[tid].alive;
         sh_bmin[tid] = foam_next[tid].bbox_min;
         sh_bmax[tid] = foam_next[tid].bbox_max;
+        sh_slot[tid] = foam_next[tid].slot;
     }
     workgroupBarrier();
 
@@ -814,7 +873,8 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             foam_next[j].disp_vel = vec2<f32>(0.0);
             foam_next[free_slot].target_area = a_right;
             foam_next[free_slot].drain_time = 0.0;
-            foam_next[free_slot].slot = (foam_next[j].slot + 1u) % GAS_SLOTS;
+            foam_next[free_slot].slot = (sh_slot[j] + 1u) % GAS_SLOTS;
+            sh_slot[free_slot] = (sh_slot[j] + 1u) % GAS_SLOTS;
             foam_next[free_slot].alive = 1u;
             foam_next[free_slot].centroid = c_right;
             foam_next[free_slot].vel = foam_next[j].vel;
@@ -830,9 +890,32 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
             sh_bmax[free_slot] = bmax_r;
             splits += 1u;
         }
+        atomicStore(&sh_conflict, 0u);
+    }
+    workgroupBarrier();
 
+    // Check in parallel across all 128 lanes whether any two nearby bubbles share a slot;
+    // skip the serial O(N^2) greedy recoloring on the ~99.9% of updates with zero conflicts.
+    let margin = 1.8;
+    if tid < MAX_BUBBLES && sh_alive[tid] != 0u {
+        let imin = sh_bmin[tid];
+        let imax = sh_bmax[tid];
+        let s_i = sh_slot[tid];
+        for (var j = 0u; j < tid; j++) {
+            if sh_alive[j] == 0u || sh_slot[j] != s_i { continue; }
+            let jmin = sh_bmin[j];
+            let jmax = sh_bmax[j];
+            if imin.x <= jmax.x + margin && jmin.x <= imax.x + margin
+                && imin.y <= jmax.y + margin && jmin.y <= imax.y + margin {
+                atomicStore(&sh_conflict, 1u);
+                break;
+            }
+        }
+    }
+    workgroupBarrier();
+
+    if tid == 0u && atomicLoad(&sh_conflict) != 0u {
         // Refresh greedy slot coloring in shared memory so touching bubbles keep distinct GAS_SLOTS.
-        let margin = 1.8;
         for (var i = 0u; i < MAX_BUBBLES; i++) {
             if sh_alive[i] == 0u { continue; }
             var used = 0u;
@@ -844,13 +927,14 @@ fn foam_coalesce(@builtin(local_invocation_id) lid: vec3<u32>) {
                 let jmax = sh_bmax[j];
                 if imin.x <= jmax.x + margin && jmin.x <= imax.x + margin
                     && imin.y <= jmax.y + margin && jmin.y <= imax.y + margin {
-                    used |= 1u << foam_next[j].slot;
+                    used |= 1u << sh_slot[j];
                 }
             }
-            let cur = foam_next[i].slot;
+            let cur = sh_slot[i];
             if (used & (1u << cur)) != 0u {
                 for (var s = 0u; s < GAS_SLOTS; s++) {
                     if (used & (1u << s)) == 0u {
+                        sh_slot[i] = s;
                         foam_next[i].slot = s;
                         break;
                     }
@@ -876,16 +960,37 @@ fn foam_commit(@builtin(local_invocation_id) lid: vec3<u32>) {
 
 // 3. Rasterize closed-curve bubbles into main's grid buffers (`cells`, `geometry`, `labels`)
 // without ever modifying sand (`fine`, `coarse`, `bed`).
-// Uses workgroup shared memory so all 128 bubble bounding boxes are loaded once per workgroup.
+// Uses workgroup shared memory + 128-bit tile AABB culling so empty workgroups skip all
+// bubble loops and already-empty cells skip all 39 redundant geometry/label writes.
 @compute @workgroup_size(128)
 fn foam_raster(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
 ) {
     let lane = lid.x;
-    sh_alive[lane] = foam[lane].alive;
-    sh_bmin[lane] = foam[lane].bbox_min;
-    sh_bmax[lane] = foam[lane].bbox_max;
+    if lane < 4u {
+        atomicStore(&sh_tile_mask[lane], 0u);
+    }
+    let alive = foam[lane].alive;
+    let bmin_l = foam[lane].bbox_min;
+    let bmax_l = foam[lane].bbox_max;
+    sh_alive[lane] = alive;
+    sh_bmin[lane] = bmin_l;
+    sh_bmax[lane] = bmax_l;
+    workgroupBarrier();
+
+    let wg_base = wid.x * 128u;
+    if wg_base < cfg.n && alive != 0u {
+        let wg_last = min(wg_base + 128u, cfg.n) - 1u;
+        let row_min = wg_base / cfg.nx;
+        let row_max = wg_last / cfg.nx;
+        let x_min = select(0u, wg_base % cfg.nx, row_min == row_max);
+        let x_max = select(cfg.nx, (wg_last % cfg.nx) + 1u, row_min == row_max);
+        if !(f32(x_max) < bmin_l.x || f32(x_min) > bmax_l.x || f32(row_max + 1u) < bmin_l.y || f32(row_min) > bmax_l.y) {
+            atomicOr(&sh_tile_mask[lane >> 5u], 1u << (lane & 31u));
+        }
+    }
     workgroupBarrier();
 
     let i = id.x;
@@ -895,42 +1000,55 @@ fn foam_raster(
         atomicStore(&labels[label_compact(i)], i);
         atomicStore(&labels[label_field(i, 2u)], area_u);
     }
-    let p_i = point(i);
-    let x0 = f32(p_i.x);
-    let y0 = f32(p_i.y);
-    let center = vec2<f32>(x0 + 0.5, y0 + 0.5);
+
+    let tm0 = atomicLoad(&sh_tile_mask[0]);
+    let tm1 = atomicLoad(&sh_tile_mask[1]);
+    let tm2 = atomicLoad(&sh_tile_mask[2]);
+    let tm3 = atomicLoad(&sh_tile_mask[3]);
+    let any_tile = (tm0 | tm1 | tm2 | tm3) != 0u;
 
     var slot_frac: array<f32, GAS_SLOTS>;
     var slot_norm: array<vec2<f32>, GAS_SLOTS>;
     var slot_bub: array<u32, GAS_SLOTS>;
-    for (var l = 0u; l < GAS_SLOTS; l++) {
-        slot_frac[l] = 0.0;
-        slot_norm[l] = vec2<f32>(0.0, 1.0);
-        slot_bub[l] = NO_LABEL;
-    }
-
     var total_gas = 0.0;
     var gas_mom = vec2<f32>(0.0);
 
-    for (var bi = 0u; bi < MAX_BUBBLES; bi++) {
-        if sh_alive[bi] == 0u { continue; }
-        let bmin = sh_bmin[bi];
-        let bmax = sh_bmax[bi];
-        if x0 + 1.0 < bmin.x || x0 > bmax.x || y0 + 1.0 < bmin.y || y0 > bmax.y {
-            continue;
+    if any_tile {
+        for (var l = 0u; l < GAS_SLOTS; l++) {
+            slot_frac[l] = 0.0;
+            slot_norm[l] = vec2<f32>(0.0, 1.0);
+            slot_bub[l] = NO_LABEL;
         }
-        let res = foam_sdf_bubble(center, bi);
-        let n_unit = vec2<f32>(res.y, res.z);
-        let frac = rectangle_fraction(n_unit, -res.x, vec2<f32>(-0.5), vec2<f32>(0.5));
-        if frac <= 1e-4 { continue; }
-        let s = foam[bi].slot;
-        if frac > slot_frac[s] {
-            slot_norm[s] = n_unit;
-            slot_bub[s] = bi;
+        let p_i = point(i);
+        let x0 = f32(p_i.x);
+        let y0 = f32(p_i.y);
+        let center = vec2<f32>(x0 + 0.5, y0 + 0.5);
+        let masks = array<u32, 4>(tm0, tm1, tm2, tm3);
+        for (var w = 0u; w < 4u; w++) {
+            var bits = masks[w];
+            while bits != 0u {
+                let bit = countTrailingZeros(bits);
+                bits &= bits - 1u;
+                let bi = (w << 5u) | bit;
+                let bmin = sh_bmin[bi];
+                let bmax = sh_bmax[bi];
+                if x0 + 1.0 < bmin.x || x0 > bmax.x || y0 + 1.0 < bmin.y || y0 > bmax.y {
+                    continue;
+                }
+                let res = foam_sdf_bubble(center, bi);
+                let n_unit = vec2<f32>(res.y, res.z);
+                let frac = rectangle_fraction(n_unit, -res.x, vec2<f32>(-0.5), vec2<f32>(0.5));
+                if frac <= 1e-4 { continue; }
+                let s = foam[bi].slot;
+                if frac > slot_frac[s] {
+                    slot_norm[s] = n_unit;
+                    slot_bub[s] = bi;
+                }
+                slot_frac[s] += frac;
+                total_gas += frac;
+                gas_mom += frac * foam[bi].disp_vel;
+            }
         }
-        slot_frac[s] += frac;
-        total_gas += frac;
-        gas_mom += frac * foam[bi].disp_vel;
     }
 
     // Clamp total gas to available open-water room so sand conservation is exact
@@ -941,6 +1059,26 @@ fn foam_raster(
     let mobile_solid = max(c.volume.fine, 0.0) + max(c.volume.coarse, 0.0);
     let bed_occ = max(c.bed.x, 0.0) + max(c.bed.y, 0.0) + max(c.bed.w, 0.0);
     let room = max(1.0 - mobile_solid - bed_occ, 0.0);
+
+    // Fast path for cells that hold no gas now and held no gas on the previous update:
+    // geometry[LAYER/SHAPE/CONTACT] and labels[label_node/anchor] are already cleared.
+    if total_gas == 0.0 && atomicLoad(&labels[label_cell_anchor(i)]) == CELL_KEPT {
+        let old_water = max(c.volume.water, 0.0);
+        let new_water = max(room, 0.0);
+        if c.volume.gas != 0.0 || c.volume.water != new_water || c.momentum[3].x != 0.0 || c.momentum[3].y != 0.0 {
+            if old_water > 1e-6 {
+                c.momentum[0] *= min(new_water / old_water, 1.0);
+            } else {
+                c.momentum[0] = vec2<f32>(0.0);
+            }
+            c.volume.gas = 0.0;
+            c.volume.water = new_water;
+            c.momentum[3] = vec2<f32>(0.0);
+            cells[i] = c;
+        }
+        return;
+    }
+
     let gas_room = max(1.0 - mobile_solid / BED_PACKING - bed_occ, 0.0);
     var scale = 1.0;
     if total_gas > gas_room && total_gas > 1e-6 {
@@ -956,7 +1094,7 @@ fn foam_raster(
     var c1_f = 0.0;
     var c1_shape = vec4<f32>(0.0);
     for (var l = 0u; l < GAS_SLOTS; l++) {
-        let f = slot_frac[l] * scale;
+        let f = select(0.0, slot_frac[l] * scale, any_tile);
         let keep_w = geometry[layer_index(i, l)].w;
         if f > 1e-5 {
             let n = slot_norm[l];

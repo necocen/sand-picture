@@ -3,4 +3,5 @@
 //! landscape below. Simulated on the GPU and drawn in three views.
 pub mod model;
 pub mod view;
+#[cfg(test)]
 mod wgsl;

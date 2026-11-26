@@ -16,10 +16,13 @@ fn scalars()->u32{return 6u*vertices()+2u*((vertices()+127u)/128u);}
 // Scalars: 0 rz (z.r of the current iteration), 1 beta.
 fn apply_row(i:u32,base:u32)->f32{
     let p=vec2<i32>(i32(i%cfg.nx),i32(i/cfg.nx));let last=vec2<i32>(i32(cfg.nx)-1,i32(cfg.ny)-1);
-    let x0=u32(clamp(p.x-2,0,last.x));let x1=u32(clamp(p.x-1,0,last.x));let x2=u32(p.x);
-    let x3=u32(clamp(p.x+1,0,last.x));let x4=u32(clamp(p.x+2,0,last.x));
-    let y0=base+u32(clamp(p.y-2,0,last.y))*cfg.nx;let y1=base+u32(clamp(p.y-1,0,last.y))*cfg.nx;let y2=base+u32(p.y)*cfg.nx;
-    let y3=base+u32(clamp(p.y+1,0,last.y))*cfg.nx;let y4=base+u32(clamp(p.y+2,0,last.y))*cfg.nx;
+    let x1=u32(clamp(p.x-1,0,last.x));let x2=u32(p.x);let x3=u32(clamp(p.x+1,0,last.x));
+    let y1=base+u32(clamp(p.y-1,0,last.y))*cfg.nx;let y2=base+u32(p.y)*cfg.nx;let y3=base+u32(clamp(p.y+1,0,last.y))*cfg.nx;
+    if (anchors[i]&FIVE_POINT_FLAG)!=0u{
+        return rows[i].a[7]*fcg[y1+x2]+rows[i].a[11]*fcg[y2+x1]+rows[i].a[12]*fcg[y2+x2]+rows[i].a[13]*fcg[y2+x3]+rows[i].a[17]*fcg[y3+x2];
+    }
+    let x0=u32(clamp(p.x-2,0,last.x));let x4=u32(clamp(p.x+2,0,last.x));
+    let y0=base+u32(clamp(p.y-2,0,last.y))*cfg.nx;let y4=base+u32(clamp(p.y+2,0,last.y))*cfg.nx;
     var value=0.;
     value+=rows[i].a[0]*fcg[y0+x0];value+=rows[i].a[1]*fcg[y0+x1];value+=rows[i].a[2]*fcg[y0+x2];value+=rows[i].a[3]*fcg[y0+x3];value+=rows[i].a[4]*fcg[y0+x4];
     value+=rows[i].a[5]*fcg[y1+x0];value+=rows[i].a[6]*fcg[y1+x1];value+=rows[i].a[7]*fcg[y1+x2];value+=rows[i].a[8]*fcg[y1+x3];value+=rows[i].a[9]*fcg[y1+x4];

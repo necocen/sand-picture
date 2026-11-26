@@ -4,7 +4,6 @@
 use super::picture::Picture;
 use super::{CELLS_WGSL, SCENE_WGSL};
 use crate::model::{Buffers, FOAM_VERTS, MAX_BUBBLES, row_constants};
-use crate::wgsl;
 
 /// The shader of the kernel that sketches the state. It addresses the
 /// model's gas by the model's own constants.
@@ -72,7 +71,7 @@ impl Photoreal {
         let cells = buffer("the picture's sketch of the state");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sketch"),
-            source: wgpu::ShaderSource::Wgsl(wgsl::compiled(sketch_source()).into()),
+            source: wgpu::ShaderSource::Wgsl(sketch_source().into()),
         });
         let kernel = |name, entries: &[wgpu::BindGroupEntry<'_>]| {
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

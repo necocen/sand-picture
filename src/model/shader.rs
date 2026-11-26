@@ -10,7 +10,8 @@ use super::material::{
     powder_speed,
 };
 use super::rows;
-use super::stream::{COARSEN_ROWS, POINT_THREADS};
+use super::stream::POINT_THREADS;
+#[cfg(test)]
 use crate::wgsl;
 
 /// A program: the text several kernels' entry points live in, compiled as
@@ -33,7 +34,7 @@ impl Program {
 
     /// The program's WGSL, as it is compiled.
     pub fn source(self, grains: &Grains) -> String {
-        wgsl::compiled(self.text(grains))
+        self.text(grains)
     }
 
     /// The program's constants and fragments, its loops as written. Every
@@ -45,10 +46,10 @@ impl Program {
             Self::Model => model(grains),
             // The update interval and the surface tension enter the capillary
             // terms as shader constants; DT and SURFACE_TENSION stay their
-            // sources, as COARSEN_ROWS does for the coarsening's workgroup
-            // memory and the labels' layout for the place of the cells' words.
+            // sources, as POINT_THREADS does for the stream workgroups and the
+            // labels' layout for the place of the cells' words.
             Self::Stream => format!(
-                "{}const CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const COARSEN_ROWS:u32={COARSEN_ROWS}u;const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
+                "{}const CAPILLARY_DT:f32={DT:?};const SURFACE_TENSION:f32={SURFACE_TENSION:?};const POINT_THREADS:u32={POINT_THREADS}u;const LABEL_CELL_WORDS:u32={}u;\n{}\n{}\n{}",
                 rows::constants(),
                 cell_words(cells),
                 include_str!("stream/stream.wgsl"),
