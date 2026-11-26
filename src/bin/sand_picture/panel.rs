@@ -58,6 +58,10 @@ pub struct Panel {
     side: Side,
     /// Whether the times since the turn are unfolded.
     details: bool,
+    /// True when the top panel reaches close enough to the right edge that the
+    /// web repo badge should move to the bottom-right to avoid overlapping it.
+    #[cfg(target_family = "wasm")]
+    badge_bottom: bool,
 }
 impl Default for Panel {
     fn default() -> Self {
@@ -65,9 +69,15 @@ impl Default for Panel {
             visible: true,
             side: Side::default(),
             details: false,
+            #[cfg(target_family = "wasm")]
+            badge_bottom: false,
         }
     }
 }
+
+/// Horizontal clearance (points) reserved on the right edge for the web repo badge.
+#[cfg(target_family = "wasm")]
+const BADGE_CLEARANCE: f32 = 204.0;
 
 /// The gap between the panel and the window's edges (points).
 const GAP: f32 = 8.0;
@@ -123,6 +133,13 @@ impl Panel {
         };
     }
 
+    /// Visibility and corner placement `(visible, badge_at_bottom)` for the
+    /// web repository badge so it hides with the panel and avoids overlap.
+    #[cfg(target_family = "wasm")]
+    pub fn web_badge(&self) -> (bool, bool) {
+        (self.visible, self.badge_bottom)
+    }
+
     pub fn show(
         &mut self,
         root: &mut egui::Ui,
@@ -142,7 +159,7 @@ impl Panel {
             Side::Bottom => (egui::Align2::CENTER_BOTTOM, [0.0, -GAP], "To top"),
         };
         let mut command = None;
-        egui::Window::new("controls")
+        let window = egui::Window::new("controls")
             .title_bar(false)
             .resizable(false)
             .anchor(anchor, offset)
@@ -307,6 +324,14 @@ impl Panel {
                         .on_hover_text("Picture time, speed, and time since last turn");
                 }
             });
+        #[cfg(target_family = "wasm")]
+        if let Some(inner) = window {
+            let viewport_right = root.ctx().content_rect().max.x;
+            self.badge_bottom = self.side == Side::Top
+                && inner.response.rect.max.x + BADGE_CLEARANCE > viewport_right;
+        }
+        #[cfg(not(target_family = "wasm"))]
+        let _ = window;
         command
     }
 }

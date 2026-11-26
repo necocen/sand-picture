@@ -52,6 +52,9 @@ pub struct SandPicture {
     paused: bool,
     redraw: Option<RedrawRequest>,
     control: Option<SimulationControl>,
+    /// Last DOM state `(panel_visible, badge_bottom, paused)` pushed to `document.body`.
+    #[cfg(target_family = "wasm")]
+    web_ui: Option<(bool, bool, bool)>,
 }
 impl SandPicture {
     /// `window` is the window's size in the display's pixels.
@@ -66,7 +69,34 @@ impl SandPicture {
             paused: false,
             redraw: None,
             control: None,
+            #[cfg(target_family = "wasm")]
+            web_ui: None,
         }
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn sync_web_ui(&mut self) {
+        let (panel_visible, badge_bottom) = self.panel.web_badge();
+        let next = (panel_visible, badge_bottom, self.paused);
+        if self.web_ui == Some(next) {
+            return;
+        }
+        self.web_ui = Some(next);
+        let Some(body) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.body())
+        else {
+            return;
+        };
+        let _ = body.set_attribute(
+            "data-panel-hidden",
+            if panel_visible { "false" } else { "true" },
+        );
+        let _ = body.set_attribute(
+            "data-badge-bottom",
+            if badge_bottom { "true" } else { "false" },
+        );
+        let _ = body.set_attribute("data-paused", if self.paused { "true" } else { "false" });
     }
 
     fn request_redraw(&self) {
@@ -166,6 +196,8 @@ impl SandPicture {
                 }
             }
         }
+        #[cfg(target_family = "wasm")]
+        self.sync_web_ui();
         self.request_redraw();
     }
 }
@@ -202,9 +234,15 @@ impl App for SandPicture {
         }
         if ctx.input.is_key_pressed(KeyCode::KeyH) {
             self.panel.toggle();
+            #[cfg(target_family = "wasm")]
+            self.sync_web_ui();
+            self.request_redraw();
         }
         if ctx.input.is_key_pressed(KeyCode::KeyP) {
             self.panel.change_side();
+            #[cfg(target_family = "wasm")]
+            self.sync_web_ui();
+            self.request_redraw();
         }
     }
 
@@ -301,6 +339,8 @@ impl App for SandPicture {
         if let Some(command) = self.panel.show(root, &mut self.mode, &readout) {
             self.command(command);
         }
+        #[cfg(target_family = "wasm")]
+        self.sync_web_ui();
     }
 
     fn capture_targets(&self, registry: &mut mikage::capture::CaptureRegistry) {

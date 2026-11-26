@@ -2,10 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="WebGPU sand picture simulator">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:locale:alternate" content="ja_JP">
+    <meta property="og:title" content="Sand Picture">
+    <meta property="og:description" content="WebGPU sand picture simulator">
+    <meta property="og:description:ja_JP" content="WebGPU で動くサンドピクチャーのシミュレーター">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://suna.necocen.info/">
+    <meta property="og:image" content="https://suna.necocen.info/ogp.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@necocen">
     <title>Sand Picture</title>
     <link rel="icon" href="data:,">
     <link rel="license" href="licenses.txt">
+    <link data-trunk rel="copy-file" href="assets/ogp.png">
     <style>
         html, body {
             margin: 0;
@@ -33,10 +47,43 @@
             font-size: 20px;
             text-align: center;
         }
+        #repo-badge {
+            position: fixed;
+            top: max(8px, env(safe-area-inset-top));
+            right: max(8px, env(safe-area-inset-right));
+            z-index: 10;
+            background-color: rgba(20, 22, 28, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            color: #d8e2ee;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.4;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            transition: opacity 0.15s ease;
+        }
+        #repo-badge a {
+            color: #ffffff;
+            text-decoration: underline;
+        }
+        body[data-badge-bottom="true"] #repo-badge {
+            top: auto;
+            bottom: max(8px, env(safe-area-inset-bottom));
+        }
+        body[data-panel-hidden="true"] #repo-badge {
+            opacity: 0;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
     <div id="loading">Loading…</div>
+    <div id="repo-badge">
+        Sand Picture<br>
+        GitHub: <a href="https://github.com/necocen/sand-picture" target="_blank" rel="noopener noreferrer">necocen/sand-picture</a>
+    </div>
     <link data-trunk rel="rust" data-bin="sand-picture" data-wasm-opt="z" />
     <script>
         window.addEventListener("load", () => {
@@ -61,6 +108,55 @@
                     loading.textContent = "This browser could not start WebGPU.";
                 }
             });
+
+            // Screen Wake Lock: keep mobile screens awake while the picture is running,
+            // release while paused or hidden, and re-acquire when returning to the tab
+            // or after a user gesture if the browser deferred the initial request.
+            if ("wakeLock" in navigator) {
+                let wakeLock = null;
+                let requesting = false;
+                const shouldKeepAwake = () =>
+                    document.visibilityState === "visible" &&
+                    document.body.dataset.paused !== "true";
+                const syncWakeLock = async () => {
+                    if (!shouldKeepAwake()) {
+                        if (wakeLock) {
+                            const lock = wakeLock;
+                            wakeLock = null;
+                            lock.release().catch(() => {});
+                        }
+                        return;
+                    }
+                    if (wakeLock || requesting) return;
+                    requesting = true;
+                    try {
+                        const lock = await navigator.wakeLock.request("screen");
+                        if (!shouldKeepAwake()) {
+                            lock.release().catch(() => {});
+                            return;
+                        }
+                        wakeLock = lock;
+                        lock.addEventListener("release", () => {
+                            if (wakeLock === lock) wakeLock = null;
+                        });
+                    } catch (_) {
+                        // Ignored (e.g. battery saver or pre-gesture restriction).
+                    } finally {
+                        requesting = false;
+                    }
+                };
+                syncWakeLock();
+                document.addEventListener("visibilitychange", syncWakeLock);
+                const retryOnGesture = () => {
+                    if (shouldKeepAwake() && !wakeLock) syncWakeLock();
+                };
+                window.addEventListener("pointerdown", retryOnGesture, { passive: true });
+                window.addEventListener("keydown", retryOnGesture, { passive: true });
+                new MutationObserver(syncWakeLock).observe(document.body, {
+                    attributes: true,
+                    attributeFilter: ["data-paused"],
+                });
+            }
         });
     </script>
 </body>
