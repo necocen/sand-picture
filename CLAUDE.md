@@ -14,7 +14,7 @@
   - 泡は 2D ラグランジュ閉曲線ネットワーク（`foam.rs`・`foam.wgsl`：最大 128 個・各 28 頂点、Young–Laplace 静水圧バランス＋半陰的曲率平滑化＋正確な面積保存＋2 秒上下合体＋Rayleigh–Taylor 分裂）。毎更新セル格子へラスタライズし、Photoreal でも閉曲線から直接符号付き距離と法線を描画する。
   - 裏返し（起動、リセット、F）は即時 180° 回転＋0.5 秒の重力ランプで揺すらず、揺すり（S）は 6 Hz・振幅 5 mm を 3 秒の別操作である。上の砂は、緩んでから降りる（`plug.wgsl`・`breaching.wgsl`）。
   - 機能：`Auto Turn`（自動裏返し）、`Air -`/`+`（動的空気量調整、120〜580 セル、既定 376 セル）、`Tilt`（3 次元傾きセンサーと `216×144 ↔ 144×216` の 90° 4 方向回転）。
-  - Web 版（`https://suna.necocen.info/`）：Screen Wake Lock（実行中 ON・Pause/非表示で解放）、OGP メタデータと `assets/ogp.png`、パネル `Hide` 連動・狭幅時自動退避つきの右上 repo バッジ。
+  - Web 版（`https://suna.necocen.info/`）：Screen Wake Lock（実行中 ON・Pause/非表示で解放）、OGP メタデータと `assets/ogp.jpg`、パネル `Hide` 連動・狭幅時自動退避つきの右上 repo バッジ。
 - リアルの見た目を変えるときは、同じ時刻の変更前後の絵を並べて、ユーザーに判断を求める。
 
 ## ユーザーの判断で決まっていること
@@ -81,7 +81,7 @@
   段階ごとの GPU の時間（pass の両端の時刻）を出す。速さは、流れの育った保存状態から測る
   （`--load 状態,STEP --steps STEP+500 --time-stages 500`）。
 - `trunk build` / `mise run web`：Web 向けのビルドと、http://127.0.0.1:8080 での配信。ビルドは `dist/licenses.txt`
-  （使っている crate と Aphros の著作権表示。`tools/notices.py`）と `dist/ogp.png` も作る。
+  （使っている crate と Aphros の著作権表示。`tools/notices.py`）と `dist/ogp.jpg` も作る。
 - `mise run deploy`：Web 向けにビルドして Cloudflare Workers に置く（https://suna.necocen.info 。設定は `wrangler.toml`、
   配るのは `dist/` の静的ファイルだけ）。`main` への push（または手動実行）では `.github/workflows/deploy.yml` が
   同じ `mise run deploy` を CI で実行する（リポジトリシークレット `CLOUDFLARE_API_TOKEN`・`CLOUDFLARE_ACCOUNT_ID` を使用）。

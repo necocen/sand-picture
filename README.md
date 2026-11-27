@@ -94,7 +94,7 @@ cargo run --release --example rotation_check    # 90° CW/CCW transpose, sideway
 | `src/lib.rs` | The library: the model, the views, and WGSL validation in tests (`wgsl.rs`) |
 | `src/view.rs`, `src/view/` | The three views and their WGSL |
 | `src/model.rs`, `src/model/` | The model: its buffers (`buffers.rs`; the rows of the two row buffers in `rows.rs`), its kernels and their WGSL (including Lagrangian foam in `foam.rs` / `foam.wgsl`), what each kernel binds (`uses.rs`), an update as a list of steps |
-| `assets/` | The product's scene (`scene.bin`, `air.bin`) and OGP preview image (`ogp.png`) |
+| `assets/` | The product's scene (`scene.bin`, `air.bin`) and OGP preview image (`ogp.jpg`) |
 | `src/model/APHROS_LICENSE.txt` | The licence of Aphros (ETH Zurich, MIT), from which `interface/interface.wgsl` takes `intercept` and `rectangle_fraction` |
 | `tools/run.rs`, `tools/check.rs`, `tools/rotation_check.rs` | Headless runner (`--example run`), bit-exact regression check (`--example check`), and 90° rotation stress test (`--example rotation_check`) |
 | `tests/` | The regression guide and its baseline of hashes |
