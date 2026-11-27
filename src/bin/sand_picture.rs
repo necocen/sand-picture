@@ -19,9 +19,12 @@ use mikage::{GpuDescriptor, GpuRequirements, RedrawPolicy, RunConfig, Simulation
 use sand_picture::model::DT;
 use std::time::Duration;
 
-/// The window's first size in logical pixels, the tank's 3:2. The picture is
-/// drawn at whatever physical size the display makes of it.
-const WINDOW: [u32; 2] = [720, 480];
+/// The window's first size in logical pixels, the tank's 3:2. At typical
+/// desktop and laptop logical densities (109-125 px/in) 1080x720 puts the
+/// 24x16 cm tank near physical scale (about 22-25 cm wide) while staying
+/// within laptop screens. The picture is drawn at whatever physical size the
+/// display makes of it.
+const WINDOW: [u32; 2] = [1080, 720];
 
 fn main() {
     let config = RunConfig::<()> {
