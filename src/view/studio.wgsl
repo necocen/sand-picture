@@ -17,7 +17,12 @@ fn backing(q: vec2<f32>) -> vec3<f32> {
     // Keep the same 4 cm margin around the tank whether landscape or portrait.
     let half_tank = .5 * vec2<f32>(cfg.size) * cfg.cell_width;
     let card = rectangle(q, half_tank + vec2<f32>(.04, .04), .008);
-    return mix(vec3<f32>(1.8, 1.85, 1.9), vec3<f32>(.004, .012, .035), card);
+    let bg = mix(
+        vec3<f32>(.003, .005, .010),
+        vec3<f32>(.010, .016, .032),
+        clamp((q.y + half_tank.y) / (2. * half_tank.y), 0., 1.),
+    );
+    return mix(vec3<f32>(1.85, 1.88, 1.92), bg, card);
 }
 fn backdrop(p: vec2<f32>) -> vec3<f32> {
     return backing(world_position(p));
@@ -27,7 +32,7 @@ fn environment(p: vec2<f32>, ray: vec3<f32>) -> vec3<f32> {
     if ray.z < -.001 {
         return backing(q + ray.xy * (BACKING_DISTANCE / -ray.z));
     }
-    var light = mix(vec3<f32>(.018, .025, .032), vec3<f32>(.13, .16, .19), .5 + .5 * ray.y);
+    var light = mix(vec3<f32>(.009, .011, .015), vec3<f32>(.055, .062, .072), .5 + .5 * ray.y);
     if ray.z > .001 {
         let front = q + ray.xy * (.4 / ray.z);
         let key = rectangle(front - vec2<f32>(-.29, .15), vec2<f32>(.11, .28), .015);

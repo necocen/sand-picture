@@ -169,10 +169,10 @@ fn grains_at(p: vec2<f32>, cover: f32, black: f32, velocity: vec2<f32>) -> vec2<
     }
     return vec2<f32>(shown / f32(points), dark / max(shown, 1.e-6));
 }
-// The white sand and the black (chromite) in the colours a real picture
-// shows under blue light, for grains of which the share `black` is black.
+// The white silica sand and the deep royal-indigo coarse sand, for grains of
+// which the share `black` is coarse.
 fn sand_color(black: f32) -> vec3<f32> {
-    return mix(vec3<f32>(.50, .74, .98), vec3<f32>(.03, .05, .09), black);
+    return mix(vec3<f32>(.85, .87, .90), vec3<f32>(.008, .042, .19), black);
 }
 // The depth of grains a sight line crosses in the gap, in the grains' own
 // mean free paths. The grains of a volume (of the wet volume) are spheres of
